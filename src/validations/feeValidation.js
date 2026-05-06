@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 
+const TIPOS_VALIDOS = ["fixo", "percentual", "custas"];
+const STATUS_VALIDOS = ["pendente", "pago", "cancelado"];
+
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 const normalizeString = (value) => {
@@ -26,12 +29,16 @@ export const validateCreateFee = (data) => {
     errors.push("valor inválido");
   }
 
-  if (!data.tipo || !normalizeString(data.tipo)) {
+  if (!data.tipo) {
     errors.push("tipo é obrigatório");
+  } else if (!TIPOS_VALIDOS.includes(data.tipo)) {
+    errors.push(`tipo inválido. Use: ${TIPOS_VALIDOS.join(", ")}`);
   }
 
-  if (!data.status || !normalizeString(data.status)) {
+  if (!data.status) {
     errors.push("status é obrigatório");
+  } else if (!STATUS_VALIDOS.includes(data.status)) {
+    errors.push(`status inválido. Use: ${STATUS_VALIDOS.join(", ")}`);
   }
 
   if (!data.dataVencimento) {
@@ -71,14 +78,14 @@ export const validateUpdateFee = (data) => {
   }
 
   if (hasOwn("tipo")) {
-    if (!data.tipo || !normalizeString(data.tipo)) {
-      errors.push("tipo inválido");
+    if (!data.tipo || !TIPOS_VALIDOS.includes(data.tipo)) {
+      errors.push(`tipo inválido. Use: ${TIPOS_VALIDOS.join(", ")}`);
     }
   }
 
   if (hasOwn("status")) {
-    if (!data.status || !normalizeString(data.status)) {
-      errors.push("status inválido");
+    if (!data.status || !STATUS_VALIDOS.includes(data.status)) {
+      errors.push(`status inválido. Use: ${STATUS_VALIDOS.join(", ")}`);
     }
   }
 

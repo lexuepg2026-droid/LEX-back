@@ -27,12 +27,12 @@ const feeSchema = new mongoose.Schema(
     tipo: {
       type: String,
       required: true,
-      trim: true
+      enum: ["fixo", "percentual", "custas"]
     },
     status: {
       type: String,
       required: true,
-      trim: true,
+      enum: ["pendente", "pago", "cancelado"],
       default: "pendente"
     },
     dataVencimento: {
