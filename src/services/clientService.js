@@ -80,8 +80,13 @@ const createClient = async (usuarioId, data) => {
   return client;
 };
 
-const getAllClients = async (usuarioId) => {
-  return Client.find({ usuarioId }).sort({ createdAt: -1 });
+const getAllClients = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+  const skip = (page - 1) * limit;
+  const [data, total] = await Promise.all([
+    Client.find({ usuarioId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Client.countDocuments({ usuarioId })
+  ]);
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
 const getClientById = async (usuarioId, clientId) => {

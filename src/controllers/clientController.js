@@ -49,8 +49,10 @@ const createClient = async (req, res, next) => {
 
 const getAllClients = async (req, res, next) => {
   try {
-    const clients = await clientService.getAllClients(req.user._id);
-    return res.status(200).json(clients);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const result = await clientService.getAllClients(req.user._id, { page, limit });
+    return res.status(200).json(result);
   } catch (error) {
     error.statusCode = 500;
     error.message = "Erro ao listar clientes";

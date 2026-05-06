@@ -25,8 +25,10 @@ const create = async (req, res, next) => {
 
 const findAll = async (req, res, next) => {
   try {
-    const payments = await paymentService.findAll(req.user._id);
-    return res.status(200).json(payments);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const result = await paymentService.findAll(req.user._id, { page, limit });
+    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }

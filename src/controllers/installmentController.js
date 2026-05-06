@@ -17,8 +17,10 @@ export const createInstallment = async (req, res, next) => {
 
 export const getAllInstallments = async (req, res, next) => {
   try {
-    const installments = await listarInstallments(req.user._id);
-    return res.status(200).json(installments);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const result = await listarInstallments(req.user._id, { page, limit });
+    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }

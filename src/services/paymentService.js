@@ -103,13 +103,18 @@ class PaymentService {
     return await Payment.findById(novoPagamento._id).populate("installmentId");
   }
 
-  async findAll(usuarioId) {
-    return await Payment.find({
-      usuarioId,
-      ativo: true
-    })
-      .populate("installmentId")
-      .sort({ createdAt: -1 });
+  async findAll(usuarioId, { page = 1, limit = 20 } = {}) {
+    const skip = (page - 1) * limit;
+    const filter = { usuarioId, ativo: true };
+    const [data, total] = await Promise.all([
+      Payment.find(filter)
+        .populate("installmentId")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Payment.countDocuments(filter)
+    ]);
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findById(id, usuarioId) {

@@ -87,8 +87,13 @@ export const createProcess = async (usuarioId, data) => {
   }
 };
 
-export const listProcesses = async (usuarioId) => {
-  return Process.find({ usuarioId }).sort({ createdAt: -1 });
+export const listProcesses = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+  const skip = (page - 1) * limit;
+  const [data, total] = await Promise.all([
+    Process.find({ usuarioId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Process.countDocuments({ usuarioId })
+  ]);
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
 export const getProcessById = async (usuarioId, processId) => {

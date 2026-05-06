@@ -104,14 +104,17 @@ export const criarInstallment = async (usuarioId, dados) => {
   return installment;
 };
 
-export const listarInstallments = async (usuarioId) => {
-  const installments = await Installment.find({
-    usuarioId
-  })
-    .populate("feeId")
-    .sort({ numeroParcela: 1, createdAt: -1 });
-
-  return installments;
+export const listarInstallments = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+  const skip = (page - 1) * limit;
+  const [data, total] = await Promise.all([
+    Installment.find({ usuarioId })
+      .populate("feeId")
+      .sort({ numeroParcela: 1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Installment.countDocuments({ usuarioId })
+  ]);
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
 export const buscarInstallmentPorId = async (usuarioId, installmentId) => {
