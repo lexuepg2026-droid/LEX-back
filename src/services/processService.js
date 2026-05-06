@@ -39,7 +39,8 @@ const toObjectId = (value) => new mongoose.Types.ObjectId(value);
 const findClientByUser = async (clienteId, usuarioId) => {
   return Client.findOne({
     _id: clienteId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 };
 
@@ -89,9 +90,10 @@ export const createProcess = async (usuarioId, data) => {
 
 export const listProcesses = async (usuarioId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
+  const filter = { usuarioId, ativo: true };
   const [data, total] = await Promise.all([
-    Process.find({ usuarioId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
-    Process.countDocuments({ usuarioId })
+    Process.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Process.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
@@ -107,7 +109,8 @@ export const getProcessById = async (usuarioId, processId) => {
 
   const process = await Process.findOne({
     _id: processId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!process) {
@@ -132,7 +135,8 @@ export const updateProcess = async (usuarioId, processId, data) => {
 
   const existingProcess = await Process.findOne({
     _id: processId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!existingProcess) {
@@ -159,7 +163,7 @@ export const updateProcess = async (usuarioId, processId, data) => {
 
   try {
     const updatedProcess = await Process.findOneAndUpdate(
-      { _id: processId, usuarioId },
+      { _id: processId, usuarioId, ativo: true },
       payload,
       {
         new: true,
@@ -182,16 +186,19 @@ export const deleteProcess = async (usuarioId, processId) => {
     throw error;
   }
 
-  const deletedProcess = await Process.findOneAndDelete({
+  const process = await Process.findOne({
     _id: processId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
-  if (!deletedProcess) {
+  if (!process) {
     const error = new Error("Processo não encontrado");
     error.statusCode = 404;
     throw error;
   }
 
-  return deletedProcess;
+  process.ativo = false;
+  await process.save();
+  return process;
 };

@@ -43,7 +43,8 @@ const sanitizeFeeData = (data) => {
 const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
   const process = await Process.findOne({
     _id: processoId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!process) {
@@ -78,9 +79,10 @@ const createFee = async (usuarioId, feeData) => {
 
 const listFees = async (usuarioId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
+  const filter = { usuarioId, ativo: true };
   const [data, total] = await Promise.all([
-    Fee.find({ usuarioId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
-    Fee.countDocuments({ usuarioId })
+    Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Fee.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
@@ -96,7 +98,8 @@ const getFeeById = async (feeId, usuarioId) => {
 
   const fee = await Fee.findOne({
     _id: feeId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!fee) {
@@ -127,7 +130,8 @@ const updateFee = async (feeId, usuarioId, updateData) => {
 
   const existingFee = await Fee.findOne({
     _id: feeId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!existingFee) {
@@ -147,7 +151,8 @@ const updateFee = async (feeId, usuarioId, updateData) => {
   const updatedFee = await Fee.findOneAndUpdate(
     {
       _id: feeId,
-      usuarioId
+      usuarioId,
+      ativo: true
     },
     sanitizedData,
     {
@@ -168,18 +173,21 @@ const deleteFee = async (feeId, usuarioId) => {
     throw error;
   }
 
-  const deletedFee = await Fee.findOneAndDelete({
+  const fee = await Fee.findOne({
     _id: feeId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
-  if (!deletedFee) {
+  if (!fee) {
     const error = new Error("Honorário não encontrado");
     error.statusCode = 404;
     throw error;
   }
 
-  return deletedFee;
+  fee.ativo = false;
+  await fee.save();
+  return fee;
 };
 
 export default {

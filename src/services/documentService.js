@@ -10,7 +10,8 @@ const createError = (message, statusCode) => {
 const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
   const process = await Process.findOne({
     _id: processoId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!process) {
@@ -23,7 +24,8 @@ const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
 const ensureDocumentBelongsToUser = async (documentId, usuarioId) => {
   const document = await Document.findOne({
     _id: documentId,
-    usuarioId
+    usuarioId,
+    ativo: true
   });
 
   if (!document) {
@@ -54,12 +56,12 @@ export const createDocumentService = async (usuarioId, payload) => {
 export const listDocumentsService = async (usuarioId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
-    Document.find({ usuarioId })
+    Document.find({ usuarioId, ativo: true })
       .populate("processoId", "titulo numeroProcesso status")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
-    Document.countDocuments({ usuarioId })
+    Document.countDocuments({ usuarioId, ativo: true })
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
@@ -67,7 +69,8 @@ export const listDocumentsService = async (usuarioId, { page = 1, limit = 20 } =
 export const getDocumentByIdService = async (documentId, usuarioId) => {
   const document = await Document.findOne({
     _id: documentId,
-    usuarioId
+    usuarioId,
+    ativo: true
   }).populate("processoId", "titulo numeroProcesso status");
 
   if (!document) {
@@ -106,12 +109,8 @@ export const updateDocumentService = async (documentId, usuarioId, payload) => {
 export const deleteDocumentService = async (documentId, usuarioId) => {
   const document = await ensureDocumentBelongsToUser(documentId, usuarioId);
 
-  await Document.deleteOne({
-    _id: document._id,
-    usuarioId
-  });
+  document.ativo = false;
+  await document.save();
 
-  return {
-    message: "Documento removido com sucesso"
-  };
+  return document;
 };

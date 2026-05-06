@@ -82,9 +82,10 @@ const createClient = async (usuarioId, data) => {
 
 const getAllClients = async (usuarioId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
+  const filter = { usuarioId, ativo: true };
   const [data, total] = await Promise.all([
-    Client.find({ usuarioId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
-    Client.countDocuments({ usuarioId })
+    Client.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Client.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
@@ -94,7 +95,7 @@ const getClientById = async (usuarioId, clientId) => {
     return null;
   }
 
-  return Client.findOne({ _id: clientId, usuarioId });
+  return Client.findOne({ _id: clientId, usuarioId, ativo: true });
 };
 
 const updateClient = async (usuarioId, clientId, data) => {
@@ -102,7 +103,7 @@ const updateClient = async (usuarioId, clientId, data) => {
     return null;
   }
 
-  const client = await Client.findOne({ _id: clientId, usuarioId });
+  const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
 
   if (!client) {
     return null;
@@ -155,7 +156,11 @@ const deleteClient = async (usuarioId, clientId) => {
     return null;
   }
 
-  return Client.findOneAndDelete({ _id: clientId, usuarioId });
+  const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
+  if (!client) return null;
+  client.ativo = false;
+  await client.save();
+  return client;
 };
 
 export default {
