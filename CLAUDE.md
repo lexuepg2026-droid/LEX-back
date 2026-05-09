@@ -262,6 +262,46 @@ c0752ff  Reestrutura projeto em src/ e implementa middleware global de erros
 855aff4  Remove validação duplicada do clientController
 ```
 
-**Alterações ainda não commitadas:** `CLAUDE.md` (atualização desta sessão) — pendente commit.
+**Alterações ainda não commitadas:** nenhuma.
 
 **Próximo passo recomendado:** planejamento de novas funcionalidades (dashboard com métricas, filtros nas listagens, testes automatizados).
+
+---
+
+### Sessão — 2026-05-09 (segunda parte)
+
+**Resumo:** Estabilização profissional do frontend — correção de todos os módulos para compatibilidade com o backend atual. Fluxo por módulo: análise → plano → confirmação → edição → build → commit.
+
+**Arquivos alterados no backend:**
+- `src/services/processService.js` — `.populate("clienteId", ...)` em `listProcesses` e `getProcessById`
+- `src/services/feeService.js` — `.populate("processoId", ...)` em `listFees` e `getFeeById`
+
+**Arquivos alterados no frontend (por módulo):**
+- Clientes: `clientService.js`, `ClientListPage.jsx`, `ClientFormPage.jsx`, `ClientDetailPage.jsx`, `AppRoutes.jsx`
+- Processos: `processService.js`, `ProcessListPage.jsx`, `ProcessFormPage.jsx`, `ProcessDetailPage.jsx`, `ProcessTabs.jsx`
+- Honorários: `feeService.js`, `FeeListPage.jsx`, `FeeFormPage.jsx`
+- Parcelas: `installmentService.js`, `InstallmentListPage.jsx`, `InstallmentFormPage.jsx`
+
+**Decisões tomadas:**
+- Frontend lê `response.data.data ?? response.data` em todas as listagens (respostas paginadas)
+- `dataPagamento` só é enviada no payload quando `status === "pago"` (regra de negócio de Parcelas)
+- Payloads explícitos — sem spread de `formData` — para evitar campos inesperados no backend
+- Populates mínimos no backend apenas onde necessário para exibição (nomes, não campos extras)
+
+**Commits realizados:**
+```
+4f6a439  backend: Adiciona populate de clienteId em listProcesses e getProcessById
+642f558  backend: Adiciona populate de processoId em listFees e getFeeById
+57ef774  frontend: Corrige módulo de Clientes para funcionar com o backend atual
+5daa4bd  frontend: Corrige módulo de Processos para funcionar com o backend atual
+69e389e  frontend: Corrige módulo de Honorários para funcionar com o backend atual
+4d5bf98  frontend: Corrige módulo de Parcelas para funcionar com o backend atual
+```
+
+**Situação dos commits locais (sem push ainda):**
+- Backend: 2 commits à frente de origin/main
+- Frontend: 4 commits à frente de origin/main
+
+**Alterações ainda não commitadas:** `CLAUDE.md` (esta atualização) — commitar ao encerrar.
+
+**Próximo passo recomendado:** analisar módulo de Pagamentos no frontend (mesmo fluxo). Depois: Documentos. Dashboard somente após todos os módulos principais estabilizados.
