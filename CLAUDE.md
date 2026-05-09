@@ -138,8 +138,8 @@ Todos os controllers e services usam **funções exportadas** — sem classes.
 
 ## Cuidados pendentes
 
-- [ ] **Validação duplicada no `clientController`:** o controller valida a entrada E o `clientService` também valida. Todos os outros módulos delegam 100% ao service. Remover a validação do controller e unificar no service.
-- [ ] **Credenciais expostas no histórico git:** um commit anterior versionou o `.env` com `MONGO_URI` e `JWT_SECRET` reais. O `.gitignore` está correto agora, mas o histórico é público. Ação necessária: revogar a connection string no MongoDB Atlas e gerar novo `JWT_SECRET` — esta ação é manual e deve ser feita pelo desenvolvedor.
+- [x] ~~**Validação duplicada no `clientController`**~~ — resolvido em 2026-05-09. Validação e tratamento de chave duplicada movidos para o `clientService`.
+- [x] ~~**Credenciais expostas**~~ — resolvido em 2026-05-09. Senha do MongoDB Atlas e `JWT_SECRET` rotacionados manualmente. `.env` não está rastreado pelo Git e nunca esteve no histórico do repositório atual. Nenhum secret encontrado hardcoded nos arquivos versionados.
 - [ ] Confirmar que todos os relacionamentos validam `usuarioId` ao verificar entidade pai antes de criar filho.
 - [ ] Confirmar que nenhum endpoint lista dados sem filtrar `ativo: true`.
 
@@ -229,3 +229,39 @@ c0752ff  Reestrutura projeto em src/ e implementa middleware global de erros
 **Alterações ainda não commitadas:** nenhuma.
 
 **Próximo passo recomendado:** remover validação duplicada do `clientController` e delegar inteiramente ao `clientService`.
+
+---
+
+### Sessão — 2026-05-09
+
+**Resumo:** Configuração da operação com Claude Code, resolução das duas pendências técnicas restantes e rotação de credenciais.
+
+**Arquivos criados:**
+- `CLAUDE.md` (raiz do lex-backend) — contexto técnico para o Claude Code
+- `03 - Projetos/LEX/LEX - Decisões.md` (Obsidian) — registro de decisões técnicas
+- `03 - Projetos/LEX/LEX - Próxima sessão.md` (Obsidian) — planejamento de próximas sessões
+
+**Arquivos alterados:**
+- `src/controllers/clientController.js` — removida validação duplicada; controller agora é thin wrapper
+- `src/services/clientService.js` — validação e tratamento de chave duplicada (11000) movidos para o service
+- `07 - Prompts e Contexto/LEX - Prompts e Contexto.md` (Obsidian) — 10 prompts operacionais adicionados
+
+**Decisões tomadas:**
+- Validação sempre no service, nunca no controller — padrão unificado em todos os módulos
+- `CLAUDE.md` versionado junto com o código para contexto persistente
+
+**Problemas encontrados:**
+- Nenhum
+
+**Pendências:**
+- Nenhuma pendência crítica restante. Itens opcionais: confirmar validação de `usuarioId` em todos os relacionamentos pai-filho; confirmar filtro `ativo: true` em todos os endpoints.
+
+**Commits realizados:**
+```
+3bedaf9  Adiciona CLAUDE.md com contexto técnico do projeto para o Claude Code
+855aff4  Remove validação duplicada do clientController
+```
+
+**Alterações ainda não commitadas:** `CLAUDE.md` (atualização desta sessão) — pendente commit.
+
+**Próximo passo recomendado:** planejamento de novas funcionalidades (dashboard com métricas, filtros nas listagens, testes automatizados).
