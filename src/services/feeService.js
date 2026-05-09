@@ -81,7 +81,7 @@ const listFees = async (usuarioId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
   const [data, total] = await Promise.all([
-    Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
     Fee.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -100,7 +100,7 @@ const getFeeById = async (feeId, usuarioId) => {
     _id: feeId,
     usuarioId,
     ativo: true
-  });
+  }).populate("processoId", "titulo numeroProcesso");
 
   if (!fee) {
     const error = new Error("Honorário não encontrado");
