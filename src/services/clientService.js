@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Client from "../models/Client.js";
+import clientValidation from "../validations/clientValidation.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -69,15 +70,46 @@ const normalizeClientData = (data) => {
   return normalizedData;
 };
 
+const handleDuplicateKeyError = (error) => {
+  if (error?.code === 11000) {
+    if (error.keyPattern?.cpf) {
+      const err = new Error("CPF já cadastrado para este usuário");
+      err.statusCode = 409;
+      throw err;
+    }
+    if (error.keyPattern?.cnpj) {
+      const err = new Error("CNPJ já cadastrado para este usuário");
+      err.statusCode = 409;
+      throw err;
+    }
+    if (error.keyPattern?.email) {
+      const err = new Error("Email já cadastrado para este usuário");
+      err.statusCode = 409;
+      throw err;
+    }
+    const err = new Error("Registro duplicado para este usuário");
+    err.statusCode = 409;
+    throw err;
+  }
+  throw error;
+};
+
 const createClient = async (usuarioId, data) => {
+  const validationError = clientValidation.validateCreateClientPayload(data);
+  if (validationError) {
+    const err = new Error(validationError);
+    err.statusCode = 400;
+    throw err;
+  }
+
   const normalizedData = normalizeClientData(data);
 
-  const client = await Client.create({
-    usuarioId,
-    ...normalizedData
-  });
-
-  return client;
+  try {
+    const client = await Client.create({ usuarioId, ...normalizedData });
+    return client;
+  } catch (error) {
+    handleDuplicateKeyError(error);
+  }
 };
 
 const getAllClients = async (usuarioId, { page = 1, limit = 20 } = {}) => {
@@ -99,6 +131,13 @@ const getClientById = async (usuarioId, clientId) => {
 };
 
 const updateClient = async (usuarioId, clientId, data) => {
+  const validationError = clientValidation.validateUpdateClientPayload(data);
+  if (validationError) {
+    const err = new Error(validationError);
+    err.statusCode = 400;
+    throw err;
+  }
+
   if (!mongoose.Types.ObjectId.isValid(clientId)) {
     return null;
   }
@@ -146,7 +185,11 @@ const updateClient = async (usuarioId, clientId, data) => {
   client.observacoes = nextData.observacoes;
   client.ativo = nextData.ativo;
 
-  await client.save();
+  try {
+    await client.save();
+  } catch (error) {
+    handleDuplicateKeyError(error);
+  }
 
   return client;
 };
