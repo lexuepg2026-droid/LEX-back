@@ -92,7 +92,7 @@ export const listProcesses = async (usuarioId, { page = 1, limit = 20 } = {}) =>
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
   const [data, total] = await Promise.all([
-    Process.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Process.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("clienteId", "nomeCompleto razaoSocial tipoPessoa"),
     Process.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -111,7 +111,7 @@ export const getProcessById = async (usuarioId, processId) => {
     _id: processId,
     usuarioId,
     ativo: true
-  });
+  }).populate("clienteId", "nomeCompleto razaoSocial tipoPessoa");
 
   if (!process) {
     const error = new Error("Processo não encontrado");
