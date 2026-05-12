@@ -268,6 +268,40 @@ c0752ff  Reestrutura projeto em src/ e implementa middleware global de erros
 
 ---
 
+### Sessão — 2026-05-12
+
+**Resumo:** Correção dos módulos de Pagamentos e Documentos no frontend. Mesmo padrão aplicado nos módulos anteriores. Todos os módulos principais do frontend estão agora estabilizados.
+
+**Arquivos criados:** nenhum.
+
+**Arquivos alterados no frontend:**
+- Pagamentos: `src/api/paymentService.js`, `src/pages/payments/PaymentFormPage.jsx`, `src/pages/payments/PaymentListPage.jsx`
+- Documentos: `src/api/documentService.js`, `src/pages/documents/DocumentListPage.jsx`, `src/pages/documents/DocumentFormPage.jsx`
+
+**Decisões tomadas:**
+- Mesmas correções de padrão aplicadas: `listPayments` e `listDocuments` agora passam `{ page, limit }` como query params
+- Payloads explícitos em `PaymentFormPage` e `DocumentFormPage` — sem spread de `formData`
+- `dataUpload` no payload de Documentos usa `|| undefined` para não enviar string vazia
+
+**Problemas encontrados:** nenhum. Build limpo após as correções.
+
+**Commits realizados:**
+```
+10a0a5b  frontend: Corrige módulo de Pagamentos para funcionar com o backend atual
+8f5eb1c  frontend: Passa params de paginação na listagem de Pagamentos
+0b81ba3  frontend: Corrige módulo de Documentos para funcionar com o backend atual
+```
+
+**Situação dos commits locais (sem push ainda):**
+- Backend: 3 commits à frente de origin/main
+- Frontend: 7 commits à frente de origin/main
+
+**Alterações ainda não commitadas:** `CLAUDE.md` (esta atualização) — commitar ao encerrar.
+
+**Próximo passo recomendado:** iniciar o Dashboard — todos os módulos principais estão corrigidos e estáveis.
+
+---
+
 ### Sessão — 2026-05-09 (segunda parte)
 
 **Resumo:** Estabilização profissional do frontend — correção de todos os módulos para compatibilidade com o backend atual. Fluxo por módulo: análise → plano → confirmação → edição → build → commit.
