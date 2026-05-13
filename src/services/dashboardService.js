@@ -5,6 +5,9 @@ import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
 
+const toCountMap = (arr) =>
+  arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
+
 export const getSummary = async (usuarioId) => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -48,4 +51,50 @@ export const getSummary = async (usuarioId) => {
     documentosCadastrados,
     pagamentosRecebidosMes: pagamentosResult[0]?.total ?? 0
   };
+};
+
+export const getStatusCounts = async (usuarioId) => {
+  const groupByStatus = { _id: "$status", count: { $sum: 1 } };
+
+  const [processResults, feeResults, installmentResults] = await Promise.all([
+    Process.aggregate([
+      { $match: { usuarioId, ativo: true } },
+      { $group: groupByStatus }
+    ]),
+    Fee.aggregate([
+      { $match: { usuarioId, ativo: true } },
+      { $group: groupByStatus }
+    ]),
+    Installment.aggregate([
+      { $match: { usuarioId, ativo: true } },
+      { $group: groupByStatus }
+    ])
+  ]);
+
+  return {
+    processos:  toCountMap(processResults),
+    honorarios: toCountMap(feeResults),
+    parcelas:   toCountMap(installmentResults)
+  };
+};
+
+export const getFeesByMonth = async (usuarioId) => {
+  const now = new Date();
+  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+  const results = await Fee.aggregate([
+    { $match: { usuarioId, ativo: true, createdAt: { $gte: sixMonthsAgo } } },
+    {
+      $group: {
+        _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+        total: { $sum: "$valor" }
+      }
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1 } }
+  ]);
+
+  return results.map(({ _id, total }) => ({
+    mes: `${_id.year}-${String(_id.month).padStart(2, "0")}`,
+    total
+  }));
 };
