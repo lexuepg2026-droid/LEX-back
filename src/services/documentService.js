@@ -53,15 +53,17 @@ export const createDocumentService = async (usuarioId, payload) => {
   return document;
 };
 
-export const listDocumentsService = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
   const skip = (page - 1) * limit;
+  const filter = { usuarioId, ativo: true };
+  if (processoId) filter.processoId = processoId;
   const [data, total] = await Promise.all([
-    Document.find({ usuarioId, ativo: true })
+    Document.find(filter)
       .populate("processoId", "titulo numeroProcesso status")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
-    Document.countDocuments({ usuarioId, ativo: true })
+    Document.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };

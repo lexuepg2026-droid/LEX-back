@@ -77,9 +77,10 @@ const createFee = async (usuarioId, feeData) => {
   return fee;
 };
 
-const listFees = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+const listFees = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
+  if (processoId) filter.processoId = processoId;
   const [data, total] = await Promise.all([
     Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
     Fee.countDocuments(filter)
