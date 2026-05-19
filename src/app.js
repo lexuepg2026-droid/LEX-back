@@ -10,6 +10,7 @@ import feeRoutes from "./routes/feeRoutes.js";
 import installmentRoutes from "./routes/installmentRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import financeiroRoutes from "./routes/financeiroRoutes.js";
 import notFound from "./middleware/notFoundMiddleware.js";
 import errorHandler from "./middleware/errorMiddleware.js";
 
@@ -34,6 +35,7 @@ app.use("/api/fees", feeRoutes);
 app.use("/api/installments", installmentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/financeiro", financeiroRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

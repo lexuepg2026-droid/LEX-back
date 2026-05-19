@@ -1,4 +1,4 @@
-import { getSummary, getStatusCounts, getFeesByMonth } from "../services/dashboardService.js";
+import { getSummary, getStatusCounts, getFeesByMonth, getFinanceiroResumo } from "../services/dashboardService.js";
 
 export const getDashboardSummary = async (req, res, next) => {
   try {
@@ -22,6 +22,15 @@ export const getDashboardFeesByMonth = async (req, res, next) => {
   try {
     const data = await getFeesByMonth(req.user._id);
     res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getFinanceiro = async (req, res, next) => {
+  try {
+    const resumo = await getFinanceiroResumo(req.user._id);
+    res.json(resumo);
   } catch (error) {
     next(error);
   }

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const statusPermitidos = ["pendente", "pago", "vencido"];
+const statusPermitidos = ["pendente", "pago", "vencido", "parcial"];
 
 const isObjectIdValido = (valor) => mongoose.Types.ObjectId.isValid(valor);
 
@@ -43,20 +43,6 @@ export const validarCriacaoInstallment = (dados) => {
     erros.push("status inválido");
   }
 
-  if (dados.dataPagamento !== undefined && dados.dataPagamento !== null) {
-    if (!isDataValida(dados.dataPagamento)) {
-      erros.push("dataPagamento inválida");
-    }
-  }
-
-  if (dados.status === "pago" && !dados.dataPagamento) {
-    erros.push("dataPagamento é obrigatória quando o status for pago");
-  }
-
-  if (dados.status && dados.status !== "pago" && dados.dataPagamento) {
-    erros.push("dataPagamento só pode ser informada quando o status for pago");
-  }
-
   if (dados.ativo !== undefined && typeof dados.ativo !== "boolean") {
     erros.push("ativo deve ser booleano");
   }
@@ -95,25 +81,6 @@ export const validarAtualizacaoInstallment = (dados) => {
 
   if (dados.status !== undefined && !statusPermitidos.includes(dados.status)) {
     erros.push("status inválido");
-  }
-
-  if (dados.dataPagamento !== undefined && dados.dataPagamento !== null) {
-    if (!isDataValida(dados.dataPagamento)) {
-      erros.push("dataPagamento inválida");
-    }
-  }
-
-  if (dados.status === "pago" && !dados.dataPagamento) {
-    erros.push("dataPagamento é obrigatória quando o status for pago");
-  }
-
-  if (
-    dados.status !== undefined &&
-    dados.status !== "pago" &&
-    dados.dataPagamento !== undefined &&
-    dados.dataPagamento !== null
-  ) {
-    erros.push("dataPagamento só pode ser informada quando o status for pago");
   }
 
   if (dados.ativo !== undefined && typeof dados.ativo !== "boolean") {

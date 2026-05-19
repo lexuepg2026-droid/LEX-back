@@ -1,5 +1,6 @@
 import Fee from "../models/Fee.js";
 import Process from "../models/Process.js";
+import Installment from "../models/Installment.js";
 import {
   validateCreateFee,
   validateUpdateFee,
@@ -183,6 +184,13 @@ const deleteFee = async (feeId, usuarioId) => {
   if (!fee) {
     const error = new Error("Honorário não encontrado");
     error.statusCode = 404;
+    throw error;
+  }
+
+  const installmentsAtivas = await Installment.countDocuments({ feeId: fee._id, ativo: true });
+  if (installmentsAtivas > 0) {
+    const error = new Error("Não é possível excluir este honorário pois existem cobranças vinculadas.");
+    error.statusCode = 409;
     throw error;
   }
 

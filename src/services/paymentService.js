@@ -30,8 +30,25 @@ const validarInstallmentDoUsuario = async (installmentId, usuarioId) => {
   return installment;
 };
 
+const calcularTotalPagoExcluindo = async (installmentId, usuarioId, excludePaymentId = null) => {
+  const filtro = { installmentId, usuarioId, ativo: true };
+  if (excludePaymentId) filtro._id = { $ne: excludePaymentId };
+  const pagamentos = await Payment.find(filtro);
+  return pagamentos.reduce((acc, p) => acc + Number(p.valorPago), 0);
+};
+
+const validarOverpayment = async (installment, novoValorPago, usuarioId, excludePaymentId = null) => {
+  const totalExistente = await calcularTotalPagoExcluindo(installment._id, usuarioId, excludePaymentId);
+  if (totalExistente + novoValorPago > installment.valor) {
+    const saldo = installment.valor - totalExistente;
+    const saldoFormatado = saldo.toFixed(2).replace(".", ",");
+    throw criarErro(409, `Pagamento excede o valor da parcela. Saldo disponível: R$ ${saldoFormatado}`);
+  }
+};
+
 const definirStatusInstallment = (installment, totalPago) => {
   if (totalPago >= installment.valor) return "pago";
+  if (totalPago > 0) return "parcial";
 
   const hoje = new Date();
   if (new Date(installment.dataVencimento) < hoje) return "vencido";
@@ -39,7 +56,7 @@ const definirStatusInstallment = (installment, totalPago) => {
   return "pendente";
 };
 
-const recalcularStatusInstallment = async (installmentId, usuarioId) => {
+export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
   const installment = await Installment.findOne({
     _id: installmentId,
     usuarioId,
@@ -75,6 +92,8 @@ const recalcularStatusInstallment = async (installmentId, usuarioId) => {
 export const create = async (data, usuarioId) => {
   const installment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
 
+  await validarOverpayment(installment, Number(data.valorPago), usuarioId);
+
   const novoPagamento = await Payment.create({
     usuarioId,
     installmentId: installment._id,
@@ -90,12 +109,20 @@ export const create = async (data, usuarioId) => {
   return Payment.findById(novoPagamento._id).populate("installmentId");
 };
 
-export const findAll = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
+  if (installmentId) filter.installmentId = installmentId;
   const [data, total] = await Promise.all([
     Payment.find(filter)
-      .populate("installmentId")
+      .populate({
+        path: "installmentId",
+        populate: {
+          path: "feeId",
+          select: "descricao processoId",
+          populate: { path: "processoId", select: "titulo numeroProcesso" }
+        }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -127,9 +154,10 @@ export const update = async (id, data, usuarioId) => {
 
   const installmentOriginalId = payment.installmentId.toString();
 
+  let targetInstallment = null;
   if (data.installmentId !== undefined) {
-    const installment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
-    payment.installmentId = installment._id;
+    targetInstallment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
+    payment.installmentId = targetInstallment._id;
   }
 
   if (data.valorPago !== undefined) payment.valorPago = Number(data.valorPago);
@@ -137,6 +165,18 @@ export const update = async (id, data, usuarioId) => {
   if (data.formaPagamento !== undefined) payment.formaPagamento = data.formaPagamento;
   if (data.observacoes !== undefined) payment.observacoes = data.observacoes?.trim() || "";
   if (data.ativo !== undefined) payment.ativo = data.ativo;
+
+  if (!targetInstallment) {
+    targetInstallment = await Installment.findOne({
+      _id: payment.installmentId,
+      usuarioId,
+      ativo: true
+    });
+  }
+
+  if (targetInstallment) {
+    await validarOverpayment(targetInstallment, payment.valorPago, usuarioId, id);
+  }
 
   await payment.save();
 

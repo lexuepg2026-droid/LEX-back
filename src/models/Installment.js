@@ -31,7 +31,7 @@ const installmentSchema = new mongoose.Schema(
     status: {
       type: String,
       required: true,
-      enum: ["pendente", "pago", "vencido"],
+      enum: ["pendente", "pago", "vencido", "parcial"],
       default: "pendente"
     },
     dataPagamento: {

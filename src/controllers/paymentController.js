@@ -27,7 +27,8 @@ const findAll = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const result = await paymentService.findAll(req.user._id, { page, limit });
+    const { installmentId } = req.query;
+    const result = await paymentService.findAll(req.user._id, { page, limit, installmentId });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);

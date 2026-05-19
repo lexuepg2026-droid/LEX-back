@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Client from "../models/Client.js";
 import Process from "../models/Process.js";
 import Fee from "../models/Fee.js";
@@ -75,6 +76,55 @@ export const getStatusCounts = async (usuarioId) => {
     processos:  toCountMap(processResults),
     honorarios: toCountMap(feeResults),
     parcelas:   toCountMap(installmentResults)
+  };
+};
+
+export const getFinanceiroResumo = async (usuarioId) => {
+  const uid = new mongoose.Types.ObjectId(usuarioId);
+  const hoje = new Date();
+
+  const [valorContratadoRes, recebidoRes, pendenteRes, vencidas] = await Promise.all([
+    Fee.aggregate([
+      { $match: { usuarioId: uid, ativo: true } },
+      { $group: { _id: null, total: { $sum: "$valor" } } }
+    ]),
+
+    Payment.aggregate([
+      { $match: { usuarioId: uid, ativo: true } },
+      { $group: { _id: null, total: { $sum: "$valorPago" } } }
+    ]),
+
+    Installment.aggregate([
+      { $match: { usuarioId: uid, ativo: true } },
+      {
+        $lookup: {
+          from: "payments",
+          let: { instId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $and: [
+              { $eq: ["$installmentId", "$$instId"] },
+              { $eq: ["$ativo", true] }
+            ]}}}
+          ],
+          as: "pagamentos"
+        }
+      },
+      {
+        $addFields: {
+          saldo: { $max: [0, { $subtract: ["$valor", { $sum: "$pagamentos.valorPago" }] }] }
+        }
+      },
+      { $group: { _id: null, totalPendente: { $sum: "$saldo" } } }
+    ]),
+
+    Installment.countDocuments({ usuarioId: uid, ativo: true, status: "vencido" })
+  ]);
+
+  return {
+    valorContratado: valorContratadoRes[0]?.total ?? 0,
+    recebido: recebidoRes[0]?.total ?? 0,
+    pendente: pendenteRes[0]?.totalPendente ?? 0,
+    vencidas
   };
 };
 

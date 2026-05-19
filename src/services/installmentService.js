@@ -1,10 +1,12 @@
 import mongoose from "mongoose";
 import Installment from "../models/Installment.js";
 import Fee from "../models/Fee.js";
+import Payment from "../models/Payment.js";
 import {
   validarCriacaoInstallment,
   validarAtualizacaoInstallment
 } from "../validations/installmentValidation.js";
+import { recalcularStatusInstallment } from "./paymentService.js";
 
 const erro = (status, message) => {
   const error = new Error(message);
@@ -81,27 +83,19 @@ export const criarInstallment = async (usuarioId, dados) => {
     numeroParcela: dados.numeroParcela
   });
 
-  const statusFinal = normalizarStatus({
-    status: dados.status || "pendente",
-    dataVencimento: dados.dataVencimento,
-    dataPagamento: dados.dataPagamento || null
-  });
-
   const installment = await Installment.create({
     usuarioId,
     feeId: dados.feeId,
     numeroParcela: dados.numeroParcela,
     valor: dados.valor,
     dataVencimento: dados.dataVencimento,
-    status: statusFinal,
-    dataPagamento:
-      statusFinal === "pago"
-        ? dados.dataPagamento || new Date()
-        : null,
+    status: "pendente",
+    dataPagamento: null,
     ativo: dados.ativo !== undefined ? dados.ativo : true
   });
 
-  return installment;
+  const atualizado = await recalcularStatusInstallment(installment._id, usuarioId);
+  return atualizado || installment;
 };
 
 export const listarInstallments = async (usuarioId, { page = 1, limit = 20 } = {}) => {
@@ -179,36 +173,18 @@ export const atualizarInstallment = async (
       ? dados.dataVencimento
       : installment.dataVencimento;
 
-  const statusSolicitado =
-    dados.status !== undefined ? dados.status : installment.status;
-
-  const dataPagamentoFinal =
-    dados.dataPagamento !== undefined
-      ? dados.dataPagamento
-      : installment.dataPagamento;
-
-  const statusFinal = normalizarStatus({
-    status: statusSolicitado,
-    dataVencimento: dataVencimentoFinal,
-    dataPagamento: dataPagamentoFinal
-  });
-
   installment.feeId = feeIdFinal;
   installment.numeroParcela = numeroParcelaFinal;
   installment.valor =
     dados.valor !== undefined ? dados.valor : installment.valor;
   installment.dataVencimento = dataVencimentoFinal;
-  installment.status = statusFinal;
-  installment.dataPagamento =
-    statusFinal === "pago"
-      ? dataPagamentoFinal || new Date()
-      : null;
   installment.ativo =
     dados.ativo !== undefined ? dados.ativo : installment.ativo;
 
   await installment.save();
 
-  return installment;
+  const atualizado = await recalcularStatusInstallment(installmentId, usuarioId);
+  return atualizado || installment;
 };
 
 export const deletarInstallment = async (usuarioId, installmentId) => {
@@ -222,6 +198,11 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 
   if (!installment) {
     throw erro(404, "Parcela não encontrada");
+  }
+
+  const paymentsAtivos = await Payment.countDocuments({ installmentId: installment._id, ativo: true });
+  if (paymentsAtivos > 0) {
+    throw erro(409, "Não é possível excluir esta cobrança pois existem pagamentos vinculados.");
   }
 
   installment.ativo = false;
