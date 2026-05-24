@@ -3,17 +3,7 @@ import User from "../models/User.js";
 
 const authMiddleware = async (req, res, next) => {
   try {
-    let token = req.cookies?.["lex-token"];
-
-    if (!token) {
-      const authHeader = req.headers.authorization;
-      if (authHeader) {
-        const parts = authHeader.split(" ");
-        if (parts.length === 2 && parts[0] === "Bearer") {
-          token = parts[1];
-        }
-      }
-    }
+    const token = req.cookies?.["lex-token"];
 
     if (!token) {
       return res.status(401).json({ message: "Token não informado" });

@@ -22,7 +22,7 @@ const login = async (req, res, next) => {
   try {
     const data = await authService.loginUser(req.body);
     res.cookie("lex-token", data.token, COOKIE_OPTIONS);
-    return res.json(data);
+    return res.json({ usuario: data.usuario });
   } catch (error) {
     error.statusCode = error.statusCode || 400;
     return next(error);
