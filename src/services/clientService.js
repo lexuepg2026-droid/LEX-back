@@ -112,9 +112,18 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
-const getAllClients = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getAllClients = async (usuarioId, { page = 1, limit = 20, busca } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
+  if (busca && typeof busca === 'string') {
+    const termo = busca.slice(0, 80).trim();
+    if (termo) {
+      const regex = new RegExp(escapeRegex(termo), 'i');
+      filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
+    }
+  }
   const [data, total] = await Promise.all([
     Client.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Client.countDocuments(filter)

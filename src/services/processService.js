@@ -88,9 +88,19 @@ export const createProcess = async (usuarioId, data) => {
   }
 };
 
-export const listProcesses = async (usuarioId, { page = 1, limit = 20 } = {}) => {
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
+  if (busca && typeof busca === 'string') {
+    const termo = busca.slice(0, 80).trim();
+    if (termo) {
+      const regex = new RegExp(escapeRegex(termo), 'i');
+      filter.$or = [{ titulo: regex }, { numeroProcesso: regex }];
+    }
+  }
+  if (status && typeof status === 'string') filter.status = status;
   const [data, total] = await Promise.all([
     Process.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("clienteId", "nomeCompleto razaoSocial tipoPessoa"),
     Process.countDocuments(filter)

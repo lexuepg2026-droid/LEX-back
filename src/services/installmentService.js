@@ -98,8 +98,9 @@ export const criarInstallment = async (usuarioId, dados) => {
   return atualizado || installment;
 };
 
-export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
+export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status } = {}) => {
   const filter = { usuarioId, ativo: true };
+  if (status && typeof status === 'string') filter.status = status;
 
   if (processoId) {
     if (!mongoose.Types.ObjectId.isValid(processoId)) {

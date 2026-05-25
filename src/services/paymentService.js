@@ -119,8 +119,9 @@ const PAYMENT_POPULATE = {
   }
 };
 
-export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, processoId } = {}) => {
+export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, processoId, formaPagamento } = {}) => {
   const filter = { usuarioId, ativo: true };
+  if (formaPagamento && typeof formaPagamento === 'string') filter.formaPagamento = formaPagamento;
 
   if (processoId) {
     if (!mongoose.Types.ObjectId.isValid(processoId)) {
