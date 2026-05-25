@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
+import Fee from "../models/Fee.js";
 
 const criarErro = (statusCode, message) => {
   const error = new Error(message);
@@ -109,23 +110,33 @@ export const create = async (data, usuarioId) => {
   return Payment.findById(novoPagamento._id).populate("installmentId");
 };
 
-export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId } = {}) => {
-  const skip = (page - 1) * limit;
+const PAYMENT_POPULATE = {
+  path: "installmentId",
+  populate: {
+    path: "feeId",
+    select: "descricao processoId",
+    populate: { path: "processoId", select: "titulo numeroProcesso" }
+  }
+};
+
+export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, processoId } = {}) => {
   const filter = { usuarioId, ativo: true };
+
+  if (processoId) {
+    if (!mongoose.Types.ObjectId.isValid(processoId)) {
+      return { data: [], total: 0, page: 1, limit: 0, totalPages: 1 };
+    }
+    const fees = await Fee.find({ processoId, usuarioId, ativo: true }).select("_id");
+    const insts = await Installment.find({ feeId: { $in: fees.map(f => f._id) }, usuarioId, ativo: true }).select("_id");
+    filter.installmentId = { $in: insts.map(i => i._id) };
+    const data = await Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 });
+    return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
+  }
+
   if (installmentId) filter.installmentId = installmentId;
+  const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
-    Payment.find(filter)
-      .populate({
-        path: "installmentId",
-        populate: {
-          path: "feeId",
-          select: "descricao processoId",
-          populate: { path: "processoId", select: "titulo numeroProcesso" }
-        }
-      })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit),
+    Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Payment.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
