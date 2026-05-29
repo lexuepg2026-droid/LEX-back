@@ -28,7 +28,9 @@ const sanitizeUser = (usuario) => {
 
 const registerUser = async ({ nomeCompleto, email, senha }) => {
   if (!nomeCompleto || !email || !senha) {
-    throw new Error("nomeCompleto, email e senha são obrigatórios");
+    const error = new Error("nomeCompleto, email e senha são obrigatórios");
+    error.statusCode = 400;
+    throw error;
   }
 
   const normalizedEmail = email.toLowerCase().trim();
@@ -57,7 +59,9 @@ const registerUser = async ({ nomeCompleto, email, senha }) => {
 
 const loginUser = async ({ email, senha }) => {
   if (!email || !senha) {
-    throw new Error("email e senha são obrigatórios");
+    const error = new Error("email e senha são obrigatórios");
+    error.statusCode = 400;
+    throw error;
   }
 
   const normalizedEmail = email.toLowerCase().trim();
