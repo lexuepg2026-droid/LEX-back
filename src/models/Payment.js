@@ -15,6 +15,11 @@ const paymentSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    processoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Process",
+      index: true
+    },
     valorPago: {
       type: Number,
       required: true,

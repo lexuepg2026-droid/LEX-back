@@ -14,6 +14,11 @@ const installmentSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    processoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Process",
+      index: true
+    },
     numeroParcela: {
       type: Number,
       required: true,
