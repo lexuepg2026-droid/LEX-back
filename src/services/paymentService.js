@@ -98,6 +98,7 @@ export const create = async (data, usuarioId) => {
   const novoPagamento = await Payment.create({
     usuarioId,
     installmentId: installment._id,
+    processoId: installment.processoId,
     valorPago: Number(data.valorPago),
     dataPagamento: new Date(data.dataPagamento),
     formaPagamento: data.formaPagamento,
@@ -170,6 +171,7 @@ export const update = async (id, data, usuarioId) => {
   if (data.installmentId !== undefined) {
     targetInstallment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
     payment.installmentId = targetInstallment._id;
+    payment.processoId = targetInstallment.processoId;
   }
 
   if (data.valorPago !== undefined) payment.valorPago = Number(data.valorPago);

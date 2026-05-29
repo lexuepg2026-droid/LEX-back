@@ -76,7 +76,7 @@ export const criarInstallment = async (usuarioId, dados) => {
     throw erro(400, erros.join(", "));
   }
 
-  await buscarFeeDoUsuario(dados.feeId, usuarioId);
+  const fee = await buscarFeeDoUsuario(dados.feeId, usuarioId);
 
   await verificarNumeroParcelaDuplicado({
     feeId: dados.feeId,
@@ -86,6 +86,7 @@ export const criarInstallment = async (usuarioId, dados) => {
   const installment = await Installment.create({
     usuarioId,
     feeId: dados.feeId,
+    processoId: fee.processoId,
     numeroParcela: dados.numeroParcela,
     valor: dados.valor,
     dataVencimento: dados.dataVencimento,
@@ -166,9 +167,11 @@ export const atualizarInstallment = async (
   }
 
   let feeIdFinal = installment.feeId;
+  let processoIdFinal = installment.processoId;
   if (dados.feeId !== undefined) {
-    await buscarFeeDoUsuario(dados.feeId, usuarioId);
+    const novaFee = await buscarFeeDoUsuario(dados.feeId, usuarioId);
     feeIdFinal = dados.feeId;
+    processoIdFinal = novaFee.processoId;
   }
 
   const numeroParcelaFinal =
@@ -188,6 +191,7 @@ export const atualizarInstallment = async (
       : installment.dataVencimento;
 
   installment.feeId = feeIdFinal;
+  installment.processoId = processoIdFinal;
   installment.numeroParcela = numeroParcelaFinal;
   installment.valor =
     dados.valor !== undefined ? dados.valor : installment.valor;
@@ -196,6 +200,13 @@ export const atualizarInstallment = async (
     dados.ativo !== undefined ? dados.ativo : installment.ativo;
 
   await installment.save();
+
+  if (dados.feeId !== undefined) {
+    await Payment.updateMany(
+      { installmentId: installment._id, ativo: true },
+      { $set: { processoId: processoIdFinal } }
+    );
+  }
 
   const atualizado = await recalcularStatusInstallment(installmentId, usuarioId);
   return atualizado || installment;
