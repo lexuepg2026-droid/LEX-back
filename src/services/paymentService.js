@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
-import Fee from "../models/Fee.js";
 
 const criarErro = (statusCode, message) => {
   const error = new Error(message);
@@ -128,9 +127,7 @@ export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, 
     if (!mongoose.Types.ObjectId.isValid(processoId)) {
       return { data: [], total: 0, page: 1, limit: 0, totalPages: 1 };
     }
-    const fees = await Fee.find({ processoId, usuarioId, ativo: true }).select("_id");
-    const insts = await Installment.find({ feeId: { $in: fees.map(f => f._id) }, usuarioId, ativo: true }).select("_id");
-    filter.installmentId = { $in: insts.map(i => i._id) };
+    filter.processoId = processoId;
     const data = await Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 });
     return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
   }

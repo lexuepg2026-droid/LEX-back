@@ -107,8 +107,7 @@ export const listarInstallments = async (usuarioId, { page = 1, limit = 20, proc
     if (!mongoose.Types.ObjectId.isValid(processoId)) {
       return { data: [], total: 0, page: 1, limit: 0, totalPages: 1 };
     }
-    const fees = await Fee.find({ processoId, usuarioId, ativo: true }).select("_id");
-    filter.feeId = { $in: fees.map(f => f._id) };
+    filter.processoId = processoId;
     const data = await Installment.find(filter)
       .populate("feeId")
       .sort({ numeroParcela: 1, createdAt: -1 });
