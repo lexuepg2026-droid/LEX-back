@@ -5,7 +5,7 @@ const register = async (req, res, next) => {
     const data = await authService.registerUser(req.body);
     return res.status(201).json(data);
   } catch (error) {
-    error.statusCode = error.statusCode || 400;
+    error.statusCode = error.statusCode || 500;
     return next(error);
   }
 };
@@ -24,7 +24,7 @@ const login = async (req, res, next) => {
     res.cookie("lex-token", data.token, COOKIE_OPTIONS);
     return res.json({ usuario: data.usuario });
   } catch (error) {
-    error.statusCode = error.statusCode || 400;
+    error.statusCode = error.statusCode || 500;
     return next(error);
   }
 };
@@ -44,7 +44,7 @@ const me = async (req, res, next) => {
     const usuario = await authService.getMe(req.user._id);
     return res.json(usuario);
   } catch (error) {
-    error.statusCode = error.statusCode || 400;
+    error.statusCode = error.statusCode || 500;
     return next(error);
   }
 };

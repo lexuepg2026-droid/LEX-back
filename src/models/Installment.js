@@ -14,6 +14,11 @@ const installmentSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    processoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Process",
+      index: true
+    },
     numeroParcela: {
       type: Number,
       required: true,
@@ -50,6 +55,7 @@ const installmentSchema = new mongoose.Schema(
 
 installmentSchema.index({ usuarioId: 1, feeId: 1 });
 installmentSchema.index({ feeId: 1, numeroParcela: 1 }, { unique: true });
+installmentSchema.index({ usuarioId: 1, processoId: 1 });
 
 const Installment = mongoose.model("Installment", installmentSchema);
 

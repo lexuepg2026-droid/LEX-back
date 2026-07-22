@@ -4,7 +4,9 @@ import User from "../models/User.js";
 
 const generateToken = (userId) => {
   if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET não configurado");
+    const error = new Error("JWT_SECRET não configurado");
+    error.statusCode = 500;
+    throw error;
   }
 
   return jwt.sign(
@@ -26,7 +28,9 @@ const sanitizeUser = (usuario) => {
 
 const registerUser = async ({ nomeCompleto, email, senha }) => {
   if (!nomeCompleto || !email || !senha) {
-    throw new Error("nomeCompleto, email e senha são obrigatórios");
+    const error = new Error("nomeCompleto, email e senha são obrigatórios");
+    error.statusCode = 400;
+    throw error;
   }
 
   const normalizedEmail = email.toLowerCase().trim();
@@ -34,7 +38,9 @@ const registerUser = async ({ nomeCompleto, email, senha }) => {
   const usuarioExistente = await User.findOne({ email: normalizedEmail });
 
   if (usuarioExistente) {
-    throw new Error("Email já cadastrado");
+    const error = new Error("Email já cadastrado");
+    error.statusCode = 409;
+    throw error;
   }
 
   const senhaHash = await bcrypt.hash(senha, 10);
@@ -53,7 +59,9 @@ const registerUser = async ({ nomeCompleto, email, senha }) => {
 
 const loginUser = async ({ email, senha }) => {
   if (!email || !senha) {
-    throw new Error("email e senha são obrigatórios");
+    const error = new Error("email e senha são obrigatórios");
+    error.statusCode = 400;
+    throw error;
   }
 
   const normalizedEmail = email.toLowerCase().trim();
@@ -61,13 +69,17 @@ const loginUser = async ({ email, senha }) => {
   const usuario = await User.findOne({ email: normalizedEmail });
 
   if (!usuario) {
-    throw new Error("Usuário não encontrado");
+    const error = new Error("Usuário não encontrado");
+    error.statusCode = 404;
+    throw error;
   }
 
   const senhaValida = await bcrypt.compare(senha, usuario.senhaHash);
 
   if (!senhaValida) {
-    throw new Error("Senha inválida");
+    const error = new Error("Senha inválida");
+    error.statusCode = 401;
+    throw error;
   }
 
   const token = generateToken(usuario._id);
@@ -82,7 +94,9 @@ const getMe = async (userId) => {
   const usuario = await User.findById(userId).select("-senhaHash");
 
   if (!usuario) {
-    throw new Error("Usuário não encontrado");
+    const error = new Error("Usuário não encontrado");
+    error.statusCode = 404;
+    throw error;
   }
 
   return sanitizeUser(usuario);

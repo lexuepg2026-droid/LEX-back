@@ -15,6 +15,11 @@ const paymentSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    processoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Process",
+      index: true
+    },
     valorPago: {
       type: Number,
       required: true,
@@ -47,6 +52,7 @@ const paymentSchema = new mongoose.Schema(
 
 paymentSchema.index({ usuarioId: 1, installmentId: 1 });
 paymentSchema.index({ installmentId: 1, dataPagamento: -1 });
+paymentSchema.index({ usuarioId: 1, processoId: 1 });
 
 const Payment = mongoose.model("Payment", paymentSchema);
 
