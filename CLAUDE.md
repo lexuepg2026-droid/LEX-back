@@ -132,7 +132,7 @@ Todos os controllers e services usam **funções exportadas** — sem classes.
 - Middleware global de erros registrado (`errorMiddleware` + `notFoundMiddleware`).
 - CORS configurado via `CORS_ORIGIN` no `.env`.
 - Todos os controllers usam `next(error)` — nenhum responde erros diretamente.
-- Repositório: https://github.com/danisprodrigues22-maker/LEX (branch `main`)
+- Repositório: https://github.com/lexuepg2026-droid/LEX-back (branch `main`)
 
 ---
 

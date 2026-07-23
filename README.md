@@ -3,7 +3,7 @@
 Sistema de gestão para prática jurídica (PWA). Backend em Node.js + Express + Mongoose (MongoDB Atlas); frontend em React + Vite.
 
 Este repositório contém o **backend**. O frontend vive em um repositório separado:
-**[danisprodrigues22-maker/LEX-frontend](https://github.com/danisprodrigues22-maker/LEX-frontend)**.
+**[lexuepg2026-droid/LEX-front](https://github.com/lexuepg2026-droid/LEX-front)**.
 
 Este guia leva do clone até o login com a conta de teste, cobrindo os dois repositórios. Siga na ordem.
 
@@ -12,14 +12,14 @@ Este guia leva do clone até o login com a conta de teste, cobrindo os dois repo
 ## 1. Pré-requisitos
 
 - **Node.js 20+** e **npm** (o projeto foi validado em Node 20 / npm 10).
-- Acesso aos dois repositórios da equipe: `LEX` (backend, este aqui) e `LEX-frontend`.
+- Acesso aos dois repositórios da equipe: `LEX-back` (backend, este aqui) e `LEX-front`.
 - Acesso ao cluster **MongoDB Atlas** do projeto (string de conexão + IP liberado).
 
 O projeto é dividido em **dois repositórios independentes** (não é monorepo):
 
 ```
-danisprodrigues22-maker/LEX             # este repositório — API Express + Mongoose
-danisprodrigues22-maker/LEX-frontend    # React + Vite
+lexuepg2026-droid/LEX-back             # este repositório — API Express + Mongoose
+lexuepg2026-droid/LEX-front            # React + Vite
 ```
 
 Cada um tem seu próprio `package.json` e `node_modules` — clone os dois em pastas separadas e instale as dependências em cada um.
@@ -29,8 +29,8 @@ Cada um tem seu próprio `package.json` e `node_modules` — clone os dois em pa
 ## 2. Clonar este repositório (backend)
 
 ```bash
-git clone https://github.com/danisprodrigues22-maker/LEX.git
-cd LEX
+git clone https://github.com/lexuepg2026-droid/LEX-back.git
+cd LEX-back
 ```
 
 ---
@@ -100,8 +100,8 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 Clone o repositório do frontend **em outra pasta**, ao lado deste (não precisa estar dentro de `LEX/`):
 
 ```bash
-git clone https://github.com/danisprodrigues22-maker/LEX-frontend.git
-cd LEX-frontend
+git clone https://github.com/lexuepg2026-droid/LEX-front.git
+cd LEX-front
 npm install
 npm run dev
 ```
@@ -139,16 +139,16 @@ App em `http://localhost:5173`. Requer o backend deste repositório já rodando 
 
 ```bash
 # Backend (este repositório)
-git clone https://github.com/danisprodrigues22-maker/LEX.git
-cd LEX
+git clone https://github.com/lexuepg2026-droid/LEX-back.git
+cd LEX-back
 npm install
 cp .env.example .env      # depois preencha MONGO_URI e JWT_SECRET
 npm run seed:demo
 npm run dev               # porta 3001
 
 # Frontend (outro repositório, outro terminal/pasta)
-git clone https://github.com/danisprodrigues22-maker/LEX-frontend.git
-cd LEX-frontend
+git clone https://github.com/lexuepg2026-droid/LEX-front.git
+cd LEX-front
 npm install
 npm run dev               # porta 5173
 
