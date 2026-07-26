@@ -49,9 +49,31 @@ const me = async (req, res, next) => {
   }
 };
 
+const updateMe = async (req, res, next) => {
+  try {
+    const usuario = await authService.updateMe(req.user._id, req.body);
+    return res.json(usuario);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
+const changePassword = async (req, res, next) => {
+  try {
+    const data = await authService.changePassword(req.user._id, req.body);
+    return res.json(data);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
 export default {
   register,
   login,
   logout,
-  me
+  me,
+  updateMe,
+  changePassword
 };
