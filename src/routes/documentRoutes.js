@@ -42,7 +42,13 @@ router.delete("/:id/secoes/:secaoId", desvincularSecao);
 router.patch("/:id/visibilidade-portal", alternarVisibilidadePortal);
 
 router.get("/:id", getDocumentById);
+
+// PATCH é o verbo correto: updateDocument faz merge parcial, só sobrescreve o
+// que veio no payload. PUT fica como alias depreciado, mantido por
+// compatibilidade — mesmo padrão adotado em /clients na Fase 1.3.
+router.patch("/:id", updateDocument);
 router.put("/:id", updateDocument);
+
 router.delete("/:id", deleteDocument);
 
 export default router;
