@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed:demo": "NODE_ENV=development node scripts/seedDemo.js",
+    "seed:fresh": "npm run reset:dev && npm run seed:demo",
     "seed:demo:clean": "NODE_ENV=development node scripts/seedDemo.js --clean",
     "reset:dev": "NODE_ENV=development node scripts/resetDev.js"
   },

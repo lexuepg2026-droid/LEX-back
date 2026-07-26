@@ -75,8 +75,8 @@ npm run seed:demo
 
 Isso cria o usuário de teste e a massa de dados (clientes, processos, honorários, parcelas, pagamentos):
 
-- **E-mail:** `seed-demo@lex.dev`
-- **Senha:** `SeedDemo123!`
+- **E-mail:** `demo@lex.dev`
+- **Senha:** `Lex123456`
 
 O seed é protegido: se a conta demo já existir, ele recusa rodar. Para recriar do zero:
 
@@ -101,11 +101,12 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 |--------|-----------|
 | `npm run dev` | Sobe a API com `nodemon` (reload automático), porta 3001. |
 | `npm start` | Sobe a API com `node` puro (sem reload) — uso mais próximo de produção. |
+| `npm run seed:fresh` | **Atalho recomendado.** Derruba a base e recria tudo do zero (`reset:dev` + `seed:demo`). |
 | `npm run seed:demo` | Cria a conta demo e a massa de dados de teste. Recusa rodar se a demo já existir. |
 | `npm run seed:demo:clean` | Remove a conta demo e todos os dados dela. |
 | `npm run reset:dev` | Derruba as coleções de desenvolvimento (`users`, `clients`, `processes`, `fees`, `installments`, `payments`, `documents`). Abortado se `NODE_ENV=production`. Use quando a base local tiver dados antigos/incompatíveis com o schema atual. |
 
-> Fluxo para recriar a base do zero: `npm run reset:dev && npm run seed:demo`.
+> Fluxo para recriar a base do zero: `npm run seed:fresh` (equivale a `npm run reset:dev && npm run seed:demo`).
 
 ## 4. Frontend (repositório separado)
 
@@ -128,8 +129,8 @@ App em `http://localhost:5173`. Requer o backend deste repositório já rodando 
 
 1. Abra `http://localhost:5173`.
 2. Faça login com:
-   - **E-mail:** `seed-demo@lex.dev`
-   - **Senha:** `SeedDemo123!`
+   - **E-mail:** `demo@lex.dev`
+   - **Senha:** `Lex123456`
 3. O sistema redireciona para o dashboard com os dados populados.
 
 ---
@@ -164,5 +165,5 @@ cd LEX-front
 npm install
 npm run dev               # porta 5173
 
-# Login: seed-demo@lex.dev / SeedDemo123!
+# Login: demo@lex.dev / Lex123456
 ```

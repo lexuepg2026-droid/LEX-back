@@ -23,8 +23,8 @@ if (process.env.NODE_ENV !== 'development') {
   process.exit(1);
 }
 
-const DEMO_EMAIL = 'seed-demo@lex.dev';
-const DEMO_SENHA = 'SeedDemo123!';
+const DEMO_EMAIL = 'demo@lex.dev';
+const DEMO_SENHA = 'Lex123456';
 const IS_CLEAN   = process.argv.includes('--clean');
 
 // ── Dados: Clientes ───────────────────────────────────────────────────────────
@@ -38,81 +38,115 @@ const CLIENTS_DATA = [
     rg: '12.345.678-9', dataNascimento: '1988-03-12', sexo: 'feminino', estadoCivil: 'solteiro',
     profissao: 'Engenheira Civil', nacionalidade: 'brasileira',
     endereco: { cep: '80010-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Centro', logradouro: 'Rua XV de Novembro', numero: '100', complemento: 'Apto 12' },
+    observacoes: 'Cliente preferencial. Prefere contato por e-mail em horario comercial.',
   },
   {
     tipoPessoa: 'fisica', nomeCompleto: 'Carlos Eduardo Ferreira', cpf: '12345678062',
     email: 'carlos.ferreira@demo.lex', telefone: '(41) 99200-3004',
     rg: '23.456.789-0', dataNascimento: '1979-07-25', sexo: 'masculino', estadoCivil: 'casado',
     profissao: 'Administrador', nacionalidade: 'brasileira',
-    endereco: { cep: '80020-100', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Batel', logradouro: 'Av. do Batel', numero: '1500' },
+    endereco: { cep: '80020-100', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Batel', logradouro: 'Av. do Batel', numero: '1500', complemento: 'Sala 302' },
+    observacoes: 'Casado em comunhao parcial de bens. Conjuge ciente do processo de divorcio.',
   },
   {
     tipoPessoa: 'fisica', nomeCompleto: 'Maria Aparecida Costa', cpf: '98765432029',
     email: 'maria.costa@demo.lex', telefone: '(41) 99300-4005',
     rg: '34.567.890-1', dataNascimento: '1992-11-03', sexo: 'feminino', estadoCivil: 'uniao_estavel',
     profissao: 'Professora', nacionalidade: 'brasileira',
-    endereco: { cep: '84010-000', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa', bairro: 'Centro', logradouro: 'Rua Sant\'Ana', numero: '250' },
+    endereco: { cep: '84010-000', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa', bairro: 'Centro', logradouro: 'Rua Sant\'Ana', numero: '250', complemento: 'Casa 2' },
+    observacoes: 'Uniao estavel reconhecida em escritura publica de 2019.',
   },
   {
-    tipoPessoa: 'fisica', nomeCompleto: 'João Paulo Oliveira', cpf: '24681357090',
+    tipoPessoa: 'fisica', nomeCompleto: 'Joao Paulo Oliveira', cpf: '24681357090',
     email: 'joao.oliveira@demo.lex', telefone: '(41) 99400-5006',
     rg: '45.678.901-2', dataNascimento: '1975-01-19', sexo: 'masculino', estadoCivil: 'divorciado',
     profissao: 'Contador', nacionalidade: 'brasileira',
-    endereco: { cep: '86010-000', pais: 'Brasil', estado: 'PR', cidade: 'Londrina', bairro: 'Centro', logradouro: 'Av. Higienópolis', numero: '800' },
+    endereco: { cep: '86010-000', pais: 'Brasil', estado: 'PR', cidade: 'Londrina', bairro: 'Centro', logradouro: 'Av. Higienopolis', numero: '800', complemento: 'Conjunto 41' },
+    observacoes: 'Divorcio averbado em 2021. Possui dois dependentes menores.',
   },
   {
+    // LACUNA INTENCIONAL: este cliente NAO tem `profissao`.
+    // Serve para demonstrar, sem editar nada a mao, a tela de pendencia da
+    // geracao de documento (HTTP 422 apontando {{profissaoCliente}}).
+    // Nao preencher: o processo 6 depende desta lacuna.
     tipoPessoa: 'fisica', nomeCompleto: 'Beatriz Ramos Pereira', cpf: '13579246070',
     email: 'beatriz.pereira@demo.lex', telefone: '(41) 99500-6007',
     rg: '56.789.012-3', dataNascimento: '1983-09-30', sexo: 'feminino', estadoCivil: 'viuvo',
-    profissao: 'Médica', nacionalidade: 'brasileira',
-    endereco: { cep: '87010-000', pais: 'Brasil', estado: 'PR', cidade: 'Maringá', bairro: 'Zona 7', logradouro: 'Av. Colombo', numero: '3200' },
+    nacionalidade: 'brasileira',
+    endereco: { cep: '87010-000', pais: 'Brasil', estado: 'PR', cidade: 'Maringa', bairro: 'Zona 7', logradouro: 'Av. Colombo', numero: '3200', complemento: 'Bloco B, apto 44' },
+    observacoes: 'Cadastro incompleto de proposito no seed: falta a profissao, para exercitar o 422 da geracao de documento.',
   },
   {
-    tipoPessoa: 'fisica', nomeCompleto: 'Roberto Silva Mendes', cpf: '86420975310',
-    email: 'roberto.mendes@demo.lex', telefone: '(41) 99600-7008',
-    rg: '67.890.123-4', dataNascimento: '1968-05-08', sexo: 'masculino', estadoCivil: 'separado_judicialmente',
-    profissao: 'Empresário', nacionalidade: 'brasileira',
-    endereco: { cep: '80050-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Juvevê', logradouro: 'Rua Mateus Leme', numero: '500' },
-  },
-  {
-    tipoPessoa: 'juridica', razaoSocial: 'Construtora Horizonte Ltda', nomeFantasia: 'Horizonte Construções',
+    tipoPessoa: 'juridica', razaoSocial: 'Construtora Horizonte Ltda', nomeFantasia: 'Horizonte Construcoes',
     cnpj: '11222333000181', email: 'financeiro@horizonte-demo.lex', telefone: '(41) 3200-1040',
     representanteLegal: { nome: 'Fernando Horizonte de Souza', cpf: '10120230364', cargo: 'Diretor Administrativo' },
-    endereco: { cep: '81050-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Portão', logradouro: 'Av. República Argentina', numero: '2500' },
+    endereco: { cep: '81050-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Portao', logradouro: 'Av. Republica Argentina', numero: '2500', complemento: 'Torre A, 8o andar' },
+    observacoes: 'Contrato guarda-chuva de assessoria juridica renovado anualmente.',
   },
   {
     tipoPessoa: 'juridica', razaoSocial: 'Tech Solutions Brasil S.A.', nomeFantasia: 'TechSol Brasil',
     cnpj: '20304050000170', email: 'juridico@techsol-demo.lex', telefone: '(41) 3300-2050',
-    representanteLegal: { nome: 'Juliana Alves Tavares', cpf: '20230340431', cargo: 'Sócia-Administradora' },
-    endereco: { cep: '80230-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Rebouças', logradouro: 'Av. Sete de Setembro', numero: '4200' },
+    representanteLegal: { nome: 'Juliana Alves Tavares', cpf: '20230340431', cargo: 'Socia-Administradora' },
+    endereco: { cep: '80230-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Reboucas', logradouro: 'Av. Sete de Setembro', numero: '4200', complemento: 'Cj. 1201' },
+    observacoes: 'Demandas concentradas em direito tributario e societario.',
+  },
+  {
+    // SEM representanteLegal, de proposito: permite ver na tela de detalhe os
+    // dois estados possiveis de pessoa juridica (com e sem representante).
+    tipoPessoa: 'juridica', razaoSocial: 'Agro Campos Gerais Ltda', nomeFantasia: 'Agro Campos',
+    cnpj: '31820457000176', email: 'contato@agrocampos-demo.lex', telefone: '(42) 3400-3060',
+    endereco: { cep: '84035-000', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa', bairro: 'Uvaranas', logradouro: 'Av. Carlos Cavalcanti', numero: '1900', complemento: 'Galpao 3' },
+    observacoes: 'Representante legal ainda nao informado pelo cliente.',
   },
 ];
 
 // ── Dados: Processos (clienteIdx = índice em clients[]) ──────────────────────
 const PROCESSES_DATA = [
-  { clienteIdx: 0, titulo: 'Indenização por Danos Morais',           numeroProcesso: '0001234-10.2025.8.16.0001', vara: '1ª Vara do Trabalho de Curitiba', dataDistribuicao: '2025-02-10', tipoAcao: 'Indenizatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 0, titulo: 'Revisão de Contrato de Financiamento',   numeroProcesso: '0002345-20.2025.8.16.0001', vara: '1ª Vara Cível de Curitiba', dataDistribuicao: '2025-03-05', tipoAcao: 'Revisional',    area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 1, titulo: 'Divórcio Litigioso',                     numeroProcesso: '0003456-30.2025.8.16.0002', vara: '2ª Vara de Família e Sucessões de Curitiba', dataDistribuicao: '2025-01-22', tipoAcao: 'Divórcio',      area: 'Família',     orgao: 'Vara de Família', comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 1, titulo: 'Ação Trabalhista — Verbas Rescisórias',  numeroProcesso: '0004567-40.2024.8.16.0002', vara: '3ª Vara do Trabalho de Curitiba', dataDistribuicao: '2024-08-14', tipoAcao: 'Reclamatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'encerrado' },
-  { clienteIdx: 2, titulo: 'Inventário e Partilha de Bens',          numeroProcesso: '0005678-50.2025.8.16.0003', vara: '2ª Vara de Família e Sucessões de Ponta Grossa', dataDistribuicao: '2025-04-02', tipoAcao: 'Inventário',    area: 'Família',     orgao: '2ª Vara Família', comarca: 'Ponta Grossa', status: 'ativo'     },
-  { clienteIdx: 3, titulo: 'Execução Fiscal — IPTU',                 numeroProcesso: '0006789-60.2024.8.16.0004', vara: '1ª Vara da Fazenda Pública de Curitiba', dataDistribuicao: '2024-11-19', tipoAcao: 'Execução',      area: 'Tributário',  orgao: 'Vara de Fazenda', comarca: 'Curitiba',     status: 'suspenso'  },
-  { clienteIdx: 4, titulo: 'Usucapião de Imóvel Urbano',             numeroProcesso: '0007890-70.2025.8.16.0005', vara: '3ª Vara Cível de Londrina', dataDistribuicao: '2025-05-08', tipoAcao: 'Usucapião',     area: 'Imobiliário', orgao: '3ª Vara Cível',   comarca: 'Londrina',     status: 'ativo'     },
-  { clienteIdx: 5, titulo: 'Ação de Cobrança de Dívida',             numeroProcesso: '0008901-80.2025.8.16.0006', vara: '1ª Vara Cível de Maringá', dataDistribuicao: '2025-06-11', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Maringá',      status: 'ativo'     },
-  { clienteIdx: 6, titulo: 'Disputas Contratuais com Fornecedor',    numeroProcesso: '0009012-90.2024.8.16.0007', vara: '2ª Vara Cível de Curitiba', dataDistribuicao: '2024-09-30', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '2ª Vara Cível',   comarca: 'Curitiba',     status: 'encerrado' },
-  { clienteIdx: 7, titulo: 'Processo Administrativo Tributário',     numeroProcesso: '0000123-01.2025.8.16.0008', vara: 'Setor de Julgamento Administrativo — SEFAZ/PR', dataDistribuicao: '2025-03-18', tipoAcao: 'Administrativo',area: 'Tributário',  orgao: 'SEFAZ-PR',        comarca: 'Curitiba',     status: 'ativo'     },
+  // clienteIdx: 0-4 = PF (4 = Beatriz, sem profissao) | 5-7 = PJ (7 = sem representante)
+  { clienteIdx: 0, titulo: 'Indenizacao por Danos Morais', numeroProcesso: '0001234-10.2025.8.16.0001', tipoAcao: 'Indenizatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '1a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-02-10',
+    descricao: 'Acao indenizatoria por danos morais decorrentes de assedio moral no ambiente de trabalho.',
+    observacoes: 'Audiencia de instrucao designada. Cliente ja apresentou rol de testemunhas.' },
+  { clienteIdx: 0, titulo: 'Revisao de Contrato de Financiamento', numeroProcesso: '0002345-20.2025.8.16.0001', tipoAcao: 'Revisional', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-05',
+    descricao: 'Revisao de clausulas de financiamento imobiliario com pedido de recalculo de juros.',
+    observacoes: 'Aguardando laudo pericial contabil.' },
+  { clienteIdx: 1, titulo: 'Divorcio Litigioso', numeroProcesso: '0003456-30.2025.8.16.0002', tipoAcao: 'Divorcio', area: 'Familia', orgao: 'Vara de Familia', vara: '2a Vara de Familia e Sucessoes de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-01-22',
+    descricao: 'Divorcio litigioso com partilha de bens e definicao de guarda compartilhada.',
+    observacoes: 'Tentativa de conciliacao infrutifera na primeira audiencia.' },
+  { clienteIdx: 1, titulo: 'Acao Trabalhista - Verbas Rescisorias', numeroProcesso: '0004567-40.2024.8.16.0002', tipoAcao: 'Reclamatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '3a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'encerrado', dataDistribuicao: '2024-08-14',
+    descricao: 'Reclamatoria trabalhista para cobranca de verbas rescisorias nao pagas.',
+    observacoes: 'Encerrado por acordo homologado. Valores quitados em duas parcelas.' },
+  { clienteIdx: 2, titulo: 'Inventario e Partilha de Bens', numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventario', area: 'Familia', orgao: '2a Vara Familia', vara: '2a Vara de Familia e Sucessoes de Ponta Grossa', comarca: 'Ponta Grossa', status: 'ativo', dataDistribuicao: '2025-04-02',
+    descricao: 'Inventario judicial com quatro herdeiros e imovel rural a partilhar.',
+    observacoes: 'Primeiras declaracoes protocoladas. Aguardando avaliacao do imovel rural.' },
+  { clienteIdx: 3, titulo: 'Execucao Fiscal - IPTU', numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execucao', area: 'Tributario', orgao: 'Vara de Fazenda', vara: '1a Vara da Fazenda Publica de Curitiba', comarca: 'Curitiba', status: 'suspenso', dataDistribuicao: '2024-11-19',
+    descricao: 'Execucao fiscal de IPTU dos exercicios de 2021 a 2023.',
+    observacoes: 'Suspenso por parcelamento administrativo do debito.' },
+  { clienteIdx: 4, titulo: 'Usucapiao de Imovel Urbano', numeroProcesso: '0007890-70.2025.8.16.0005', tipoAcao: 'Usucapiao', area: 'Imobiliario', orgao: '3a Vara Civel', vara: '3a Vara Civel de Maringa', comarca: 'Maringa', status: 'ativo', dataDistribuicao: '2025-05-08',
+    descricao: 'Usucapiao extraordinaria de imovel urbano com posse mansa superior a quinze anos.',
+    observacoes: 'Processo do cliente sem profissao cadastrada: usar para ver o 422 da geracao de documento.' },
+  { clienteIdx: 5, titulo: 'Disputas Contratuais com Fornecedor', numeroProcesso: '0009012-90.2024.8.16.0007', tipoAcao: 'Cobranca', area: 'Civel', orgao: '2a Vara Civel', vara: '2a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2024-09-30',
+    descricao: 'Cobranca de multa contratual por atraso na entrega de insumos de obra.',
+    observacoes: 'Processo de cliente PJ: usado para gerar a procuracao de pessoa juridica.' },
+  { clienteIdx: 6, titulo: 'Processo Administrativo Tributario', numeroProcesso: '0000123-01.2025.8.16.0008', tipoAcao: 'Administrativo', area: 'Tributario', orgao: 'SEFAZ-PR', vara: 'Setor de Julgamento Administrativo - SEFAZ/PR', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-18',
+    descricao: 'Defesa em auto de infracao de ICMS com pedido de reducao de multa.',
+    observacoes: 'Impugnacao protocolada dentro do prazo de trinta dias.' },
+  { clienteIdx: 7, titulo: 'Acao de Cobranca de Divida', numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobranca', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Ponta Grossa', comarca: 'Ponta Grossa', status: 'encerrado', dataDistribuicao: '2025-06-11',
+    descricao: 'Cobranca de duplicatas vencidas emitidas contra cooperativa agricola.',
+    observacoes: 'Encerrado com pagamento integral apos citacao.' },
 ];
 
 // ── Dados: Documentos de upload (processoIdx = índice em processes[]) ────────
 // origem 'upload' explícita: são arquivos anexados, não gerados por template.
 const DOCUMENTS_DATA = [
-  { processoIdx: 0, nome: 'Petição Inicial',                    tipo: 'peticao',     descricao: 'Petição inicial da ação indenizatória',        urlArquivo: 'https://demo.lex.dev/docs/peticao-inicial-001.pdf'        },
-  { processoIdx: 1, nome: 'Contrato de Prestação de Serviços',  tipo: 'contrato_prestacao_servicos',    descricao: 'Contrato firmado com o cliente',               urlArquivo: 'https://demo.lex.dev/docs/contrato-servicos-002.pdf'      },
-  { processoIdx: 2, nome: 'Acordo de Divórcio',                 tipo: 'contrato_prestacao_servicos',    descricao: 'Minuta do acordo de divórcio consensual',      urlArquivo: 'https://demo.lex.dev/docs/acordo-divorcio-003.pdf'        },
-  { processoIdx: 3, nome: 'Sentença Trabalhista',               tipo: 'sentenca',    descricao: 'Sentença homologatória de acordo trabalhista', urlArquivo: 'https://demo.lex.dev/docs/sentenca-trabalhista-004.pdf'   },
-  { processoIdx: 4, nome: 'Abertura de Inventário',             tipo: 'comprovante', descricao: 'Protocolo de abertura do inventário',          urlArquivo: 'https://demo.lex.dev/docs/comprovante-inventario-005.pdf' },
-  { processoIdx: 5, nome: 'Petição de Suspensão da Execução',   tipo: 'peticao',     descricao: 'Pedido de suspensão da execução fiscal',       urlArquivo: 'https://demo.lex.dev/docs/peticao-suspensao-006.pdf'      },
-  { processoIdx: 6, nome: 'Contrato de Honorários — Usucapião', tipo: 'contrato_prestacao_servicos',    descricao: 'Contrato de honorários advocatícios',          urlArquivo: 'https://demo.lex.dev/docs/contrato-honorarios-007.pdf'    },
-  { processoIdx: 7, nome: 'Notificação Extrajudicial',          tipo: 'peticao',     descricao: 'Notificação extrajudicial de cobrança',        urlArquivo: 'https://demo.lex.dev/docs/peticao-cobranca-008.pdf'       },
+  { processoIdx: 0, nome: 'Peticao Inicial',                    tipo: 'peticao',                     descricao: 'Peticao inicial da acao indenizatoria',        urlArquivo: 'https://demo.lex.dev/docs/peticao-inicial-001.pdf',        tamanho: 184320 },
+  // Unico documento visivel no portal do cliente: caso de teste pronto para a Fase 3.
+  { processoIdx: 1, nome: 'Contrato de Prestacao de Servicos',  tipo: 'contrato_prestacao_servicos', descricao: 'Contrato firmado com o cliente',               urlArquivo: 'https://demo.lex.dev/docs/contrato-servicos-002.pdf',      tamanho: 262144, visivelPortal: true },
+  { processoIdx: 2, nome: 'Acordo de Divorcio',                 tipo: 'contrato_prestacao_servicos', descricao: 'Minuta do acordo de divorcio consensual',      urlArquivo: 'https://demo.lex.dev/docs/acordo-divorcio-003.pdf',        tamanho: 143360 },
+  { processoIdx: 3, nome: 'Sentenca Trabalhista',               tipo: 'sentenca',                    descricao: 'Sentenca homologatoria de acordo trabalhista', urlArquivo: 'https://demo.lex.dev/docs/sentenca-trabalhista-004.pdf',   tamanho: 98304  },
+  { processoIdx: 4, nome: 'Abertura de Inventario',             tipo: 'comprovante',                 descricao: 'Protocolo de abertura do inventario',          urlArquivo: 'https://demo.lex.dev/docs/comprovante-inventario-005.pdf', tamanho: 51200  },
+  { processoIdx: 5, nome: 'Peticao de Suspensao da Execucao',   tipo: 'peticao',                     descricao: 'Pedido de suspensao da execucao fiscal',       urlArquivo: 'https://demo.lex.dev/docs/peticao-suspensao-006.pdf',      tamanho: 76800  },
+  { processoIdx: 6, nome: 'Contrato de Honorarios - Usucapiao', tipo: 'contrato_prestacao_servicos', descricao: 'Contrato de honorarios advocaticios',          urlArquivo: 'https://demo.lex.dev/docs/contrato-honorarios-007.pdf',    tamanho: 122880 },
+  { processoIdx: 7, nome: 'Notificacao Extrajudicial',          tipo: 'peticao',                     descricao: 'Notificacao extrajudicial de cobranca',        urlArquivo: 'https://demo.lex.dev/docs/peticao-cobranca-008.pdf',       tamanho: 65536  },
 ];
 
 // ── Dados: Seções (templates reutilizáveis) ─────────────────────────────────
@@ -191,6 +225,16 @@ const MODELOS_DATA = [
     tipo: 'contrato_prestacao_servicos',
     descricao: 'Modelo de contrato de honorários e prestação de serviços',
     secoes: ['qualificacao_pf', 'objeto_contrato', 'clausula_honorarios', 'encerramento'],
+  },
+  {
+    // Modelo de PJ: é o único que resolve razaoSocialCliente, nomeFantasiaCliente,
+    // cnpjCliente e os três de representanteLegal — as 6 variáveis do catálogo
+    // que nenhum documento de pessoa física consegue exercitar.
+    chave: 'procuracao_pj',
+    nome: 'Procuração Ad Judicia — Pessoa Jurídica',
+    tipo: 'procuracao',
+    descricao: 'Modelo de procuração para cliente pessoa jurídica',
+    secoes: ['qualificacao_pj', 'outorgado', 'poderes_procuracao'],
   },
 ];
 
@@ -409,7 +453,7 @@ async function main() {
     oab: { numero: '123456', estado: 'PR' },
     advocacia: {
       nome: 'Demo LEX Sociedade Individual de Advocacia',
-      chavePix: 'seed-demo@lex.dev',
+      chavePix: 'demo@lex.dev',
       instagram: '@demolex.adv',
       site: 'https://demolex.adv.br',
     },
@@ -441,6 +485,8 @@ async function main() {
       comarca:        p.comarca,
       status:         p.status,
       dataDistribuicao: p.dataDistribuicao,
+      descricao:      p.descricao,
+      observacoes:    p.observacoes,
     }))
   );
   console.log(`${processes.length} processos criados`);
@@ -454,7 +500,9 @@ async function main() {
       tipo:       d.tipo,
       descricao:  d.descricao,
       urlArquivo: d.urlArquivo,
+      tamanho:    d.tamanho,
       origem:     'upload',
+      visivelPortal: d.visivelPortal === true,
     }))
   );
   console.log(`${documents.length} documentos de upload criados`);
@@ -497,16 +545,28 @@ async function main() {
   }
   console.log(`${MODELOS_DATA.length} modelos criados`);
 
-  // ── DOCUMENTO GERADO (pelo service real, não por insert direto) ───────────
-  // Passa pelo mesmo caminho da API: resolve as variáveis, recusa se houver
-  // pendência e grava o texto congelado.
-  const documentoGerado = await gerarDocumentoService(
+  // ── DOCUMENTOS GERADOS (pelo service real, nunca por insert direto) ───────
+  // Passam pelo mesmo caminho da API: resolvem as variáveis, recusam se houver
+  // pendência e gravam o texto congelado. Se a resolução regredir, o seed quebra.
+  const gerados = [];
+
+  // Pessoa física: processo 0 (Ana Lima Santos, cadastro completo).
+  gerados.push(await gerarDocumentoService(
     modelosPorChave.procuracao._id,
     uid,
     { processoId: processes[0]._id.toString() }
-  );
-  console.log(`1 documento gerado a partir do modelo "${modelosPorChave.procuracao.nome}"`);
-  console.log(`  textoResolvido: ${documentoGerado.textoResolvido.length} caracteres`);
+  ));
+
+  // Pessoa jurídica: processo 7 (Construtora Horizonte, com representante legal).
+  // É o que exercita as 6 variáveis de PJ do catálogo.
+  gerados.push(await gerarDocumentoService(
+    modelosPorChave.procuracao_pj._id,
+    uid,
+    { processoId: processes[7]._id.toString() }
+  ));
+
+  console.log(`${gerados.length} documentos gerados a partir dos modelos:`);
+  gerados.forEach(g => console.log(`  "${g.nome}" — ${g.textoResolvido.length} caracteres, 0 pendencias`));
 
   // ── HONORÁRIOS + PARCELAS + PAGAMENTOS (via services) ─────────────────────
   let totalFees = 0, totalInstallments = 0, totalPayments = 0;
@@ -555,21 +615,67 @@ async function main() {
   console.log(`${totalPayments} pagamentos criados (via paymentService + overpayment guard)`);
 
   // ── RESUMO ────────────────────────────────────────────────────────────────
-  console.log('\n======================================');
-  console.log('SEED DEMO CONCLUIDO');
-  console.log('======================================');
-  console.log(`Email : ${DEMO_EMAIL}`);
-  console.log(`Senha : ${DEMO_SENHA}`);
-  console.log('--------------------------------------');
-  console.log(`Clientes   : ${clients.length}`);
-  console.log(`Processos  : ${processes.length}`);
-  console.log(`Documentos : ${documents.length} upload + 1 gerado`);
-  console.log(`Secoes     : ${SECOES_DATA.length}`);
-  console.log(`Modelos    : ${MODELOS_DATA.length}`);
-  console.log(`Honorarios : ${totalFees}`);
-  console.log(`Parcelas   : ${totalInstallments}`);
-  console.log(`Pagamentos : ${totalPayments}`);
-  console.log('======================================');
+  // Contagens lidas do banco, não das constantes: se algo deixar de ser criado,
+  // o resumo mostra o número real em vez de repetir a expectativa.
+  const [nClients, nProcesses, nDocs, nUploads, nModelos, nGerados, nSecoes, nVinculos,
+         nFees, nInst, nPay, nPortal] = await Promise.all([
+    Client.countDocuments({ usuarioId: uid, ativo: true }),
+    Process.countDocuments({ usuarioId: uid, ativo: true }),
+    Document.countDocuments({ usuarioId: uid, ativo: true }),
+    Document.countDocuments({ usuarioId: uid, ativo: true, origem: 'upload' }),
+    Document.countDocuments({ usuarioId: uid, ativo: true, ehModelo: true }),
+    Document.countDocuments({ usuarioId: uid, ativo: true, ehModelo: false, origem: 'gerado' }),
+    Secao.countDocuments({ usuarioId: uid, ativo: true }),
+    DocumentoSecao.countDocuments({ usuarioId: uid, ativo: true }),
+    Fee.countDocuments({ usuarioId: uid, ativo: true }),
+    Installment.countDocuments({ usuarioId: uid, ativo: true }),
+    Payment.countDocuments({ usuarioId: uid, ativo: true }),
+    Document.countDocuments({ usuarioId: uid, ativo: true, visivelPortal: true }),
+  ]);
+
+  const porStatus = async (Model) => {
+    const r = await Model.aggregate([
+      { $match: { usuarioId: uid, ativo: true } },
+      { $group: { _id: '$status', n: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]);
+    return r.map(x => `${x._id}=${x.n}`).join('  ');
+  };
+  const statusParcelas = await porStatus(Installment);
+  const statusProcessos = await porStatus(Process);
+
+  const L = '='.repeat(66);
+  console.log(`\n${L}`);
+  console.log('  SEED DE DEMONSTRACAO CONCLUIDO');
+  console.log(L);
+  console.log('  ACESSO');
+  console.log(`    Email    : ${DEMO_EMAIL}`);
+  console.log(`    Senha    : ${DEMO_SENHA}`);
+  console.log('    Frontend : http://localhost:5173');
+  console.log('    Backend  : http://localhost:3001/api');
+  console.log('    (suba o backend com "npm run dev" e o frontend com "npm run dev")');
+  console.log('-'.repeat(66));
+  console.log('  DADOS CRIADOS');
+  console.log(`    Usuario           : 1`);
+  console.log(`    Clientes          : ${nClients}   (5 PF + 3 PJ)`);
+  console.log(`    Processos         : ${nProcesses}  ${statusProcessos}`);
+  console.log(`    Honorarios        : ${nFees}`);
+  console.log(`    Parcelas          : ${nInst}  ${statusParcelas}`);
+  console.log(`    Pagamentos        : ${nPay}`);
+  console.log(`    Documentos        : ${nDocs}  (${nUploads} upload + ${nModelos} modelos + ${nGerados} gerados)`);
+  console.log(`    Secoes            : ${nSecoes}`);
+  console.log(`    Vinculos doc-secao: ${nVinculos}`);
+  console.log(`    Visiveis no portal: ${nPortal}`);
+  console.log('-'.repeat(66));
+  console.log('  LACUNAS INTENCIONAIS (nao sao bug)');
+  console.log('    - Cliente "Beatriz Ramos Pereira" (PF) nao tem profissao.');
+  console.log('      Gerar documento para o processo "Usucapiao de Imovel Urbano"');
+  console.log('      retorna 422 apontando {{profissaoCliente}} — e o comportamento');
+  console.log('      esperado, serve para ver a tela de pendencia.');
+  console.log('    - Cliente "Agro Campos Gerais Ltda" (PJ) nao tem representante');
+  console.log('      legal, para exibir os dois estados na tela de detalhe.');
+  console.log(L);
+
 }
 
 main()
