@@ -24,9 +24,14 @@ const badRequest = (message) => {
   return error;
 };
 
-const conflict = (message) => {
+// `campo` acompanha o 409 para o cliente rotear sem depender do texto da
+// mensagem (o RegisterPage decidia a etapa de retorno por regex; qualquer
+// reescrita do texto quebrava o roteamento em silêncio). A mensagem continua
+// sendo o que o usuário lê; `campo` é só para a lógica.
+const conflict = (message, campo) => {
   const error = new Error(message);
   error.statusCode = 409;
+  if (campo) error.campo = campo;
   return error;
 };
 
@@ -36,13 +41,13 @@ const handleDuplicateKeyError = (error) => {
   if (error?.code === 11000) {
     const pattern = error.keyPattern || {};
     if (pattern.email) {
-      throw conflict("E-mail já cadastrado");
+      throw conflict("E-mail já cadastrado", "email");
     }
     if (pattern.cpf) {
-      throw conflict("CPF já cadastrado");
+      throw conflict("CPF já cadastrado", "cpf");
     }
     if (pattern["oab.numero"] || pattern["oab.estado"]) {
-      throw conflict("OAB já cadastrada nesta UF");
+      throw conflict("OAB já cadastrada nesta UF", "oab");
     }
     throw conflict("Registro duplicado");
   }
@@ -78,13 +83,13 @@ const registerUser = async (data) => {
   const oabEstado = String(data.oab.estado).trim().toUpperCase();
 
   if (await User.findOne({ email: normalizedEmail })) {
-    throw conflict("E-mail já cadastrado");
+    throw conflict("E-mail já cadastrado", "email");
   }
   if (await User.findOne({ cpf })) {
-    throw conflict("CPF já cadastrado");
+    throw conflict("CPF já cadastrado", "cpf");
   }
   if (await User.findOne({ "oab.numero": oabNumero, "oab.estado": oabEstado })) {
-    throw conflict("OAB já cadastrada nesta UF");
+    throw conflict("OAB já cadastrada nesta UF", "oab");
   }
 
   const senhaHash = await bcrypt.hash(data.senha, 10);
@@ -194,7 +199,7 @@ const updateMe = async (userId, payload) => {
     const cpf = somenteDigitos(payload.cpf);
     if (cpf !== usuario.cpf) {
       if (await User.findOne({ cpf, _id: { $ne: userId } })) {
-        throw conflict("CPF já cadastrado");
+        throw conflict("CPF já cadastrado", "cpf");
       }
     }
     usuario.cpf = cpf;
@@ -216,7 +221,7 @@ const updateMe = async (userId, payload) => {
       "oab.estado": usuario.oab.estado,
       _id: { $ne: userId }
     })) {
-      throw conflict("OAB já cadastrada nesta UF");
+      throw conflict("OAB já cadastrada nesta UF", "oab");
     }
   }
 

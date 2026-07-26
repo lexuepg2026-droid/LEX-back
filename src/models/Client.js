@@ -153,6 +153,15 @@ clientSchema.index(
   }
 );
 
+// Rede de segurança do schema (o clientValidation já barra estes casos antes).
+// Precisa de statusCode: sem ele o errorHandler trata como falha interna e
+// mascara a mensagem, que aqui é informação útil para o cliente.
+const erroDeCampoObrigatorio = (message) => {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+};
+
 clientSchema.pre("validate", function () {
   if (this.tipoPessoa === "fisica") {
     this.razaoSocial = undefined;
@@ -161,11 +170,11 @@ clientSchema.pre("validate", function () {
     this.representanteLegal = undefined;
 
     if (!this.nomeCompleto) {
-      throw new Error("Nome completo é obrigatório para pessoa física");
+      throw erroDeCampoObrigatorio("Nome completo é obrigatório para pessoa física");
     }
 
     if (!this.cpf) {
-      throw new Error("CPF é obrigatório para pessoa física");
+      throw erroDeCampoObrigatorio("CPF é obrigatório para pessoa física");
     }
   }
 
@@ -180,15 +189,15 @@ clientSchema.pre("validate", function () {
     this.nacionalidade = undefined;
 
     if (!this.razaoSocial) {
-      throw new Error("Razão social é obrigatória para pessoa jurídica");
+      throw erroDeCampoObrigatorio("Razão social é obrigatória para pessoa jurídica");
     }
 
     if (!this.nomeFantasia) {
-      throw new Error("Nome fantasia é obrigatório para pessoa jurídica");
+      throw erroDeCampoObrigatorio("Nome fantasia é obrigatório para pessoa jurídica");
     }
 
     if (!this.cnpj) {
-      throw new Error("CNPJ é obrigatório para pessoa jurídica");
+      throw erroDeCampoObrigatorio("CNPJ é obrigatório para pessoa jurídica");
     }
   }
 });
