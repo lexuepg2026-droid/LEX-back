@@ -125,16 +125,19 @@ const loginUser = async ({ email, senha }) => {
 
   const usuario = await User.findOne({ email: normalizedEmail });
 
+  // E-mail inexistente e senha errada respondem exatamente igual (401,
+  // "Credenciais inválidas") para não permitir enumeração de contas.
+  // authLimiter já cobre força bruta; não vale complexidade extra aqui.
   if (!usuario) {
-    const error = new Error("Usuário não encontrado");
-    error.statusCode = 404;
+    const error = new Error("Credenciais inválidas");
+    error.statusCode = 401;
     throw error;
   }
 
   const senhaValida = await bcrypt.compare(senha, usuario.senhaHash);
 
   if (!senhaValida) {
-    const error = new Error("Senha inválida");
+    const error = new Error("Credenciais inválidas");
     error.statusCode = 401;
     throw error;
   }
