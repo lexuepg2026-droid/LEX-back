@@ -98,28 +98,41 @@ const normalizeClientData = (data) => {
   return normalizedData;
 };
 
+// `campo` acompanha o 409 para o cliente saber qual input destacar sem ter de
+// interpretar o texto da mensagem. A mensagem segue sendo o que o usuário lê.
+const conflict = (message, campo) => {
+  const error = new Error(message);
+  error.statusCode = 409;
+  if (campo) error.campo = campo;
+  return error;
+};
+
 const handleDuplicateKeyError = (error) => {
   if (error?.code === 11000) {
     if (error.keyPattern?.cpf) {
-      const err = new Error("CPF já cadastrado para este usuário");
-      err.statusCode = 409;
-      throw err;
+      throw conflict("CPF já cadastrado para este usuário", "cpf");
     }
     if (error.keyPattern?.cnpj) {
-      const err = new Error("CNPJ já cadastrado para este usuário");
-      err.statusCode = 409;
-      throw err;
+      throw conflict("CNPJ já cadastrado para este usuário", "cnpj");
     }
     if (error.keyPattern?.email) {
-      const err = new Error("Email já cadastrado para este usuário");
-      err.statusCode = 409;
-      throw err;
+      throw conflict("Email já cadastrado para este usuário", "email");
     }
-    const err = new Error("Registro duplicado para este usuário");
-    err.statusCode = 409;
-    throw err;
+    throw conflict("Registro duplicado para este usuário");
   }
   throw error;
+};
+
+// ID malformado é erro de requisição, não "não encontrado": 404 sugere que o
+// identificador poderia existir. Sem esta checagem o Mongoose lançaria
+// CastError, que o errorHandler também converte em 400 — aqui a mensagem sai
+// mais específica e a query nem chega ao banco.
+const assertIdValido = (clientId) => {
+  if (!mongoose.Types.ObjectId.isValid(clientId)) {
+    const err = new Error("Identificador de cliente inválido");
+    err.statusCode = 400;
+    throw err;
+  }
 };
 
 const createClient = async (usuarioId, data) => {
@@ -160,17 +173,13 @@ const getAllClients = async (usuarioId, { page = 1, limit = 20, busca } = {}) =>
 };
 
 const getClientById = async (usuarioId, clientId) => {
-  if (!mongoose.Types.ObjectId.isValid(clientId)) {
-    return null;
-  }
+  assertIdValido(clientId);
 
   return Client.findOne({ _id: clientId, usuarioId, ativo: true });
 };
 
 const updateClient = async (usuarioId, clientId, data) => {
-  if (!mongoose.Types.ObjectId.isValid(clientId)) {
-    return null;
-  }
+  assertIdValido(clientId);
 
   // Carrega o cliente ANTES de validar: o tipo efetivo (payload ou armazenado)
   // é necessário para detectar campos exclusivos no tipo errado mesmo quando o
@@ -247,9 +256,7 @@ const updateClient = async (usuarioId, clientId, data) => {
 };
 
 const deleteClient = async (usuarioId, clientId) => {
-  if (!mongoose.Types.ObjectId.isValid(clientId)) {
-    return null;
-  }
+  assertIdValido(clientId);
 
   const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
   if (!client) return null;
