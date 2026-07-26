@@ -187,6 +187,32 @@ export const validateUpdateDocument = (body) => {
     }
   }
 
+  if (body.origem !== undefined) {
+    data.origem = normalizeString(body.origem);
+
+    if (!ORIGENS_DOCUMENTO.includes(data.origem)) {
+      errors.push(`origem inválida. Valores aceitos: ${ORIGENS_DOCUMENTO.join(", ")}`);
+    }
+  }
+
+  // Aceito só para o service poder recusar a alteração com mensagem própria —
+  // ehModelo é imutável depois da criação.
+  if (body.ehModelo !== undefined) {
+    data.ehModelo = normalizeBoolean(body.ehModelo);
+
+    if (typeof data.ehModelo !== "boolean") {
+      errors.push("ehModelo deve ser booleano");
+    }
+  }
+
+  if (body.visivelPortal !== undefined) {
+    data.visivelPortal = normalizeBoolean(body.visivelPortal);
+
+    if (typeof data.visivelPortal !== "boolean") {
+      errors.push("visivelPortal deve ser booleano");
+    }
+  }
+
   if (body.ativo !== undefined) {
     data.ativo = normalizeBoolean(body.ativo);
 

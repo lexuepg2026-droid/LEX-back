@@ -98,30 +98,67 @@ export const getDocumentByIdService = async (documentId, usuarioId) => {
   return document;
 };
 
+// Campos que o update aceita. `usuarioId` e os campos de geração
+// (textoResolvido, variaveisResolvidas, dataGeracao, geradoDeModeloId) ficam de
+// fora de propósito: documento gerado é congelado e não se reescreve por PATCH.
+const CAMPOS_EDITAVEIS = [
+  "processoId",
+  "nome",
+  "tipo",
+  "descricao",
+  "origem",
+  "visivelPortal",
+  "urlArquivo",
+  "tamanho",
+  "dataUpload"
+];
+
 export const updateDocumentService = async (documentId, usuarioId, payload) => {
-  const existingDocument = await ensureDocumentBelongsToUser(documentId, usuarioId);
+  // Carrega o documento e aplica o merge EM MEMÓRIA, salvando com save().
+  //
+  // findOneAndUpdate não dispara o hook pre("validate"), então toda a validação
+  // condicional do schema (processoId obrigatório fora de modelo, urlArquivo
+  // obrigatório em upload) era contornável pelo update: regra que só valia na
+  // criação não é regra. Mesma correção que a Fase 1.3 aplicou em clientService.
+  const document = await ensureDocumentBelongsToUser(documentId, usuarioId);
 
   if (payload.processoId) {
     await ensureProcessBelongsToUser(payload.processoId, usuarioId);
   }
 
-  const updateData = {
-    ...payload
-  };
+  // ehModelo é imutável depois da criação. Virar modelo descartaria o processo
+  // (o hook zera processoId) e, num upload, deixaria órfão um arquivo real —
+  // perda silenciosa de dado, sem caso de uso legítimo. Modelo se cria por
+  // POST /documents/modelos.
+  if (payload.ehModelo !== undefined && payload.ehModelo !== document.ehModelo) {
+    throw createError(
+      "ehModelo não pode ser alterado após a criação. Crie um modelo por POST /api/documents/modelos.",
+      400,
+      { campo: "ehModelo" }
+    );
+  }
 
-  const updatedDocument = await Document.findOneAndUpdate(
-    {
-      _id: existingDocument._id,
-      usuarioId
-    },
-    updateData,
-    {
-      new: true,
-      runValidators: true
+  // `ativo` sai pelo DELETE, que cascateia nos vínculos. Aceitá-lo aqui criaria
+  // um segundo caminho de exclusão, sem cascata — exatamente o tipo de
+  // inconsistência que a Parte 2 corrige.
+  if (payload.ativo === false) {
+    throw createError(
+      "Use DELETE /api/documents/:id para desativar o documento",
+      400,
+      { campo: "ativo" }
+    );
+  }
+
+  for (const campo of CAMPOS_EDITAVEIS) {
+    if (Object.prototype.hasOwnProperty.call(payload, campo)) {
+      document[campo] = payload[campo];
     }
-  ).populate("processoId", "titulo numeroProcesso status");
+  }
 
-  return updatedDocument;
+  // save() roda o pre("validate") e os validadores do schema.
+  await document.save();
+
+  return document.populate("processoId", "titulo numeroProcesso status");
 };
 
 export const deleteDocumentService = async (documentId, usuarioId) => {
@@ -129,6 +166,20 @@ export const deleteDocumentService = async (documentId, usuarioId) => {
 
   document.ativo = false;
   await document.save();
+
+  // Cascata: sem isso ficavam vínculos ativos apontando para documento inativo,
+  // e uma seção continuava "em uso" por um documento que já não existe — a
+  // exclusão da seção era recusada para sempre.
+  const { modifiedCount } = await DocumentoSecao.updateMany(
+    { documentoId: document._id, usuarioId, ativo: true },
+    { $set: { ativo: false } }
+  );
+
+  if (modifiedCount > 0) {
+    console.log(
+      `[documento ${document._id}] soft delete em cascata: ${modifiedCount} vínculo(s) de seção desativado(s)`
+    );
+  }
 
   return document;
 };
@@ -163,9 +214,33 @@ const aplicarOrdens = async (pares) => {
 const listarVinculosOrdenados = (documentoId, usuarioId) =>
   DocumentoSecao.find({ documentoId, usuarioId, ativo: true }).sort({ ordem: 1 });
 
+// Autocorreção na leitura.
+//
+// A renumeração em duas fases não é transacional: uma queda entre a fase dos
+// negativos e a das ordens definitivas deixaria vínculos com ordem < 1. Em vez
+// de pagar o custo de uma transação para uma janela de milissegundos, a leitura
+// conserta o estado — o `sort({ ordem: 1 })` já traz os negativos primeiro, na
+// sequência relativa correta, então basta reescrever 1..N por cima.
+const autocorrigirOrdens = async (documentoId, usuarioId) => {
+  const vinculos = await listarVinculosOrdenados(documentoId, usuarioId);
+
+  if (!vinculos.some((v) => v.ordem < 1)) return false;
+
+  console.warn(
+    `[documento ${documentoId}] ordens inválidas detectadas (${vinculos
+      .map((v) => v.ordem)
+      .join(", ")}) — renumerando ${vinculos.length} vínculo(s) de 1 a ${vinculos.length}`
+  );
+
+  await aplicarOrdens(vinculos.map((v, i) => ({ _id: v._id, ordem: i + 1 })));
+  return true;
+};
+
 export const listDocumentSecoesService = async (documentoId, usuarioId) => {
   assertIdValido(documentoId);
   await ensureDocumentBelongsToUser(documentoId, usuarioId);
+
+  await autocorrigirOrdens(documentoId, usuarioId);
 
   return DocumentoSecao.find({ documentoId, usuarioId, ativo: true })
     .populate("secaoId", "titulo tipo texto variaveis")

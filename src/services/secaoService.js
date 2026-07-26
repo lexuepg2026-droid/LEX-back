@@ -91,6 +91,12 @@ export const updateSecao = async (usuarioId, secaoId, payload) => {
 };
 
 // Quantos documentos ATIVOS usam esta seção. Usado para bloquear a exclusão.
+//
+// Com a cascata do soft delete de documento, vínculo ativo implica documento
+// ativo, então bastaria contar vínculos. A leitura dos documentos continua
+// porque a mensagem de erro cita os nomes — e, de quebra, o filtro por
+// `ativo: true` mantém o resultado correto mesmo diante de vínculo órfão
+// deixado por alguma base anterior à cascata.
 export const contarDocumentosVinculados = async (usuarioId, secaoId) => {
   const vinculos = await DocumentoSecao.find({
     usuarioId,
@@ -100,8 +106,6 @@ export const contarDocumentosVinculados = async (usuarioId, secaoId) => {
 
   if (vinculos.length === 0) return { total: 0, documentos: [] };
 
-  // O vínculo pode ter sobrevivido a um documento já desativado; conta só os
-  // documentos que ainda estão ativos.
   const documentos = await Document.find({
     _id: { $in: vinculos.map((v) => v.documentoId) },
     usuarioId,

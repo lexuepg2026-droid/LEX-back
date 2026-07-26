@@ -64,6 +64,11 @@ documentoSecaoSchema.index(
   }
 );
 
+// Apoia a checagem de integridade do DELETE /api/secoes/:id, que pergunta
+// "esta seção está em uso?" — busca por secaoId + ativo, sem documentoId, e
+// portanto não aproveita nenhum dos índices compostos acima.
+documentoSecaoSchema.index({ secaoId: 1, ativo: 1 });
+
 const DocumentoSecao = mongoose.model("DocumentoSecao", documentoSecaoSchema);
 
 export default DocumentoSecao;
