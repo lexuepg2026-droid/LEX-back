@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
+import { TIPOS_DOCUMENTO, ORIGENS_DOCUMENTO } from "../models/Document.js";
 
-const TIPOS_DOCUMENTO_VALIDOS = ["petição", "contrato", "sentença", "comprovante"];
+const TIPOS_DOCUMENTO_VALIDOS = TIPOS_DOCUMENTO;
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -63,13 +64,20 @@ export const validateCreateDocument = (body) => {
     tipo: normalizeString(body.tipo),
     descricao: normalizeString(body.descricao),
     urlArquivo: normalizeString(body.urlArquivo),
+    origem: normalizeString(body.origem),
+    ehModelo: body.ehModelo === undefined ? undefined : normalizeBoolean(body.ehModelo),
+    visivelPortal: body.visivelPortal === undefined ? undefined : normalizeBoolean(body.visivelPortal),
     tamanho: normalizeNumber(body.tamanho),
     dataUpload: normalizeDate(body.dataUpload),
     ativo: body.ativo === undefined ? undefined : normalizeBoolean(body.ativo)
   };
 
+  // processoId e urlArquivo são condicionais: modelo não pertence a processo e
+  // documento gerado não tem arquivo. Mesma regra do hook do schema.
   if (!isNonEmptyString(data.processoId)) {
-    errors.push("processoId é obrigatório");
+    if (data.ehModelo !== true) {
+      errors.push("processoId é obrigatório para documento que não é modelo");
+    }
   } else if (!isValidObjectId(data.processoId)) {
     errors.push("processoId inválido");
   }
@@ -84,8 +92,13 @@ export const validateCreateDocument = (body) => {
     errors.push("tipo inválido");
   }
 
-  if (!isNonEmptyString(data.urlArquivo)) {
-    errors.push("urlArquivo é obrigatório");
+  if (data.origem !== undefined && !ORIGENS_DOCUMENTO.includes(data.origem)) {
+    errors.push(`origem inválida. Valores aceitos: ${ORIGENS_DOCUMENTO.join(", ")}`);
+  }
+
+  const origemEfetiva = data.ehModelo === true ? "gerado" : (data.origem || "upload");
+  if (origemEfetiva === "upload" && !isNonEmptyString(data.urlArquivo)) {
+    errors.push('urlArquivo é obrigatório quando origem é "upload"');
   }
 
   if (data.tamanho !== undefined) {
@@ -203,5 +216,32 @@ export const validateDocumentId = (id) => {
 
   return {
     isValid: true
+  };
+};
+// Modelo não recebe processoId nem urlArquivo: o hook do schema descarta o
+// processo e a origem é sempre "gerado".
+export const validateCreateModelo = (body) => {
+  const errors = [];
+
+  const data = {
+    nome: normalizeString(body.nome),
+    tipo: normalizeString(body.tipo),
+    descricao: normalizeString(body.descricao)
+  };
+
+  if (!isNonEmptyString(data.nome)) {
+    errors.push("nome é obrigatório");
+  }
+
+  if (!isNonEmptyString(data.tipo)) {
+    errors.push("tipo é obrigatório");
+  } else if (!TIPOS_DOCUMENTO_VALIDOS.includes(data.tipo)) {
+    errors.push(`tipo inválido. Valores aceitos: ${TIPOS_DOCUMENTO_VALIDOS.join(", ")}`);
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    data
   };
 };
