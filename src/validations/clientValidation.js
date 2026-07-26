@@ -202,7 +202,10 @@ const validateCreateClientPayload = (data) => {
   return null;
 };
 
-const validateUpdateClientPayload = (data) => {
+// tipoPessoaEfetivo = tipo do payload, se enviado; senão o tipo já armazenado
+// (resolvido pelo service). Com ele a exclusividade é sempre verificável, mesmo
+// quando o PATCH não reenvia tipoPessoa.
+const validateUpdateClientPayload = (data, tipoPessoaEfetivo) => {
   const enderecoError = validateEndereco(data.endereco);
   if (enderecoError) {
     return enderecoError;
@@ -212,9 +215,8 @@ const validateUpdateClientPayload = (data) => {
     return "Tipo de pessoa inválido";
   }
 
-  // Exclusividade só é verificável quando o tipo é informado no próprio PATCH.
-  if (data.tipoPessoa !== undefined) {
-    const exclusividadeError = validateExclusividade(data, data.tipoPessoa);
+  if (tipoPessoaEfetivo !== undefined) {
+    const exclusividadeError = validateExclusividade(data, tipoPessoaEfetivo);
     if (exclusividadeError) {
       return exclusividadeError;
     }
@@ -239,7 +241,7 @@ const validateUpdateClientPayload = (data) => {
     return comunsError;
   }
 
-  const representanteError = validateRepresentanteLegal(data.representanteLegal, data.tipoPessoa);
+  const representanteError = validateRepresentanteLegal(data.representanteLegal, tipoPessoaEfetivo);
   if (representanteError) {
     return representanteError;
   }

@@ -168,17 +168,13 @@ const getClientById = async (usuarioId, clientId) => {
 };
 
 const updateClient = async (usuarioId, clientId, data) => {
-  const validationError = clientValidation.validateUpdateClientPayload(data);
-  if (validationError) {
-    const err = new Error(validationError);
-    err.statusCode = 400;
-    throw err;
-  }
-
   if (!mongoose.Types.ObjectId.isValid(clientId)) {
     return null;
   }
 
+  // Carrega o cliente ANTES de validar: o tipo efetivo (payload ou armazenado)
+  // é necessário para detectar campos exclusivos no tipo errado mesmo quando o
+  // PATCH não reenvia tipoPessoa — evita descarte silencioso pelo hook do model.
   const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
 
   if (!client) {
@@ -187,6 +183,13 @@ const updateClient = async (usuarioId, clientId, data) => {
 
   const nextTipoPessoa =
     data.tipoPessoa !== undefined ? data.tipoPessoa : client.tipoPessoa;
+
+  const validationError = clientValidation.validateUpdateClientPayload(data, nextTipoPessoa);
+  if (validationError) {
+    const err = new Error(validationError);
+    err.statusCode = 400;
+    throw err;
+  }
 
   const pick = (campo) => (data[campo] !== undefined ? data[campo] : client[campo]);
 
