@@ -95,6 +95,18 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 
 ---
 
+### 3.6. Scripts disponíveis
+
+| Script | O que faz |
+|--------|-----------|
+| `npm run dev` | Sobe a API com `nodemon` (reload automático), porta 3001. |
+| `npm start` | Sobe a API com `node` puro (sem reload) — uso mais próximo de produção. |
+| `npm run seed:demo` | Cria a conta demo e a massa de dados de teste. Recusa rodar se a demo já existir. |
+| `npm run seed:demo:clean` | Remove a conta demo e todos os dados dela. |
+| `npm run reset:dev` | Derruba as coleções de desenvolvimento (`users`, `clients`, `processes`, `fees`, `installments`, `payments`, `documents`). Abortado se `NODE_ENV=production`. Use quando a base local tiver dados antigos/incompatíveis com o schema atual. |
+
+> Fluxo para recriar a base do zero: `npm run reset:dev && npm run seed:demo`.
+
 ## 4. Frontend (repositório separado)
 
 Clone o repositório do frontend **em outra pasta**, ao lado deste (não precisa estar dentro de `LEX/`):
@@ -129,7 +141,7 @@ App em `http://localhost:5173`. Requer o backend deste repositório já rodando 
 | Login não entra, erro de CORS no console do browser | Porta do Vite (5173) não bate com `CORS_ORIGIN` | Garanta `CORS_ORIGIN=http://localhost:5173,http://localhost:5174` no `.env` e reinicie o backend |
 | Backend encerra com "Erro ao conectar no MongoDB" | IP não liberado no Atlas, ou `MONGO_URI` errada/ausente | Libere o IP em Network Access; confira a `MONGO_URI` |
 | Login retorna 500 "JWT_SECRET não configurado" | `JWT_SECRET` ausente no `.env` | Preencha `JWT_SECRET` |
-| "Muitas tentativas. Tente novamente em 15 minutos." | Rate limiter (10 tentativas / 15 min em `/login` e `/register`) | Aguarde 15 min ou reinicie o backend |
+| "Muitas tentativas de cadastro/login/troca de senha..." | Cada rota tem seu próprio balde por IP, em 15 min: `/register` 5, `/login` 10, `/alterar-senha` 5. A mensagem diz qual limite estourou. | Aguarde 15 min ou reinicie o backend |
 | Login retorna 200 mas a sessão não persiste | Cookie saiu como `Secure` (algum `NODE_ENV=production` no ambiente) | Garanta `NODE_ENV=development` (ou não defina) no ambiente local |
 | `seed:demo` diz que já existe | Conta demo já criada | Rode `npm run seed:demo:clean` antes |
 
@@ -144,7 +156,7 @@ cd LEX-back
 npm install
 cp .env.example .env      # depois preencha MONGO_URI e JWT_SECRET
 npm run seed:demo
-npm run dev               # porta 3001
+npm run dev               # porta 3001 (dev, com reload); ou "npm start" sem reload
 
 # Frontend (outro repositório, outro terminal/pasta)
 git clone https://github.com/lexuepg2026-droid/LEX-front.git
