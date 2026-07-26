@@ -18,6 +18,12 @@ const COLLECTIONS = [
   'installments',
   'payments',
   'documents',
+  'secoes',
+  'documento_secao',
+  // "secaos": nome antigo, da pluralização automática do Mongoose, antes de a
+  // coleção ser fixada como "secoes". Fica na lista para limpar bases que
+  // rodaram a versão inicial da Fase 2A.
+  'secaos',
 ];
 
 async function main() {

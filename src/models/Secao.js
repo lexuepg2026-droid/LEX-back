@@ -55,7 +55,9 @@ const secaoSchema = new mongoose.Schema(
     }
   },
   {
-    timestamps: true
+    timestamps: true,
+    // Explícito: a pluralização automática do Mongoose geraria "secaos".
+    collection: "secoes"
   }
 );
 
