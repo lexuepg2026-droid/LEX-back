@@ -90,16 +90,16 @@ const CLIENTS_DATA = [
 
 // ── Dados: Processos (clienteIdx = índice em clients[]) ──────────────────────
 const PROCESSES_DATA = [
-  { clienteIdx: 0, titulo: 'Indenização por Danos Morais',           numeroProcesso: '0001234-10.2025.8.16.0001', tipoAcao: 'Indenizatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 0, titulo: 'Revisão de Contrato de Financiamento',   numeroProcesso: '0002345-20.2025.8.16.0001', tipoAcao: 'Revisional',    area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 1, titulo: 'Divórcio Litigioso',                     numeroProcesso: '0003456-30.2025.8.16.0002', tipoAcao: 'Divórcio',      area: 'Família',     orgao: 'Vara de Família', comarca: 'Curitiba',     status: 'ativo'     },
-  { clienteIdx: 1, titulo: 'Ação Trabalhista — Verbas Rescisórias',  numeroProcesso: '0004567-40.2024.8.16.0002', tipoAcao: 'Reclamatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'encerrado' },
-  { clienteIdx: 2, titulo: 'Inventário e Partilha de Bens',          numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventário',    area: 'Família',     orgao: '2ª Vara Família', comarca: 'Ponta Grossa', status: 'ativo'     },
-  { clienteIdx: 3, titulo: 'Execução Fiscal — IPTU',                 numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execução',      area: 'Tributário',  orgao: 'Vara de Fazenda', comarca: 'Curitiba',     status: 'suspenso'  },
-  { clienteIdx: 4, titulo: 'Usucapião de Imóvel Urbano',             numeroProcesso: '0007890-70.2025.8.16.0005', tipoAcao: 'Usucapião',     area: 'Imobiliário', orgao: '3ª Vara Cível',   comarca: 'Londrina',     status: 'ativo'     },
-  { clienteIdx: 5, titulo: 'Ação de Cobrança de Dívida',             numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Maringá',      status: 'ativo'     },
-  { clienteIdx: 6, titulo: 'Disputas Contratuais com Fornecedor',    numeroProcesso: '0009012-90.2024.8.16.0007', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '2ª Vara Cível',   comarca: 'Curitiba',     status: 'encerrado' },
-  { clienteIdx: 7, titulo: 'Processo Administrativo Tributário',     numeroProcesso: '0000123-01.2025.8.16.0008', tipoAcao: 'Administrativo',area: 'Tributário',  orgao: 'SEFAZ-PR',        comarca: 'Curitiba',     status: 'ativo'     },
+  { clienteIdx: 0, titulo: 'Indenização por Danos Morais',           numeroProcesso: '0001234-10.2025.8.16.0001', vara: '1ª Vara do Trabalho de Curitiba', dataDistribuicao: '2025-02-10', tipoAcao: 'Indenizatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'ativo'     },
+  { clienteIdx: 0, titulo: 'Revisão de Contrato de Financiamento',   numeroProcesso: '0002345-20.2025.8.16.0001', vara: '1ª Vara Cível de Curitiba', dataDistribuicao: '2025-03-05', tipoAcao: 'Revisional',    area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Curitiba',     status: 'ativo'     },
+  { clienteIdx: 1, titulo: 'Divórcio Litigioso',                     numeroProcesso: '0003456-30.2025.8.16.0002', vara: '2ª Vara de Família e Sucessões de Curitiba', dataDistribuicao: '2025-01-22', tipoAcao: 'Divórcio',      area: 'Família',     orgao: 'Vara de Família', comarca: 'Curitiba',     status: 'ativo'     },
+  { clienteIdx: 1, titulo: 'Ação Trabalhista — Verbas Rescisórias',  numeroProcesso: '0004567-40.2024.8.16.0002', vara: '3ª Vara do Trabalho de Curitiba', dataDistribuicao: '2024-08-14', tipoAcao: 'Reclamatória', area: 'Trabalhista', orgao: 'TRT 9ª Região',    comarca: 'Curitiba',     status: 'encerrado' },
+  { clienteIdx: 2, titulo: 'Inventário e Partilha de Bens',          numeroProcesso: '0005678-50.2025.8.16.0003', vara: '2ª Vara de Família e Sucessões de Ponta Grossa', dataDistribuicao: '2025-04-02', tipoAcao: 'Inventário',    area: 'Família',     orgao: '2ª Vara Família', comarca: 'Ponta Grossa', status: 'ativo'     },
+  { clienteIdx: 3, titulo: 'Execução Fiscal — IPTU',                 numeroProcesso: '0006789-60.2024.8.16.0004', vara: '1ª Vara da Fazenda Pública de Curitiba', dataDistribuicao: '2024-11-19', tipoAcao: 'Execução',      area: 'Tributário',  orgao: 'Vara de Fazenda', comarca: 'Curitiba',     status: 'suspenso'  },
+  { clienteIdx: 4, titulo: 'Usucapião de Imóvel Urbano',             numeroProcesso: '0007890-70.2025.8.16.0005', vara: '3ª Vara Cível de Londrina', dataDistribuicao: '2025-05-08', tipoAcao: 'Usucapião',     area: 'Imobiliário', orgao: '3ª Vara Cível',   comarca: 'Londrina',     status: 'ativo'     },
+  { clienteIdx: 5, titulo: 'Ação de Cobrança de Dívida',             numeroProcesso: '0008901-80.2025.8.16.0006', vara: '1ª Vara Cível de Maringá', dataDistribuicao: '2025-06-11', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '1ª Vara Cível',   comarca: 'Maringá',      status: 'ativo'     },
+  { clienteIdx: 6, titulo: 'Disputas Contratuais com Fornecedor',    numeroProcesso: '0009012-90.2024.8.16.0007', vara: '2ª Vara Cível de Curitiba', dataDistribuicao: '2024-09-30', tipoAcao: 'Cobrança',      area: 'Cível',       orgao: '2ª Vara Cível',   comarca: 'Curitiba',     status: 'encerrado' },
+  { clienteIdx: 7, titulo: 'Processo Administrativo Tributário',     numeroProcesso: '0000123-01.2025.8.16.0008', vara: 'Setor de Julgamento Administrativo — SEFAZ/PR', dataDistribuicao: '2025-03-18', tipoAcao: 'Administrativo',area: 'Tributário',  orgao: 'SEFAZ-PR',        comarca: 'Curitiba',     status: 'ativo'     },
 ];
 
 // ── Dados: Documentos de upload (processoIdx = índice em processes[]) ────────
@@ -124,7 +124,7 @@ const SECOES_DATA = [
     chave: 'qualificacao_pf',
     titulo: 'Qualificação do outorgante — pessoa física',
     tipo: 'qualificacao',
-    texto: 'OUTORGANTE: {{nomeCliente}}, {{nacionalidadeCliente}}, {{estadoCivilCliente}}, {{profissaoCliente}}, portador(a) do RG nº {{rgCliente}} e inscrito(a) no CPF sob o nº {{cpfCliente}}, residente e domiciliado(a) em {{enderecoCliente}}.',
+    texto: 'OUTORGANTE: {{nomeCliente}}, {{nacionalidadeCliente}}, {{estadoCivilCliente}}, {{profissaoCliente}}, nascido(a) em {{dataNascimentoCliente}}, sexo {{sexoCliente}}, portador(a) do RG nº {{rgCliente}} e inscrito(a) no CPF sob o nº {{cpfCliente}}, residente e domiciliado(a) em {{enderecoCliente}}.\n\nDados para intimação e correspondência: e-mail {{emailCliente}}, telefone {{telefoneCliente}}, município de {{cidadeCliente}}/{{estadoCliente}}, CEP {{cepCliente}}.',
   },
   {
     chave: 'qualificacao_pj',
@@ -136,13 +136,13 @@ const SECOES_DATA = [
     chave: 'outorgado',
     titulo: 'Qualificação do outorgado',
     tipo: 'qualificacao',
-    texto: 'OUTORGADO: {{nomeAdvogado}}, advogado(a) inscrito(a) na OAB/{{estadoOAB}} sob o nº {{numOAB}}, integrante de {{nomeAdvocacia}}, com escritório profissional em {{enderecoEscritorio}}.',
+    texto: 'OUTORGADO: {{nomeAdvogado}}, inscrito(a) no CPF sob o nº {{cpfAdvogado}}, advogado(a) inscrito(a) na OAB/{{estadoOAB}} sob o nº {{numOAB}}, integrante de {{nomeAdvocacia}}, com escritório profissional em {{enderecoEscritorio}}, telefone {{telefoneEscritorio}}, e-mail {{emailEscritorio}} e chave PIX {{chavePix}} para fins de pagamento de honorários.',
   },
   {
     chave: 'poderes_procuracao',
     titulo: 'Objeto — poderes da procuração',
     tipo: 'objeto',
-    texto: 'PODERES: pelo presente instrumento particular de procuração, o(a) outorgante confere ao(à) outorgado(a) os poderes da cláusula ad judicia et extra, para o foro em geral, em especial para atuar nos autos do processo nº {{numeroProcesso}} ({{tituloProcesso}}), ação de natureza {{tipoAcao}}, em trâmite na comarca de {{comarcaProcesso}}, podendo propor as ações cabíveis, contestar, recorrer, requerer, transigir, desistir, firmar compromissos e substabelecer, com ou sem reserva de poderes.',
+    texto: 'PODERES: pelo presente instrumento particular de procuração, o(a) outorgante confere ao(à) outorgado(a) os poderes da cláusula ad judicia et extra, para o foro em geral, em especial para atuar nos autos do processo nº {{numeroProcesso}} ({{tituloProcesso}}), ação de natureza {{tipoAcao}}, da área {{areaProcesso}}, distribuída em {{dataDistribuicao}} perante {{orgaoProcesso}}, {{varaProcesso}}, comarca de {{comarcaProcesso}}, atualmente com status {{statusProcesso}}, podendo propor as ações cabíveis, contestar, recorrer, requerer, transigir, desistir, firmar compromissos e substabelecer, com ou sem reserva de poderes.\n\n{{cidadeEscritorio}}, {{dataAtualExtenso}} ({{dataAtual}}).',
   },
   {
     chave: 'objeto_contrato',
@@ -437,8 +437,10 @@ async function main() {
       tipoAcao:       p.tipoAcao,
       area:           p.area,
       orgao:          p.orgao,
+      vara:           p.vara,
       comarca:        p.comarca,
       status:         p.status,
+      dataDistribuicao: p.dataDistribuicao,
     }))
   );
   console.log(`${processes.length} processos criados`);
