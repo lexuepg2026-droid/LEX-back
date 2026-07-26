@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Client from "../models/Client.js";
+import User from "../models/User.js";
 
 const connectDB = async () => {
   try {
@@ -10,6 +11,9 @@ const connectDB = async () => {
 
     const clientIndexes = await Client.syncIndexes();
     console.log("Indexes sincronizados de Client:", clientIndexes);
+
+    const userIndexes = await User.syncIndexes();
+    console.log("Indexes sincronizados de User:", userIndexes);
   } catch (error) {
     console.error("Erro ao conectar no MongoDB:", error.message);
     process.exit(1);

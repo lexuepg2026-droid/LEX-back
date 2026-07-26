@@ -1,38 +1,21 @@
 import mongoose from "mongoose";
+import enderecoSchema from "./shared/enderecoSchema.js";
 
-const enderecoSchema = new mongoose.Schema(
+const representanteLegalSchema = new mongoose.Schema(
   {
-    cep: {
+    nome: {
+      type: String,
+      trim: true,
+      maxlength: 255
+    },
+    cpf: {
       type: String,
       trim: true
     },
-    pais: {
+    cargo: {
       type: String,
-      trim: true
-    },
-    estado: {
-      type: String,
-      trim: true
-    },
-    cidade: {
-      type: String,
-      trim: true
-    },
-    bairro: {
-      type: String,
-      trim: true
-    },
-    logradouro: {
-      type: String,
-      trim: true
-    },
-    numero: {
-      type: String,
-      trim: true
-    },
-    complemento: {
-      type: String,
-      trim: true
+      trim: true,
+      maxlength: 60
     }
   },
   {
@@ -63,6 +46,38 @@ const clientSchema = new mongoose.Schema(
       trim: true
     },
 
+    // ── Campos exclusivos de pessoa física (todos opcionais nesta fase) ──────
+    rg: {
+      type: String,
+      trim: true,
+      maxlength: 20
+    },
+    dataNascimento: {
+      type: Date
+    },
+    sexo: {
+      type: String,
+      enum: ["feminino", "masculino"]
+    },
+    // estadoCivil: o valor "uniao_estavel" atende ao apontamento da banca sobre "amasiado".
+    // Mantido o termo do Código Civil como valor técnico; o frontend exibe o rótulo
+    // "União estável (amasiado)". São a mesma situação jurídica, nomes diferentes.
+    estadoCivil: {
+      type: String,
+      enum: ["solteiro", "casado", "separado_judicialmente", "divorciado", "viuvo", "uniao_estavel"]
+    },
+    profissao: {
+      type: String,
+      trim: true,
+      maxlength: 60
+    },
+    nacionalidade: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+      default: "brasileira"
+    },
+
     razaoSocial: {
       type: String,
       trim: true
@@ -74,6 +89,11 @@ const clientSchema = new mongoose.Schema(
     cnpj: {
       type: String,
       trim: true
+    },
+    // representanteLegal: quem assina pela empresa em procuração/contrato de PJ.
+    // Opcional nesta fase; obrigatoriedade será reavaliada na Fase 2.
+    representanteLegal: {
+      type: representanteLegalSchema
     },
 
     email: {
@@ -138,6 +158,7 @@ clientSchema.pre("validate", function () {
     this.razaoSocial = undefined;
     this.nomeFantasia = undefined;
     this.cnpj = undefined;
+    this.representanteLegal = undefined;
 
     if (!this.nomeCompleto) {
       throw new Error("Nome completo é obrigatório para pessoa física");
@@ -151,6 +172,12 @@ clientSchema.pre("validate", function () {
   if (this.tipoPessoa === "juridica") {
     this.nomeCompleto = undefined;
     this.cpf = undefined;
+    this.rg = undefined;
+    this.dataNascimento = undefined;
+    this.sexo = undefined;
+    this.estadoCivil = undefined;
+    this.profissao = undefined;
+    this.nacionalidade = undefined;
 
     if (!this.razaoSocial) {
       throw new Error("Razão social é obrigatória para pessoa jurídica");
