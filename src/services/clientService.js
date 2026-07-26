@@ -41,14 +41,35 @@ const normalizeEndereco = (endereco) => {
   };
 };
 
+const normalizeRepresentante = (representante) => {
+  if (representante === undefined) {
+    return undefined;
+  }
+  if (!representante || typeof representante !== "object" || Array.isArray(representante)) {
+    return undefined;
+  }
+  return {
+    nome: representante.nome,
+    cpf: onlyNumbers(representante.cpf),
+    cargo: representante.cargo
+  };
+};
+
 const normalizeClientData = (data) => {
   const normalizedData = {
     tipoPessoa: data.tipoPessoa,
     nomeCompleto: data.nomeCompleto,
     cpf: onlyNumbers(data.cpf),
+    rg: data.rg,
+    dataNascimento: data.dataNascimento,
+    sexo: data.sexo,
+    estadoCivil: data.estadoCivil,
+    profissao: data.profissao,
+    nacionalidade: data.nacionalidade,
     razaoSocial: data.razaoSocial,
     nomeFantasia: data.nomeFantasia,
     cnpj: onlyNumbers(data.cnpj),
+    representanteLegal: normalizeRepresentante(data.representanteLegal),
     email: normalizeEmail(data.email),
     telefone: data.telefone,
     endereco: normalizeEndereco(data.endereco),
@@ -60,11 +81,18 @@ const normalizeClientData = (data) => {
     normalizedData.razaoSocial = undefined;
     normalizedData.nomeFantasia = undefined;
     normalizedData.cnpj = undefined;
+    normalizedData.representanteLegal = undefined;
   }
 
   if (normalizedData.tipoPessoa === "juridica") {
     normalizedData.nomeCompleto = undefined;
     normalizedData.cpf = undefined;
+    normalizedData.rg = undefined;
+    normalizedData.dataNascimento = undefined;
+    normalizedData.sexo = undefined;
+    normalizedData.estadoCivil = undefined;
+    normalizedData.profissao = undefined;
+    normalizedData.nacionalidade = undefined;
   }
 
   return normalizedData;
@@ -160,30 +188,42 @@ const updateClient = async (usuarioId, clientId, data) => {
   const nextTipoPessoa =
     data.tipoPessoa !== undefined ? data.tipoPessoa : client.tipoPessoa;
 
+  const pick = (campo) => (data[campo] !== undefined ? data[campo] : client[campo]);
+
   const nextData = normalizeClientData({
     tipoPessoa: nextTipoPessoa,
-    nomeCompleto:
-      data.nomeCompleto !== undefined ? data.nomeCompleto : client.nomeCompleto,
-    cpf: data.cpf !== undefined ? data.cpf : client.cpf,
-    razaoSocial:
-      data.razaoSocial !== undefined ? data.razaoSocial : client.razaoSocial,
-    nomeFantasia:
-      data.nomeFantasia !== undefined ? data.nomeFantasia : client.nomeFantasia,
-    cnpj: data.cnpj !== undefined ? data.cnpj : client.cnpj,
-    email: data.email !== undefined ? data.email : client.email,
-    telefone: data.telefone !== undefined ? data.telefone : client.telefone,
+    nomeCompleto: pick("nomeCompleto"),
+    cpf: pick("cpf"),
+    rg: pick("rg"),
+    dataNascimento: pick("dataNascimento"),
+    sexo: pick("sexo"),
+    estadoCivil: pick("estadoCivil"),
+    profissao: pick("profissao"),
+    nacionalidade: pick("nacionalidade"),
+    razaoSocial: pick("razaoSocial"),
+    nomeFantasia: pick("nomeFantasia"),
+    cnpj: pick("cnpj"),
+    representanteLegal: pick("representanteLegal"),
+    email: pick("email"),
+    telefone: pick("telefone"),
     endereco: data.endereco !== undefined ? data.endereco : client.endereco,
-    observacoes:
-      data.observacoes !== undefined ? data.observacoes : client.observacoes,
-    ativo: data.ativo !== undefined ? data.ativo : client.ativo
+    observacoes: pick("observacoes"),
+    ativo: pick("ativo")
   });
 
   client.tipoPessoa = nextData.tipoPessoa;
   client.nomeCompleto = nextData.nomeCompleto;
   client.cpf = nextData.cpf;
+  client.rg = nextData.rg;
+  client.dataNascimento = nextData.dataNascimento;
+  client.sexo = nextData.sexo;
+  client.estadoCivil = nextData.estadoCivil;
+  client.profissao = nextData.profissao;
+  client.nacionalidade = nextData.nacionalidade;
   client.razaoSocial = nextData.razaoSocial;
   client.nomeFantasia = nextData.nomeFantasia;
   client.cnpj = nextData.cnpj;
+  client.representanteLegal = nextData.representanteLegal;
   client.email = nextData.email;
   client.telefone = nextData.telefone;
 

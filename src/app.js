@@ -21,7 +21,7 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').spli
 app.use(cors({
   origin: allowedOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(cookieParser());

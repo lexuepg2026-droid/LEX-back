@@ -25,20 +25,63 @@ const DEMO_SENHA = 'SeedDemo123!';
 const IS_CLEAN   = process.argv.includes('--clean');
 
 // ── Dados: Clientes ───────────────────────────────────────────────────────────
+// CPF/CNPJ apenas com dígitos e com dígitos verificadores válidos (a nova
+// validação rejeita máscara/sequências inválidas). PF com todos os campos
+// preenchidos para permitir geração de documentos na Fase 2.
 const CLIENTS_DATA = [
-  { tipoPessoa: 'fisica',   nomeCompleto: 'Ana Lima Santos',           cpf:  '100.200.300-40', email: 'ana.lima@demo.lex',           telefone: '(41) 99100-2003' },
-  { tipoPessoa: 'fisica',   nomeCompleto: 'Carlos Eduardo Ferreira',   cpf:  '200.300.400-50', email: 'carlos.ferreira@demo.lex',    telefone: '(41) 99200-3004' },
-  { tipoPessoa: 'fisica',   nomeCompleto: 'Maria Aparecida Costa',     cpf:  '300.400.500-60', email: 'maria.costa@demo.lex',        telefone: '(41) 99300-4005' },
-  { tipoPessoa: 'fisica',   nomeCompleto: 'João Paulo Oliveira',       cpf:  '400.500.600-70', email: 'joao.oliveira@demo.lex',      telefone: '(41) 99400-5006' },
-  { tipoPessoa: 'fisica',   nomeCompleto: 'Beatriz Ramos Pereira',     cpf:  '500.600.700-80', email: 'beatriz.pereira@demo.lex',    telefone: '(41) 99500-6007' },
-  { tipoPessoa: 'fisica',   nomeCompleto: 'Roberto Silva Mendes',      cpf:  '600.700.800-90', email: 'roberto.mendes@demo.lex',     telefone: '(41) 99600-7008' },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'Ana Lima Santos', cpf: '11144477735',
+    email: 'ana.lima@demo.lex', telefone: '(41) 99100-2003',
+    rg: '12.345.678-9', dataNascimento: '1988-03-12', sexo: 'feminino', estadoCivil: 'solteiro',
+    profissao: 'Engenheira Civil', nacionalidade: 'brasileira',
+    endereco: { cep: '80010-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Centro', logradouro: 'Rua XV de Novembro', numero: '100', complemento: 'Apto 12' },
+  },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'Carlos Eduardo Ferreira', cpf: '12345678062',
+    email: 'carlos.ferreira@demo.lex', telefone: '(41) 99200-3004',
+    rg: '23.456.789-0', dataNascimento: '1979-07-25', sexo: 'masculino', estadoCivil: 'casado',
+    profissao: 'Administrador', nacionalidade: 'brasileira',
+    endereco: { cep: '80020-100', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Batel', logradouro: 'Av. do Batel', numero: '1500' },
+  },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'Maria Aparecida Costa', cpf: '98765432029',
+    email: 'maria.costa@demo.lex', telefone: '(41) 99300-4005',
+    rg: '34.567.890-1', dataNascimento: '1992-11-03', sexo: 'feminino', estadoCivil: 'uniao_estavel',
+    profissao: 'Professora', nacionalidade: 'brasileira',
+    endereco: { cep: '84010-000', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa', bairro: 'Centro', logradouro: 'Rua Sant\'Ana', numero: '250' },
+  },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'João Paulo Oliveira', cpf: '24681357090',
+    email: 'joao.oliveira@demo.lex', telefone: '(41) 99400-5006',
+    rg: '45.678.901-2', dataNascimento: '1975-01-19', sexo: 'masculino', estadoCivil: 'divorciado',
+    profissao: 'Contador', nacionalidade: 'brasileira',
+    endereco: { cep: '86010-000', pais: 'Brasil', estado: 'PR', cidade: 'Londrina', bairro: 'Centro', logradouro: 'Av. Higienópolis', numero: '800' },
+  },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'Beatriz Ramos Pereira', cpf: '13579246070',
+    email: 'beatriz.pereira@demo.lex', telefone: '(41) 99500-6007',
+    rg: '56.789.012-3', dataNascimento: '1983-09-30', sexo: 'feminino', estadoCivil: 'viuvo',
+    profissao: 'Médica', nacionalidade: 'brasileira',
+    endereco: { cep: '87010-000', pais: 'Brasil', estado: 'PR', cidade: 'Maringá', bairro: 'Zona 7', logradouro: 'Av. Colombo', numero: '3200' },
+  },
+  {
+    tipoPessoa: 'fisica', nomeCompleto: 'Roberto Silva Mendes', cpf: '86420975310',
+    email: 'roberto.mendes@demo.lex', telefone: '(41) 99600-7008',
+    rg: '67.890.123-4', dataNascimento: '1968-05-08', sexo: 'masculino', estadoCivil: 'separado_judicialmente',
+    profissao: 'Empresário', nacionalidade: 'brasileira',
+    endereco: { cep: '80050-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Juvevê', logradouro: 'Rua Mateus Leme', numero: '500' },
+  },
   {
     tipoPessoa: 'juridica', razaoSocial: 'Construtora Horizonte Ltda', nomeFantasia: 'Horizonte Construções',
-    cnpj: '10.200.300/0001-40', email: 'financeiro@horizonte-demo.lex', telefone: '(41) 3200-1040',
+    cnpj: '11222333000181', email: 'financeiro@horizonte-demo.lex', telefone: '(41) 3200-1040',
+    representanteLegal: { nome: 'Fernando Horizonte de Souza', cpf: '10120230364', cargo: 'Diretor Administrativo' },
+    endereco: { cep: '81050-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Portão', logradouro: 'Av. República Argentina', numero: '2500' },
   },
   {
     tipoPessoa: 'juridica', razaoSocial: 'Tech Solutions Brasil S.A.', nomeFantasia: 'TechSol Brasil',
-    cnpj: '20.300.400/0001-50', email: 'juridico@techsol-demo.lex',     telefone: '(41) 3300-2050',
+    cnpj: '20304050000170', email: 'juridico@techsol-demo.lex', telefone: '(41) 3300-2050',
+    representanteLegal: { nome: 'Juliana Alves Tavares', cpf: '20230340431', cargo: 'Sócia-Administradora' },
+    endereco: { cep: '80230-000', pais: 'Brasil', estado: 'PR', cidade: 'Curitiba', bairro: 'Rebouças', logradouro: 'Av. Sete de Setembro', numero: '4200' },
   },
 ];
 
@@ -270,7 +313,24 @@ async function main() {
 
   // ── USUARIO DEMO ──────────────────────────────────────────────────────────
   const senhaHash = await bcrypt.hash(DEMO_SENHA, 10);
-  const user = await User.create({ nomeCompleto: 'Demo LEX', email: DEMO_EMAIL, senhaHash });
+  const user = await User.create({
+    nomeCompleto: 'Demo LEX Advocacia',
+    email: DEMO_EMAIL,
+    senhaHash,
+    cpf: '52998224725',
+    telefone: '(42) 99888-7766',
+    oab: { numero: '123456', estado: 'PR' },
+    advocacia: {
+      nome: 'Demo LEX Sociedade Individual de Advocacia',
+      chavePix: 'seed-demo@lex.dev',
+      instagram: '@demolex.adv',
+      site: 'https://demolex.adv.br',
+    },
+    endereco: {
+      cep: '84010-330', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa',
+      bairro: 'Centro', logradouro: 'Rua Doutor Colares', numero: '400', complemento: 'Sala 5',
+    },
+  });
   const uid = user._id;
   console.log(`Usuario demo criado: ${DEMO_EMAIL}`);
 
