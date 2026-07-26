@@ -1,10 +1,20 @@
+import mongoose from "mongoose";
 import Document from "../models/Document.js";
 import Process from "../models/Process.js";
+import Secao from "../models/Secao.js";
+import DocumentoSecao from "../models/DocumentoSecao.js";
 
-const createError = (message, statusCode) => {
+const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  Object.assign(error, extra);
   return error;
+};
+
+const assertIdValido = (id, rotulo = "documento") => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw createError(`Identificador de ${rotulo} inválido`, 400);
+  }
 };
 
 const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
@@ -36,7 +46,10 @@ const ensureDocumentBelongsToUser = async (documentId, usuarioId) => {
 };
 
 export const createDocumentService = async (usuarioId, payload) => {
-  await ensureProcessBelongsToUser(payload.processoId, usuarioId);
+  // Modelo não pertence a processo — só validamos o vínculo quando ele existe.
+  if (payload.processoId) {
+    await ensureProcessBelongsToUser(payload.processoId, usuarioId);
+  }
 
   const document = await Document.create({
     usuarioId,
@@ -44,6 +57,9 @@ export const createDocumentService = async (usuarioId, payload) => {
     nome: payload.nome,
     tipo: payload.tipo,
     descricao: payload.descricao,
+    origem: payload.origem,
+    ehModelo: payload.ehModelo,
+    visivelPortal: payload.visivelPortal,
     urlArquivo: payload.urlArquivo,
     tamanho: payload.tamanho,
     dataUpload: payload.dataUpload,
@@ -115,4 +131,150 @@ export const deleteDocumentService = async (documentId, usuarioId) => {
   await document.save();
 
   return document;
+};
+// ═══════════════════════════════════════════════════════════════════════════
+// Composição: vínculos documento ↔ seção
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Reescreve as ordens em DUAS FASES, numa única bulkWrite ordenada.
+//
+// O índice único {documentoId, ordem} é verificado a cada operação, não ao fim
+// do lote. Reatribuir 1..N direto colide no meio do caminho: inverter [1,2]
+// tentaria gravar ordem 2 enquanto o outro vínculo ainda a ocupa.
+//
+// Fase 1 desloca todos para um intervalo temporário negativo — que nunca colide
+// com ordem real (>= 1) nem consigo mesmo. Fase 2 grava as ordens definitivas,
+// já com todas as posições livres. Os negativos passam porque bulkWrite não
+// roda os validators do schema (o `min: 1` vale para save()/create()).
+const aplicarOrdens = async (pares) => {
+  if (pares.length === 0) return;
+
+  const ops = [];
+  pares.forEach(({ _id }, i) => {
+    ops.push({ updateOne: { filter: { _id }, update: { $set: { ordem: -(i + 1) } } } });
+  });
+  pares.forEach(({ _id, ordem }) => {
+    ops.push({ updateOne: { filter: { _id }, update: { $set: { ordem } } } });
+  });
+
+  await DocumentoSecao.bulkWrite(ops, { ordered: true });
+};
+
+const listarVinculosOrdenados = (documentoId, usuarioId) =>
+  DocumentoSecao.find({ documentoId, usuarioId, ativo: true }).sort({ ordem: 1 });
+
+export const listDocumentSecoesService = async (documentoId, usuarioId) => {
+  assertIdValido(documentoId);
+  await ensureDocumentBelongsToUser(documentoId, usuarioId);
+
+  return DocumentoSecao.find({ documentoId, usuarioId, ativo: true })
+    .populate("secaoId", "titulo tipo texto variaveis")
+    .sort({ ordem: 1 });
+};
+
+export const vincularSecaoService = async (documentoId, usuarioId, { secaoId, ordem } = {}) => {
+  assertIdValido(documentoId);
+  assertIdValido(secaoId, "seção");
+  await ensureDocumentBelongsToUser(documentoId, usuarioId);
+
+  const secao = await Secao.findOne({ _id: secaoId, usuarioId, ativo: true });
+  if (!secao) {
+    throw createError("Seção não encontrada para este usuário", 404);
+  }
+
+  const jaVinculada = await DocumentoSecao.findOne({
+    documentoId,
+    secaoId,
+    usuarioId,
+    ativo: true
+  });
+  if (jaVinculada) {
+    throw createError("Esta seção já está vinculada ao documento", 409, { campo: "secaoId" });
+  }
+
+  const atuais = await listarVinculosOrdenados(documentoId, usuarioId);
+
+  // Ordem omitida anexa ao final; informada insere na posição, empurrando as
+  // seguintes. Fora do intervalo é encaixada na borda mais próxima.
+  const posicao =
+    ordem === undefined || ordem === null
+      ? atuais.length + 1
+      : Math.min(Math.max(parseInt(ordem, 10) || 1, 1), atuais.length + 1);
+
+  // Cria fora da faixa disputada para não colidir com quem ainda ocupa a posição.
+  const novo = await DocumentoSecao.create({
+    usuarioId,
+    documentoId,
+    secaoId,
+    ordem: atuais.length + 1000
+  });
+
+  const sequencia = [...atuais];
+  sequencia.splice(posicao - 1, 0, novo);
+  await aplicarOrdens(sequencia.map((v, i) => ({ _id: v._id, ordem: i + 1 })));
+
+  return DocumentoSecao.findById(novo._id).populate("secaoId", "titulo tipo texto variaveis");
+};
+
+export const desvincularSecaoService = async (documentoId, usuarioId, secaoId) => {
+  assertIdValido(documentoId);
+  assertIdValido(secaoId, "seção");
+  await ensureDocumentBelongsToUser(documentoId, usuarioId);
+
+  const vinculo = await DocumentoSecao.findOne({
+    documentoId,
+    secaoId,
+    usuarioId,
+    ativo: true
+  });
+  if (!vinculo) {
+    throw createError("Seção não está vinculada a este documento", 404);
+  }
+
+  vinculo.ativo = false;
+  await vinculo.save();
+
+  // Renumera o que sobrou para não deixar buraco na sequência.
+  const restantes = await listarVinculosOrdenados(documentoId, usuarioId);
+  await aplicarOrdens(restantes.map((v, i) => ({ _id: v._id, ordem: i + 1 })));
+
+  return { message: "Seção desvinculada do documento", secoesRestantes: restantes.length };
+};
+
+export const reordenarSecoesService = async (documentoId, usuarioId, secoes) => {
+  assertIdValido(documentoId);
+  await ensureDocumentBelongsToUser(documentoId, usuarioId);
+
+  if (!Array.isArray(secoes) || secoes.length === 0) {
+    throw createError("Informe o array `secoes` com os ids na ordem desejada", 400);
+  }
+
+  const idsInformados = secoes.map(String);
+  if (new Set(idsInformados).size !== idsInformados.length) {
+    throw createError("O array `secoes` contém ids repetidos", 400);
+  }
+
+  const atuais = await listarVinculosOrdenados(documentoId, usuarioId);
+  const idsAtuais = atuais.map((v) => String(v.secaoId));
+
+  // Nem faltando nem sobrando: reordenar é permutar, não incluir nem remover.
+  const faltando = idsAtuais.filter((id) => !idsInformados.includes(id));
+  const sobrando = idsInformados.filter((id) => !idsAtuais.includes(id));
+
+  if (faltando.length > 0 || sobrando.length > 0) {
+    throw createError(
+      "O array `secoes` deve conter exatamente as seções vinculadas ao documento",
+      400,
+      { errors: { faltando, sobrando, esperado: idsAtuais.length, recebido: idsInformados.length } }
+    );
+  }
+
+  const porSecaoId = new Map(atuais.map((v) => [String(v.secaoId), v]));
+  await aplicarOrdens(
+    idsInformados.map((secaoId, i) => ({ _id: porSecaoId.get(secaoId)._id, ordem: i + 1 }))
+  );
+
+  return DocumentoSecao.find({ documentoId, usuarioId, ativo: true })
+    .populate("secaoId", "titulo tipo texto variaveis")
+    .sort({ ordem: 1 });
 };
