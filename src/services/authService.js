@@ -227,7 +227,19 @@ const updateMe = async (userId, payload) => {
 
   if (payload.advocacia && typeof payload.advocacia === "object") {
     if (!usuario.advocacia) usuario.advocacia = {};
-    mergePresent(usuario.advocacia, payload.advocacia, ["nome", "chavePix", "instagram", "site"]);
+    mergePresent(usuario.advocacia, payload.advocacia, [
+      "nome", "chavePix", "instagram", "site", "logoBase64"
+    ]);
+
+    // Remover o logo é mandar null ou "". Guardar a string vazia faria o
+    // renderizador tratar "tem logo" como verdadeiro e montar o cabeçalho com
+    // uma imagem que não existe — `undefined` tira o campo do documento.
+    if (
+      Object.prototype.hasOwnProperty.call(payload.advocacia, "logoBase64") &&
+      !payload.advocacia.logoBase64
+    ) {
+      usuario.advocacia.logoBase64 = undefined;
+    }
   }
 
   if (payload.endereco && typeof payload.endereco === "object") {
