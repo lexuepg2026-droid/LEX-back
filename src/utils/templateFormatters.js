@@ -1,4 +1,5 @@
 import { somenteDigitos, formatarCPF, formatarCNPJ } from "./documentos.js";
+import { valorPorExtenso } from "./numeroPorExtenso.js";
 
 // Formatadores aplicados aos valores antes de entrarem no texto do documento.
 // Todos devolvem "" para entrada vazia — quem decide o que fazer com a lacuna é
@@ -105,6 +106,45 @@ export const sexo = (valor) => (vazio(valor) ? "" : ROTULOS_SEXO[valor] || "");
 export const estadoCivil = (valor) =>
   vazio(valor) ? "" : ROTULOS_ESTADO_CIVIL[valor] || "";
 
+// ── Honorário ───────────────────────────────────────────────────────────────
+
+// "R$ 5.000,00". Zero é valor legítimo num contrato (honorário pro bono, custas
+// isentas), então não cai no `vazio` — só null/undefined/"" caem.
+export const moeda = (valor) => {
+  if (valor === undefined || valor === null || valor === "") return "";
+  const numero = typeof valor === "number" ? valor : Number(valor);
+  if (!Number.isFinite(numero)) return "";
+  return numero.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2
+  });
+};
+
+// "cinco mil reais" — o extenso que o contrato exige ao lado dos algarismos.
+export const extenso = (valor) => {
+  if (valor === undefined || valor === null || valor === "") return "";
+  return valorPorExtenso(valor);
+};
+
+const ROTULOS_TIPO_HONORARIO = {
+  fixo: "fixo",
+  percentual: "percentual",
+  custas: "custas processuais"
+};
+
+export const tipoHonorario = (valor) =>
+  vazio(valor) ? "" : ROTULOS_TIPO_HONORARIO[valor] || "";
+
+// Contagem simples. Zero devolve "" de propósito: "em 0 parcelas" não é frase
+// que se escreva em contrato — vira pendência, e a advogada corrige.
+export const inteiro = (valor) => {
+  if (valor === undefined || valor === null || valor === "") return "";
+  const numero = typeof valor === "number" ? valor : Number(valor);
+  if (!Number.isFinite(numero) || numero <= 0) return "";
+  return String(Math.trunc(numero));
+};
+
 export default {
   texto,
   data,
@@ -115,5 +155,9 @@ export default {
   telefone,
   endereco,
   sexo,
-  estadoCivil
+  estadoCivil,
+  moeda,
+  extenso,
+  tipoHonorario,
+  inteiro
 };
