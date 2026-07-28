@@ -618,7 +618,7 @@ async function main() {
       uid,
       {
         processoId: litisconsorcio._id.toString(),
-        clienteId:  (participante.cliente._id ?? participante.cliente).toString(),
+        clienteId:  (participante.clienteId._id ?? participante.clienteId).toString(),
       }
     ));
   }
@@ -779,7 +779,7 @@ async function main() {
   console.log('  LITISCONSORCIO (o caso da Fase 2B)');
   console.log(`    Processo "${litisconsorcio.titulo}" tem 2 participantes:`);
   litisconsorcio.participantes.forEach(p => {
-    const nome = p.cliente?.nomeCompleto ?? p.cliente?.razaoSocial ?? '(sem nome)';
+    const nome = p.clienteId?.nomeCompleto ?? p.clienteId?.razaoSocial ?? '(sem nome)';
     console.log(`      - ${nome} [${p.papel}]${p.principal ? ' (principal)' : ''}`);
   });
   console.log('    Foram geradas 2 procuracoes do MESMO modelo, uma por cliente,');

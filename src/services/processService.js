@@ -154,13 +154,18 @@ const anexarParticipantes = async (usuarioId, processos) => {
     processos.map((p) => p._id)
   );
 
+  // `clienteId` populado, e não renomeado para `cliente`: é a convenção do
+  // repositório (feeService popula `processoId` no lugar) e faz esta resposta
+  // ter exatamente a mesma forma da de GET /api/processes/:id/clientes. Duas
+  // formas para o mesmo objeto obrigariam o frontend a saber de qual endpoint
+  // o participante veio.
   const porProcesso = new Map();
   for (const vinculo of vinculos) {
     const chave = String(vinculo.processoId);
     if (!porProcesso.has(chave)) porProcesso.set(chave, []);
     porProcesso.get(chave).push({
       _id: vinculo._id,
-      cliente: vinculo.clienteId,
+      clienteId: vinculo.clienteId,
       papel: vinculo.papel,
       principal: vinculo.principal
     });
