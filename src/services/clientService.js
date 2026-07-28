@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Client from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
+import { contarProcessosDoCliente } from "./processoClienteService.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -255,11 +256,30 @@ const updateClient = async (usuarioId, clientId, data) => {
   return client;
 };
 
+// AUDITORIA (Fase 2B): até aqui o soft delete de cliente não verificava
+// processo nenhum — nem pelo `clienteId` antigo de Process. Um cliente com
+// processo em andamento saía do cadastro e o processo ficava apontando para um
+// registro inativo, que a listagem já não populava.
+//
+// A verificação passa a existir e olha a JUNÇÃO, não `Process.clientePrincipalId`:
+// a junção é a verdade sobre quem participa, e um cliente pode ser
+// litisconsorte sem nunca ser o principal de coisa alguma. Mesma regra de
+// honorário (parcelas vinculadas) e parcela (pagamentos vinculados).
 const deleteClient = async (usuarioId, clientId) => {
   assertIdValido(clientId);
 
   const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
   if (!client) return null;
+
+  const vinculosAtivos = await contarProcessosDoCliente(usuarioId, clientId);
+
+  if (vinculosAtivos > 0) {
+    const plural = vinculosAtivos === 1 ? "processo" : "processos";
+    throw conflict(
+      `Não é possível excluir este cliente: ele participa de ${vinculosAtivos} ${plural} ativo${vinculosAtivos === 1 ? "" : "s"}. Desvincule-o dos processos antes.`
+    );
+  }
+
   client.ativo = false;
   await client.save();
   return client;
