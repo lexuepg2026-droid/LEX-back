@@ -1,14 +1,35 @@
 import mongoose from "mongoose";
-import Client from "../models/Client.js";
 import Process from "../models/Process.js";
+import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
+  normalizarClientesDoPayload,
   validateCreateProcess,
   validateProcessId,
   validateUpdateProcess
 } from "../validations/processValidation.js";
+import {
+  assertClientesDoUsuario,
+  CAMPOS_CLIENTE_POPULADO,
+  desativarVinculosDoProcesso,
+  ehColisaoDeCodigoAcesso,
+  listarVinculosDeProcessos,
+  montarVinculos
+} from "./processoClienteService.js";
+
+const createError = (message, statusCode) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+// Campos que descrevem os participantes. Não são colunas de Process: são
+// consumidos aqui e nunca chegam ao documento gravado.
+const CAMPOS_DE_PARTICIPANTES = ["clientes", "clienteId", "clientePrincipalId"];
 
 const normalizePayload = (data) => {
   const payload = { ...data };
+
+  for (const campo of CAMPOS_DE_PARTICIPANTES) delete payload[campo];
 
   if (payload.titulo !== undefined) payload.titulo = String(payload.titulo).trim();
   if (payload.numeroProcesso !== undefined) payload.numeroProcesso = String(payload.numeroProcesso).trim();
@@ -34,61 +55,123 @@ const normalizePayload = (data) => {
   return payload;
 };
 
-const toObjectId = (value) => new mongoose.Types.ObjectId(value);
-
-const findClientByUser = async (clienteId, usuarioId) => {
-  return Client.findOne({
-    _id: clienteId,
-    usuarioId,
-    ativo: true
-  });
-};
-
 const handleDuplicateKeyError = (error) => {
   if (error?.code === 11000 && error?.keyPattern?.numeroProcesso) {
-    const customError = new Error("Já existe um processo com este número para este usuário");
-    customError.statusCode = 409;
-    throw customError;
+    throw createError("Já existe um processo com este número para este usuário", 409);
   }
 
   throw error;
 };
 
+// Quantas vezes a transação inteira é repetida quando o índice único de
+// `codigoAcesso` acusa colisão. A geração já consulta antes de gravar, então
+// chegar aqui é raro; o retry existe para a janela de corrida entre a consulta
+// e o insert, não para o caso comum.
+const TENTATIVAS_TRANSACAO = 3;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRIAÇÃO — processo e vínculos na mesma transação
+//
+// Processo e participantes são um fato só: um processo sem cliente não tem a
+// quem atribuir a peça nem quem assine, e um vínculo sem processo é lixo que
+// nenhuma listagem alcança. Gravar em duas etapas soltas deixaria a falha da
+// segunda produzir exatamente um desses estados.
+//
+// Via escolhida: TRANSAÇÃO do MongoDB (`session.withTransaction`), não
+// compensação por rollback manual. O banco é um replica set (Atlas), então
+// transação multi-documento está disponível, e ela é a única opção que fecha
+// a janela por completo: na compensação, o `deleteOne` do processo órfão pode
+// falhar pelo mesmo motivo que derrubou o insert dos vínculos (queda de rede,
+// failover), e aí não há mais a quem recorrer. A transação também esconde o
+// estado intermediário de qualquer leitura concorrente — com compensação, uma
+// listagem disparada no meio enxergaria o processo sem participante.
+// ═══════════════════════════════════════════════════════════════════════════
 export const createProcess = async (usuarioId, data) => {
   const errors = validateCreateProcess(data);
 
   if (errors.length > 0) {
-    const error = new Error(errors.join(", "));
-    error.statusCode = 400;
-    throw error;
+    throw createError(errors.join(", "), 400);
   }
 
-  const normalizedClienteId = toObjectId(data.clienteId);
+  const { clientes } = normalizarClientesDoPayload(data);
 
-  const client = await findClientByUser(normalizedClienteId, usuarioId);
+  // Fora da transação de propósito: é leitura de validação, e mantê-la aqui
+  // encurta o tempo em que a transação fica aberta.
+  await assertClientesDoUsuario(
+    usuarioId,
+    clientes.map((c) => c.clienteId)
+  );
 
-  if (!client) {
-    const error = new Error("Cliente não encontrado para este usuário");
-    error.statusCode = 404;
-    throw error;
+  const payload = normalizePayload(data);
+  const principal = clientes.find((c) => c.principal);
+
+  for (let tentativa = 1; tentativa <= TENTATIVAS_TRANSACAO; tentativa += 1) {
+    const session = await mongoose.startSession();
+
+    try {
+      let criado = null;
+
+      await session.withTransaction(async () => {
+        const [processo] = await Process.create(
+          [
+            {
+              ...payload,
+              usuarioId,
+              clientePrincipalId: new mongoose.Types.ObjectId(principal.clienteId)
+            }
+          ],
+          { session }
+        );
+
+        await montarVinculos(usuarioId, processo._id, clientes, session);
+
+        criado = processo;
+      });
+
+      return getProcessById(usuarioId, criado._id);
+    } catch (error) {
+      if (ehColisaoDeCodigoAcesso(error) && tentativa < TENTATIVAS_TRANSACAO) {
+        continue;
+      }
+      handleDuplicateKeyError(error);
+    } finally {
+      await session.endSession();
+    }
   }
 
-  try {
-    const payload = normalizePayload(data);
-
-    const process = await Process.create({
-      ...payload,
-      usuarioId,
-      clienteId: client._id
-    });
-
-    return process;
-  } catch (error) {
-    handleDuplicateKeyError(error);
-  }
+  throw createError("Não foi possível gerar um código de acesso único para os vínculos", 500);
 };
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Anexa os participantes a processos já lidos. Uma consulta só para a página
+// inteira — não uma por processo.
+const anexarParticipantes = async (usuarioId, processos) => {
+  if (processos.length === 0) return processos;
+
+  const vinculos = await listarVinculosDeProcessos(
+    usuarioId,
+    processos.map((p) => p._id)
+  );
+
+  const porProcesso = new Map();
+  for (const vinculo of vinculos) {
+    const chave = String(vinculo.processoId);
+    if (!porProcesso.has(chave)) porProcesso.set(chave, []);
+    porProcesso.get(chave).push({
+      _id: vinculo._id,
+      cliente: vinculo.clienteId,
+      papel: vinculo.papel,
+      principal: vinculo.principal
+    });
+  }
+
+  for (const processo of processos) {
+    processo.participantes = porProcesso.get(String(processo._id)) ?? [];
+  }
+
+  return processos;
+};
 
 export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status } = {}) => {
   const skip = (page - 1) * limit;
@@ -102,9 +185,19 @@ export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, st
   }
   if (status && typeof status === 'string') filter.status = status;
   const [data, total] = await Promise.all([
-    Process.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("clienteId", "nomeCompleto razaoSocial tipoPessoa"),
+    // `lean` para que `participantes` possa ser anexado ao objeto devolvido —
+    // um documento Mongoose ignoraria a propriedade por não estar no schema.
+    Process.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO)
+      .lean(),
     Process.countDocuments(filter)
   ]);
+
+  await anexarParticipantes(usuarioId, data);
+
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
@@ -112,22 +205,24 @@ export const getProcessById = async (usuarioId, processId) => {
   const errors = validateProcessId(processId);
 
   if (errors.length > 0) {
-    const error = new Error(errors.join(", "));
-    error.statusCode = 400;
-    throw error;
+    throw createError(errors.join(", "), 400);
   }
 
   const process = await Process.findOne({
     _id: processId,
     usuarioId,
     ativo: true
-  }).populate("clienteId", "nomeCompleto razaoSocial tipoPessoa");
+  })
+    .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO)
+    .lean();
 
   if (!process) {
-    const error = new Error("Processo não encontrado");
-    error.statusCode = 404;
-    throw error;
+    throw createError("Processo não encontrado", 404);
   }
+
+  // `listarVinculosDeProcessos` projeta `-codigoAcesso`: o código não sai no
+  // detalhe do processo, só em GET .../clientes/:clienteId/codigo-acesso.
+  await anexarParticipantes(usuarioId, [process]);
 
   return process;
 };
@@ -138,9 +233,7 @@ export const updateProcess = async (usuarioId, processId, data) => {
   const errors = [...idErrors, ...bodyErrors];
 
   if (errors.length > 0) {
-    const error = new Error(errors.join(", "));
-    error.statusCode = 400;
-    throw error;
+    throw createError(errors.join(", "), 400);
   }
 
   const existingProcess = await Process.findOne({
@@ -150,29 +243,32 @@ export const updateProcess = async (usuarioId, processId, data) => {
   });
 
   if (!existingProcess) {
-    const error = new Error("Processo não encontrado");
-    error.statusCode = 404;
-    throw error;
+    throw createError("Processo não encontrado", 404);
+  }
+
+  // Trocar o principal por aqui deixaria `clientePrincipalId` apontando para
+  // um cliente que a junção não marcou como principal — ou que nem participa
+  // do processo. Quem promove é PATCH .../clientes/:clienteId/principal, que
+  // move os dois lados na mesma transação. Reenviar o valor atual é aceito
+  // para o formulário poder devolver o objeto inteiro sem tratamento especial.
+  const novoPrincipal = data.clientePrincipalId ?? data.clienteId;
+
+  if (
+    novoPrincipal !== undefined &&
+    novoPrincipal !== null &&
+    novoPrincipal !== "" &&
+    String(novoPrincipal) !== String(existingProcess.clientePrincipalId)
+  ) {
+    throw createError(
+      "O cliente principal não é alterado por esta rota. Use PATCH /api/processes/:id/clientes/:clienteId/principal",
+      400
+    );
   }
 
   const payload = normalizePayload(data);
 
-  if (payload.clienteId !== undefined) {
-    const normalizedClienteId = toObjectId(payload.clienteId);
-
-    const client = await findClientByUser(normalizedClienteId, usuarioId);
-
-    if (!client) {
-      const error = new Error("Cliente não encontrado para este usuário");
-      error.statusCode = 404;
-      throw error;
-    }
-
-    payload.clienteId = client._id;
-  }
-
   try {
-    const updatedProcess = await Process.findOneAndUpdate(
+    await Process.findOneAndUpdate(
       { _id: processId, usuarioId, ativo: true },
       payload,
       {
@@ -180,20 +276,22 @@ export const updateProcess = async (usuarioId, processId, data) => {
         runValidators: true
       }
     );
-
-    return updatedProcess;
   } catch (error) {
     handleDuplicateKeyError(error);
   }
+
+  return getProcessById(usuarioId, processId);
 };
 
+// Soft delete em cascata: o processo sai e os vínculos saem junto. Vínculo
+// ativo apontando para processo inativo faria o cliente parecer ocupado —
+// e o DELETE /api/clients/:id recusaria a exclusão por um processo que já
+// não existe.
 export const deleteProcess = async (usuarioId, processId) => {
   const errors = validateProcessId(processId);
 
   if (errors.length > 0) {
-    const error = new Error(errors.join(", "));
-    error.statusCode = 400;
-    throw error;
+    throw createError(errors.join(", "), 400);
   }
 
   const process = await Process.findOne({
@@ -203,12 +301,33 @@ export const deleteProcess = async (usuarioId, processId) => {
   });
 
   if (!process) {
-    const error = new Error("Processo não encontrado");
-    error.statusCode = 404;
-    throw error;
+    throw createError("Processo não encontrado", 404);
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    await session.withTransaction(async () => {
+      await Process.updateOne(
+        { _id: processId, usuarioId, ativo: true },
+        { $set: { ativo: false } },
+        { session }
+      );
+
+      await desativarVinculosDoProcesso(usuarioId, processId, session);
+    });
+  } finally {
+    await session.endSession();
   }
 
   process.ativo = false;
-  await process.save();
   return process;
+};
+
+export default {
+  createProcess,
+  listProcesses,
+  getProcessById,
+  updateProcess,
+  deleteProcess
 };

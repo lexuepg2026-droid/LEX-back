@@ -22,7 +22,12 @@ export const ALFABETO_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export const PREFIXO_CODIGO = "LEX";
 export const TAMANHO_SORTEADO = 8;
-export const TAMANHO_CODIGO = 12; // "LEX-" + 4 + "-" + 4
+
+// 13, não 12: "LEX" (3) + "-" + 4 + "-" + 4. A especificação da Fase 2B dizia
+// "12 caracteres" ao lado do formato LEX-XXXX-XXXX, que tem 13 — os dois não
+// podem valer juntos. Vale o formato, que é o que a advogada dita ao telefone
+// e o que define o número de símbolos sorteados (8).
+export const TAMANHO_CODIGO = 13;
 
 // 256 é múltiplo exato de 32, então o mascaramento dos 5 bits baixos distribui
 // os 32 símbolos uniformemente — não há viés de módulo a corrigir.
