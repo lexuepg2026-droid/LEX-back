@@ -8,7 +8,22 @@ const processSchema = new mongoose.Schema(
       required: true,
       index: true
     },
-    clienteId: {
+    // CAMPO DERIVADO — a verdade sobre os participantes está em
+    // `processo_clientes` (model ProcessoCliente), onde um processo pode ter
+    // vários clientes com papéis diferentes.
+    //
+    // Mantido aqui por dois motivos, ambos de leitura:
+    //   1. listagem e detalhe exibem "o cliente do processo" sem um join;
+    //   2. a resolução de variáveis de template usa este cliente quando a
+    //      geração do documento não informa de qual participante ela é.
+    //
+    // Só o processService escreve neste campo, sempre a partir do vínculo
+    // marcado como `principal: true`. Nunca tratar como fonte da verdade: se
+    // divergir da junção, a junção é que está certa.
+    //
+    // O nome anterior era `clienteId` — mentia, sugeria um cliente por
+    // processo. `clientePrincipalId` deixa a desnormalização explícita.
+    clientePrincipalId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
       required: true,
