@@ -14,6 +14,10 @@ const COLLECTIONS = [
   'users',
   'clients',
   'processes',
+  // Junção processo × cliente (Fase 2B). Precisa cair junto: vínculo órfão
+  // reserva `codigoAcesso` no índice único e faz o delete de cliente recusar
+  // exclusão por um processo que já não existe.
+  'processo_clientes',
   'fees',
   'installments',
   'payments',

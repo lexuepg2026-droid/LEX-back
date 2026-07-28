@@ -6,6 +6,7 @@ import connectDB from '../src/config/db.js';
 import User from '../src/models/User.js';
 import Client from '../src/models/Client.js';
 import Process from '../src/models/Process.js';
+import ProcessoCliente from '../src/models/ProcessoCliente.js';
 import Document from '../src/models/Document.js';
 import Secao from '../src/models/Secao.js';
 import DocumentoSecao from '../src/models/DocumentoSecao.js';
@@ -13,6 +14,7 @@ import Fee from '../src/models/Fee.js';
 import Installment from '../src/models/Installment.js';
 import Payment from '../src/models/Payment.js';
 import feeService from '../src/services/feeService.js';
+import { createProcess } from '../src/services/processService.js';
 import { criarInstallment } from '../src/services/installmentService.js';
 import { create as criarPayment } from '../src/services/paymentService.js';
 import { gerarDocumentoService } from '../src/services/documentGenerationService.js';
@@ -100,7 +102,13 @@ const CLIENTS_DATA = [
   },
 ];
 
-// ── Dados: Processos (clienteIdx = índice em clients[]) ──────────────────────
+// ── Dados: Processos ─────────────────────────────────────────────────────────
+// Participantes (Fase 2B — junção processo × cliente):
+//   `clienteIdx`         atalho para o caso comum — participante unico, papel
+//                        'autor', principal;
+//   `clientes: [...]`    forma explicita, para litisconsorcio ou papel
+//                        diferente de 'autor'. Cada item: { idx, papel,
+//                        principal }. Exatamente um principal por processo.
 const PROCESSES_DATA = [
   // clienteIdx: 0-4 = PF (4 = Beatriz, sem profissao) | 5-7 = PJ (7 = sem representante)
   { clienteIdx: 0, titulo: 'Indenizacao por Danos Morais', numeroProcesso: '0001234-10.2025.8.16.0001', tipoAcao: 'Indenizatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '1a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-02-10',
@@ -115,12 +123,22 @@ const PROCESSES_DATA = [
   { clienteIdx: 1, titulo: 'Acao Trabalhista - Verbas Rescisorias', numeroProcesso: '0004567-40.2024.8.16.0002', tipoAcao: 'Reclamatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '3a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'encerrado', dataDistribuicao: '2024-08-14',
     descricao: 'Reclamatoria trabalhista para cobranca de verbas rescisorias nao pagas.',
     observacoes: 'Encerrado por acordo homologado. Valores quitados em duas parcelas.' },
-  { clienteIdx: 2, titulo: 'Inventario e Partilha de Bens', numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventario', area: 'Familia', orgao: '2a Vara Familia', vara: '2a Vara de Familia e Sucessoes de Ponta Grossa', comarca: 'Ponta Grossa', status: 'ativo', dataDistribuicao: '2025-04-02',
+  // LITISCONSORCIO — o caso que justifica a Fase 2B inteira.
+  // Inventario com dois herdeiros no mesmo polo: Maria (autora, principal) e
+  // Joao Paulo (litisconsorte). Papeis diferentes de proposito. Os dois tem
+  // cadastro completo, entao os dois geram procuracao sem pendencia — e e
+  // deste processo que saem os dois documentos do mesmo modelo, mais abaixo.
+  { clientes: [{ idx: 2, papel: 'autor', principal: true },
+               { idx: 3, papel: 'litisconsorte', principal: false }],
+    titulo: 'Inventario e Partilha de Bens', numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventario', area: 'Familia', orgao: '2a Vara Familia', vara: '2a Vara de Familia e Sucessoes de Ponta Grossa', comarca: 'Ponta Grossa', status: 'ativo', dataDistribuicao: '2025-04-02',
     descricao: 'Inventario judicial com quatro herdeiros e imovel rural a partilhar.',
-    observacoes: 'Primeiras declaracoes protocoladas. Aguardando avaliacao do imovel rural.' },
-  { clienteIdx: 3, titulo: 'Execucao Fiscal - IPTU', numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execucao', area: 'Tributario', orgao: 'Vara de Fazenda', vara: '1a Vara da Fazenda Publica de Curitiba', comarca: 'Curitiba', status: 'suspenso', dataDistribuicao: '2024-11-19',
+    observacoes: 'Litisconsorcio ativo: dois herdeiros representados no mesmo processo. Cada um assina a sua propria procuracao.' },
+  // Papel 'reu': na execucao fiscal o cliente e o executado, nao o autor.
+  // Terceiro interessado aparece no processo 9 (cobranca).
+  { clientes: [{ idx: 3, papel: 'reu', principal: true }],
+    titulo: 'Execucao Fiscal - IPTU', numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execucao', area: 'Tributario', orgao: 'Vara de Fazenda', vara: '1a Vara da Fazenda Publica de Curitiba', comarca: 'Curitiba', status: 'suspenso', dataDistribuicao: '2024-11-19',
     descricao: 'Execucao fiscal de IPTU dos exercicios de 2021 a 2023.',
-    observacoes: 'Suspenso por parcelamento administrativo do debito.' },
+    observacoes: 'Suspenso por parcelamento administrativo do debito. Cliente figura no polo passivo.' },
   { clienteIdx: 4, titulo: 'Usucapiao de Imovel Urbano', numeroProcesso: '0007890-70.2025.8.16.0005', tipoAcao: 'Usucapiao', area: 'Imobiliario', orgao: '3a Vara Civel', vara: '3a Vara Civel de Maringa', comarca: 'Maringa', status: 'ativo', dataDistribuicao: '2025-05-08',
     descricao: 'Usucapiao extraordinaria de imovel urbano com posse mansa superior a quinze anos.',
     observacoes: 'Processo do cliente sem profissao cadastrada: usar para ver o 422 da geracao de documento.' },
@@ -130,9 +148,13 @@ const PROCESSES_DATA = [
   { clienteIdx: 6, titulo: 'Processo Administrativo Tributario', numeroProcesso: '0000123-01.2025.8.16.0008', tipoAcao: 'Administrativo', area: 'Tributario', orgao: 'SEFAZ-PR', vara: 'Setor de Julgamento Administrativo - SEFAZ/PR', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-18',
     descricao: 'Defesa em auto de infracao de ICMS com pedido de reducao de multa.',
     observacoes: 'Impugnacao protocolada dentro do prazo de trinta dias.' },
-  { clienteIdx: 7, titulo: 'Acao de Cobranca de Divida', numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobranca', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Ponta Grossa', comarca: 'Ponta Grossa', status: 'encerrado', dataDistribuicao: '2025-06-11',
+  // Segundo caso com mais de um participante, agora entre pessoas juridicas, e
+  // o unico com papel 'terceiro_interessado' — cobre o quarto valor do enum.
+  { clientes: [{ idx: 7, papel: 'autor', principal: true },
+               { idx: 6, papel: 'terceiro_interessado', principal: false }],
+    titulo: 'Acao de Cobranca de Divida', numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobranca', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Ponta Grossa', comarca: 'Ponta Grossa', status: 'encerrado', dataDistribuicao: '2025-06-11',
     descricao: 'Cobranca de duplicatas vencidas emitidas contra cooperativa agricola.',
-    observacoes: 'Encerrado com pagamento integral apos citacao.' },
+    observacoes: 'Encerrado com pagamento integral apos citacao. Tech Solutions figura como terceira interessada na duplicata.' },
 ];
 
 // ── Dados: Documentos de upload (processoIdx = índice em processes[]) ────────
@@ -409,13 +431,16 @@ async function main() {
     const uid = existingUser._id;
     console.log(`Removendo dados do usuario demo (${DEMO_EMAIL})...`);
 
-    const [pay, inst, fee, vinc, sec, doc, proc, cli] = await Promise.all([
+    const [pay, inst, fee, vinc, sec, doc, procCli, proc, cli] = await Promise.all([
       Payment.deleteMany({ usuarioId: uid }),
       Installment.deleteMany({ usuarioId: uid }),
       Fee.deleteMany({ usuarioId: uid }),
       DocumentoSecao.deleteMany({ usuarioId: uid }),
       Secao.deleteMany({ usuarioId: uid }),
       Document.deleteMany({ usuarioId: uid }),
+      // Antes de Process, por leitura: o vinculo é filho do processo. A ordem
+      // não importa aqui (são deleteMany independentes), mas espelha a cascata.
+      ProcessoCliente.deleteMany({ usuarioId: uid }),
       Process.deleteMany({ usuarioId: uid }),
       Client.deleteMany({ usuarioId: uid }),
     ]);
@@ -428,6 +453,7 @@ async function main() {
     console.log(`  ${vinc.deletedCount} vinculos documento-secao`);
     console.log(`  ${sec.deletedCount}  secoes`);
     console.log(`  ${doc.deletedCount}  documentos`);
+    console.log(`  ${procCli.deletedCount} vinculos processo-cliente`);
     console.log(`  ${proc.deletedCount} processos`);
     console.log(`  ${cli.deletedCount}  clientes`);
     console.log(`  1  usuario demo`);
@@ -471,11 +497,25 @@ async function main() {
   );
   console.log(`${clients.length} clientes criados`);
 
-  // ── PROCESSOS (Mongoose direto) ───────────────────────────────────────────
-  const processes = await Promise.all(
-    PROCESSES_DATA.map(p => Process.create({
-      usuarioId:      uid,
-      clienteId:      clients[p.clienteIdx]._id,
+  // ── PROCESSOS (via processService, nunca por insert direto) ───────────────
+  // Passa pelo mesmo caminho da API: valida os participantes, grava processo e
+  // vinculos na mesma transacao e deriva `clientePrincipalId` do principal. Se
+  // a junção regredir, o seed quebra — que é o que se quer de um seed.
+  //
+  // Sequencial, e nao Promise.all: as transacoes concorrem pelo indice unico de
+  // `numeroProcesso` e a paralelizacao so troca clareza por milissegundos.
+  const processes = [];
+  for (const p of PROCESSES_DATA) {
+    const participantes = p.clientes
+      ? p.clientes.map(c => ({
+          clienteId: clients[c.idx]._id.toString(),
+          papel:     c.papel,
+          principal: c.principal === true,
+        }))
+      : [{ clienteId: clients[p.clienteIdx]._id.toString(), papel: 'autor', principal: true }];
+
+    processes.push(await createProcess(uid, {
+      clientes:       participantes,
       titulo:         p.titulo,
       numeroProcesso: p.numeroProcesso,
       tipoAcao:       p.tipoAcao,
@@ -487,9 +527,10 @@ async function main() {
       dataDistribuicao: p.dataDistribuicao,
       descricao:      p.descricao,
       observacoes:    p.observacoes,
-    }))
-  );
-  console.log(`${processes.length} processos criados`);
+    }));
+  }
+  const totalVinculos = processes.reduce((n, p) => n + p.participantes.length, 0);
+  console.log(`${processes.length} processos criados (${totalVinculos} vinculos processo-cliente)`);
 
   // ── DOCUMENTOS (Mongoose direto) ──────────────────────────────────────────
   const documents = await Promise.all(
@@ -565,8 +606,41 @@ async function main() {
     { processoId: processes[7]._id.toString() }
   ));
 
+  // LITISCONSORCIO — a prova da Fase 2B: o MESMO modelo e o MESMO processo,
+  // gerados duas vezes, uma para cada herdeiro. Sai um par de procuracoes com
+  // qualificacoes diferentes. Antes da junção isto era impossivel: a variavel
+  // {{nomeCliente}} so sabia resolver para o cliente unico do processo.
+  const litisconsorcio = processes[4];
+  const geradosLitisconsorcio = [];
+  for (const participante of litisconsorcio.participantes) {
+    geradosLitisconsorcio.push(await gerarDocumentoService(
+      modelosPorChave.procuracao._id,
+      uid,
+      {
+        processoId: litisconsorcio._id.toString(),
+        clienteId:  (participante.cliente._id ?? participante.cliente).toString(),
+      }
+    ));
+  }
+  gerados.push(...geradosLitisconsorcio);
+
   console.log(`${gerados.length} documentos gerados a partir dos modelos:`);
   gerados.forEach(g => console.log(`  "${g.nome}" — ${g.textoResolvido.length} caracteres, 0 pendencias`));
+
+  // Confere que os dois documentos do litisconsorcio saíram com qualificacoes
+  // DIFERENTES. Textos identicos significariam que o clienteId foi ignorado e
+  // ambos caíram no principal — falha silenciosa que o seed nao pode deixar
+  // passar, porque é exatamente o que a fase entrega.
+  const [docA, docB] = geradosLitisconsorcio;
+  if (docA.textoResolvido === docB.textoResolvido) {
+    throw new Error(
+      'Os dois documentos do litisconsorcio saíram com o mesmo texto: o clienteId nao foi aplicado.'
+    );
+  }
+  console.log('  litisconsorcio: 2 procuracoes do mesmo modelo, com qualificacoes distintas:');
+  geradosLitisconsorcio.forEach(g =>
+    console.log(`    -> ${g.variaveisResolvidas.nomeCliente} (CPF ${g.variaveisResolvidas.cpfCliente})`)
+  );
 
   // ── HONORÁRIOS + PARCELAS + PAGAMENTOS (via services) ─────────────────────
   let totalFees = 0, totalInstallments = 0, totalPayments = 0;
@@ -617,10 +691,11 @@ async function main() {
   // ── RESUMO ────────────────────────────────────────────────────────────────
   // Contagens lidas do banco, não das constantes: se algo deixar de ser criado,
   // o resumo mostra o número real em vez de repetir a expectativa.
-  const [nClients, nProcesses, nDocs, nUploads, nModelos, nGerados, nSecoes, nVinculos,
+  const [nClients, nProcesses, nProcCli, nDocs, nUploads, nModelos, nGerados, nSecoes, nVinculos,
          nFees, nInst, nPay, nPortal] = await Promise.all([
     Client.countDocuments({ usuarioId: uid, ativo: true }),
     Process.countDocuments({ usuarioId: uid, ativo: true }),
+    ProcessoCliente.countDocuments({ usuarioId: uid, ativo: true }),
     Document.countDocuments({ usuarioId: uid, ativo: true }),
     Document.countDocuments({ usuarioId: uid, ativo: true, origem: 'upload' }),
     Document.countDocuments({ usuarioId: uid, ativo: true, ehModelo: true }),
@@ -644,6 +719,21 @@ async function main() {
   const statusParcelas = await porStatus(Installment);
   const statusProcessos = await porStatus(Process);
 
+  const papeis = await ProcessoCliente.aggregate([
+    { $match: { usuarioId: uid, ativo: true } },
+    { $group: { _id: '$papel', n: { $sum: 1 } } },
+    { $sort: { _id: 1 } },
+  ]).then(r => r.map(x => `${x._id}=${x.n}`).join('  '));
+
+  // Códigos de acesso do par cliente/processo. Ficam no resumo porque na Fase 3
+  // (portal do cliente) é por eles que se entra — e, sem endpoint de portal
+  // ainda, o terminal do seed é o único lugar onde aparecem. É a mesma via de
+  // leitura restrita do GET .../codigo-acesso: nunca saem em listagem.
+  const vinculosResumo = await ProcessoCliente.find({ usuarioId: uid, ativo: true })
+    .populate('clienteId', 'nomeCompleto razaoSocial')
+    .populate('processoId', 'titulo')
+    .sort({ processoId: 1, principal: -1 });
+
   const L = '='.repeat(66);
   console.log(`\n${L}`);
   console.log('  SEED DE DEMONSTRACAO CONCLUIDO');
@@ -659,6 +749,7 @@ async function main() {
   console.log(`    Usuario           : 1`);
   console.log(`    Clientes          : ${nClients}   (5 PF + 3 PJ)`);
   console.log(`    Processos         : ${nProcesses}  ${statusProcessos}`);
+  console.log(`    Vinculos proc-cli : ${nProcCli}  ${papeis}`);
   console.log(`    Honorarios        : ${nFees}`);
   console.log(`    Parcelas          : ${nInst}  ${statusParcelas}`);
   console.log(`    Pagamentos        : ${nPay}`);
@@ -666,6 +757,33 @@ async function main() {
   console.log(`    Secoes            : ${nSecoes}`);
   console.log(`    Vinculos doc-secao: ${nVinculos}`);
   console.log(`    Visiveis no portal: ${nPortal}`);
+  console.log('-'.repeat(66));
+  console.log('  CODIGOS DE ACESSO POR PAR CLIENTE/PROCESSO (Fase 3 — portal)');
+  console.log('    Nao aparecem em GET /api/processes nem no detalhe. Saem so em');
+  console.log('    GET /api/processes/:id/clientes/:clienteId/codigo-acesso.');
+  {
+    let processoAtual = null;
+    for (const v of vinculosResumo) {
+      const tituloProcesso = v.processoId?.titulo ?? '(processo removido)';
+      if (tituloProcesso !== processoAtual) {
+        processoAtual = tituloProcesso;
+        console.log(`    ${tituloProcesso}`);
+      }
+      const nome = v.clienteId?.nomeCompleto ?? v.clienteId?.razaoSocial ?? '(cliente removido)';
+      const marca = v.principal ? '*' : ' ';
+      console.log(`      ${marca} ${v.codigoAcesso}  ${nome}  [${v.papel}]`);
+    }
+    console.log('    (* = participante principal do processo)');
+  }
+  console.log('-'.repeat(66));
+  console.log('  LITISCONSORCIO (o caso da Fase 2B)');
+  console.log(`    Processo "${litisconsorcio.titulo}" tem 2 participantes:`);
+  litisconsorcio.participantes.forEach(p => {
+    const nome = p.cliente?.nomeCompleto ?? p.cliente?.razaoSocial ?? '(sem nome)';
+    console.log(`      - ${nome} [${p.papel}]${p.principal ? ' (principal)' : ''}`);
+  });
+  console.log('    Foram geradas 2 procuracoes do MESMO modelo, uma por cliente,');
+  console.log('    cada uma com a qualificacao do seu proprio outorgante.');
   console.log('-'.repeat(66));
   console.log('  LACUNAS INTENCIONAIS (nao sao bug)');
   console.log('    - Cliente "Beatriz Ramos Pereira" (PF) nao tem profissao.');
