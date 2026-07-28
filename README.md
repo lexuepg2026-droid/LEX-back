@@ -135,6 +135,41 @@ App em `http://localhost:5173`. Requer o backend deste repositório já rodando 
 
 ---
 
+## 5.1. Lacunas nos modelos de documento
+
+Nem tudo num documento sai do cadastro. Há trechos que a advogada preenche
+depois — o valor combinado na audiência, o nome de uma testemunha, a data que
+ainda depende do cartório.
+
+**Para deixar um espaço a preencher, escreva `[...]` no texto da seção.**
+
+```
+O pagamento será realizado em [...] parcelas, a combinar entre as partes.
+```
+
+O sistema também reconhece, por compatibilidade, linhas de três ou mais
+sublinhados (`___`), usadas para preencher à caneta depois de impresso.
+
+Depois de gerar o documento, o preview devolve a lista de lacunas encontradas,
+com a posição e o trecho ao redor de cada uma.
+
+### Lacuna não é pendência
+
+São coisas diferentes, e a distinção importa:
+
+| | Lacuna | Pendência |
+|---|---|---|
+| O que é | Espaço deixado de propósito (`[...]`) | Variável do catálogo sem valor no cadastro |
+| Exemplo | `em [...] parcelas` | `{{profissaoCliente}}` com o cliente sem profissão |
+| Efeito na geração | Nenhum — o documento é gerado | **Bloqueia** com HTTP 422 |
+| Efeito no download | Nenhum — o arquivo é baixado | — |
+| Como resolver | Preencher no texto final, ou à caneta | Completar o cadastro e gerar de novo |
+
+Lacuna é aviso. O download **nunca** é bloqueado por ela: o documento está
+exatamente como foi pedido.
+
+---
+
 ## 6. Solução de problemas
 
 | Sintoma | Causa provável | Como resolver |
