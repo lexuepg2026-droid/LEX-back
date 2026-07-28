@@ -7,6 +7,7 @@ import DocumentoSecao from "../models/DocumentoSecao.js";
 import { CATALOGO_VARIAVEIS, orientacaoPendencia } from "../config/templateVariables.js";
 import { substituir } from "../utils/templateParser.js";
 import formatadores from "../utils/templateFormatters.js";
+import { buscarVinculoAtivo } from "./processoClienteService.js";
 
 const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -24,15 +25,43 @@ const assertIdValido = (id, rotulo) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // PONTO ÚNICO DE ACOPLAMENTO COM A MODELAGEM DE CLIENTE DO PROCESSO
 //
-// Hoje Process tem `clienteId` (um cliente por processo). A DEC-026 vai
-// transformar isso em N:N com um cliente principal. Todo o resolvedor lê o
-// cliente POR AQUI — quando a junção existir, muda esta função e nada mais.
+// Substitui `resolverClientePrincipal`, da Fase 2A, que só sabia ler o cliente
+// único de Process. Um documento é assinado por UMA pessoa: dois clientes no
+// mesmo processo geram duas procurações, cada uma com a qualificação de quem
+// assina. Por isso o cliente agora é explícito.
+//
+// `clienteId` omitido cai no principal — é o comportamento que mantém as
+// chamadas antigas funcionando. Informado, precisa ter vínculo ATIVO com o
+// processo: sem essa checagem, a advogada emitiria uma procuração qualificando
+// alguém que não é parte, e o vínculo é justamente o que autoriza a peça.
 // ═══════════════════════════════════════════════════════════════════════════
-export const resolverClientePrincipal = async (processo, usuarioId) => {
-  if (!processo?.clienteId) return null;
+export const resolverClienteDoProcesso = async (processo, usuarioId, clienteId) => {
+  const principal = processo?.clientePrincipalId?._id ?? processo?.clientePrincipalId;
+  const informado = clienteId !== undefined && clienteId !== null && clienteId !== "";
 
-  const clienteId = processo.clienteId?._id ?? processo.clienteId;
-  return Client.findOne({ _id: clienteId, usuarioId, ativo: true });
+  if (informado && !mongoose.Types.ObjectId.isValid(clienteId)) {
+    throw createError("Identificador de cliente inválido", 400);
+  }
+
+  const alvo = informado ? clienteId : principal;
+  if (!alvo) return null;
+
+  const vinculo = await buscarVinculoAtivo(usuarioId, processo._id, alvo);
+
+  if (!vinculo) {
+    // Cliente informado sem vínculo é erro de requisição (400). Principal sem
+    // vínculo é inconsistência do processo, e cai no 422 de quem chama —
+    // devolver null deixa `carregarContexto` decidir.
+    if (informado) {
+      throw createError(
+        "O cliente informado não está vinculado a este processo. Vincule-o ao processo antes de gerar o documento.",
+        400
+      );
+    }
+    return null;
+  }
+
+  return Client.findOne({ _id: alvo, usuarioId, ativo: true });
 };
 
 // Leitura por caminho em notação de ponto ("endereco.cidade", "oab.numero").
@@ -81,7 +110,7 @@ const carregarVinculosOrdenados = (documentoId, usuarioId) =>
     .populate("secaoId", "titulo tipo texto variaveis")
     .sort({ ordem: 1 });
 
-const carregarContexto = async (processoId, usuarioId) => {
+const carregarContexto = async (processoId, usuarioId, clienteId) => {
   assertIdValido(processoId, "processo");
 
   const processo = await Process.findOne({ _id: processoId, usuarioId, ativo: true });
@@ -89,7 +118,7 @@ const carregarContexto = async (processoId, usuarioId) => {
     throw createError("Processo não encontrado para este usuário", 404);
   }
 
-  const cliente = await resolverClientePrincipal(processo, usuarioId);
+  const cliente = await resolverClienteDoProcesso(processo, usuarioId, clienteId);
   if (!cliente) {
     throw createError("O processo não tem cliente ativo vinculado", 422);
   }
@@ -103,14 +132,18 @@ const carregarContexto = async (processoId, usuarioId) => {
 };
 
 // Resolve o texto do modelo para um processo, SEM persistir nada.
-const resolver = async (modelo, processoId, usuarioId) => {
+const resolver = async (modelo, processoId, usuarioId, clienteId) => {
   const vinculos = await carregarVinculosOrdenados(modelo._id, usuarioId);
 
   if (vinculos.length === 0) {
     throw createError("O modelo não possui seções vinculadas", 422);
   }
 
-  const { processo, cliente, usuario } = await carregarContexto(processoId, usuarioId);
+  const { processo, cliente, usuario } = await carregarContexto(
+    processoId,
+    usuarioId,
+    clienteId
+  );
 
   const valores = montarValores({ usuario, cliente, processo });
   const textoModelo = montarTextoDoModelo(vinculos);
@@ -171,16 +204,21 @@ const carregarModelo = async (modeloId, usuarioId) => {
   return modelo;
 };
 
-export const gerarDocumentoService = async (modeloId, usuarioId, { processoId } = {}) => {
+export const gerarDocumentoService = async (
+  modeloId,
+  usuarioId,
+  { processoId, clienteId } = {}
+) => {
   if (!processoId) {
     throw createError("processoId é obrigatório para gerar o documento", 400);
   }
 
   const modelo = await carregarModelo(modeloId, usuarioId);
-  const { vinculos, valores, textoResolvido, pendencias } = await resolver(
+  const { cliente, vinculos, valores, textoResolvido, pendencias } = await resolver(
     modelo,
     processoId,
-    usuarioId
+    usuarioId,
+    clienteId
   );
 
   // Documento incompleto não é gerado: preferimos recusar a produzir uma peça
@@ -196,6 +234,10 @@ export const gerarDocumentoService = async (modeloId, usuarioId, { processoId } 
   const gerado = await Document.create({
     usuarioId,
     processoId,
+    // De qual participante saiu esta peça. Sem isso, duas procurações do mesmo
+    // modelo e processo — uma por litisconsorte — ficam indistinguíveis na
+    // listagem: mesmo nome, mesmo tipo, mesma data.
+    clienteId: cliente._id,
     nome: modelo.nome,
     tipo: modelo.tipo,
     descricao: modelo.descricao,
@@ -224,7 +266,11 @@ export const gerarDocumentoService = async (modeloId, usuarioId, { processoId } 
   return gerado;
 };
 
-export const previewDocumentoService = async (documentoId, usuarioId, { processoId } = {}) => {
+export const previewDocumentoService = async (
+  documentoId,
+  usuarioId,
+  { processoId, clienteId } = {}
+) => {
   assertIdValido(documentoId, "documento");
 
   const documento = await Document.findOne({ _id: documentoId, usuarioId, ativo: true });
@@ -261,7 +307,8 @@ export const previewDocumentoService = async (documentoId, usuarioId, { processo
   const { textoResolvido, pendencias, cliente, processo } = await resolver(
     documento,
     processoId,
-    usuarioId
+    usuarioId,
+    clienteId
   );
 
   // Preview NÃO persiste: é só leitura, inclusive quando há pendências.
@@ -298,7 +345,7 @@ export const alternarVisibilidadePortalService = async (documentoId, usuarioId, 
 };
 
 export default {
-  resolverClientePrincipal,
+  resolverClienteDoProcesso,
   montarValores,
   montarTextoDoModelo,
   criarModeloService,

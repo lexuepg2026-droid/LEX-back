@@ -202,7 +202,8 @@ export const gerarDocumento = async (req, res, next) => {
 export const previewDocumento = async (req, res, next) => {
   try {
     const preview = await previewDocumentoService(req.params.id, req.user._id, {
-      processoId: req.query.processoId
+      processoId: req.query.processoId,
+      clienteId: req.query.clienteId
     });
     return res.status(200).json(preview);
   } catch (error) {

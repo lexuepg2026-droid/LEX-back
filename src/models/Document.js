@@ -32,6 +32,15 @@ const documentSchema = new mongoose.Schema(
       ref: "Process",
       index: true
     },
+    // De qual participante do processo saiu o documento. Preenchido na geração
+    // (documentGenerationService), a partir do cliente informado ou do
+    // principal. Opcional: documento de upload não tem cliente de origem, e os
+    // gerados antes da Fase 2B também não têm.
+    clienteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      index: true
+    },
     nome: {
       type: String,
       required: true,
