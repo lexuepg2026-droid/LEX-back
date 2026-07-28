@@ -107,6 +107,22 @@ const documentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Document"
     },
+    // De qual honorário saíram os valores do texto. Null quando o documento não
+    // usa variável de honorário. Registrado para o contrato dizer, meses
+    // depois, de qual cobrança ele falava — o Fee pode ter sido alterado desde
+    // então, e o texto congelado não acompanha.
+    honorarioId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Fee",
+      index: true
+    },
+    // Marcado na primeira edição manual do texto. A partir daí, regerar o
+    // documento passa a exigir confirmação explícita: o trabalho de revisão da
+    // advogada não pode ser descartado por um clique distraído em "gerar".
+    editadoManualmente: {
+      type: Boolean,
+      default: false
+    },
 
     ativo: {
       type: Boolean,
