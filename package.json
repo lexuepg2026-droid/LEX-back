@@ -19,11 +19,13 @@
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "docx": "^9.7.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^9.3.2"
+    "mongoose": "^9.3.2",
+    "pdfmake": "^0.3.11"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

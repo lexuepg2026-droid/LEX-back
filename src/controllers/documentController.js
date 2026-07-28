@@ -14,8 +14,10 @@ import {
   listarModelosService,
   gerarDocumentoService,
   previewDocumentoService,
+  atualizarTextoService,
   alternarVisibilidadePortalService
 } from "../services/documentGenerationService.js";
+import { baixarDocumentoService } from "../services/documentDownloadService.js";
 import {
   validateCreateDocument,
   validateUpdateDocument,
@@ -203,9 +205,44 @@ export const previewDocumento = async (req, res, next) => {
   try {
     const preview = await previewDocumentoService(req.params.id, req.user._id, {
       processoId: req.query.processoId,
-      clienteId: req.query.clienteId
+      clienteId: req.query.clienteId,
+      honorarioId: req.query.honorarioId
     });
     return res.status(200).json(preview);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const atualizarTexto = async (req, res, next) => {
+  try {
+    const resultado = await atualizarTextoService(
+      req.params.id,
+      req.user._id,
+      req.body?.textoResolvido
+    );
+    return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const baixarDocumento = async (req, res, next) => {
+  try {
+    const { buffer, contentType, nomeArquivo } = await baixarDocumentoService(
+      req.params.id,
+      req.user._id,
+      req.query.formato
+    );
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${nomeArquivo}"`);
+    res.setHeader("Content-Length", buffer.length);
+    // O nome do arquivo não é um header padrão que o navegador exponha ao JS
+    // por conta própria: sem isto o frontend não consegue lê-lo do fetch.
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+
+    return res.status(200).send(buffer);
   } catch (error) {
     return next(error);
   }
