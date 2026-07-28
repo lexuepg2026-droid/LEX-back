@@ -26,7 +26,14 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(cookieParser());
-app.use(express.json());
+// 400 kb, não o padrão de 100 kb do express.json: o logo do escritório é
+// aceito até 200 KB de base64 (authValidation), e com o padrão a requisição
+// morria com 413 ANTES de a validação rodar — o teto de 200 KB era
+// inalcançável e a mensagem de erro, enganosa.
+//
+// 400 kb dá folga para o logo mais o resto do payload de perfil, sem virar
+// porta aberta: nenhum outro endpoint da API recebe corpo grande.
+app.use(express.json({ limit: "400kb" }));
 
 app.get("/", (req, res) => {
   res.json({ message: "LEX API running" });

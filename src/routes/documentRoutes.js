@@ -14,6 +14,8 @@ import {
   listModelos,
   gerarDocumento,
   previewDocumento,
+  atualizarTexto,
+  baixarDocumento,
   alternarVisibilidadePortal
 } from "../controllers/documentController.js";
 
@@ -35,6 +37,8 @@ router.get("/", listDocuments);
 // ── Composição, preview e visibilidade ─────────────────────────────────────
 // Também antes das rotas genéricas de "/:id", pelo mesmo motivo.
 router.get("/:id/preview", previewDocumento);
+router.get("/:id/download", baixarDocumento);
+router.patch("/:id/texto", atualizarTexto);
 router.get("/:id/secoes", listDocumentSecoes);
 router.post("/:id/secoes", vincularSecao);
 router.patch("/:id/secoes/reordenar", reordenarSecoes);

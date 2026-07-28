@@ -47,6 +47,18 @@ const advocaciaSchema = new mongoose.Schema(
       type: String,
       trim: true,
       maxlength: 200
+    },
+    // Imagem completa em data URI ("data:image/png;base64,..."), não só o
+    // payload — o renderizador precisa do mime type para montar o timbrado.
+    //
+    // Teto de 200 KB, imposto em authValidation. NÃO é limite estético: o User
+    // é carregado em toda requisição autenticada (authMiddleware), então um
+    // logo grande entra no custo de cada chamada da API, não só na do perfil.
+    // Se um dia precisar de imagem maior, o caminho é guardar o binário fora
+    // do User e referenciar por URL — não aumentar este número.
+    logoBase64: {
+      type: String,
+      trim: true
     }
   },
   {

@@ -17,7 +17,8 @@ import feeService from '../src/services/feeService.js';
 import { createProcess } from '../src/services/processService.js';
 import { criarInstallment } from '../src/services/installmentService.js';
 import { create as criarPayment } from '../src/services/paymentService.js';
-import { gerarDocumentoService } from '../src/services/documentGenerationService.js';
+import { gerarDocumentoService, atualizarTextoService } from '../src/services/documentGenerationService.js';
+import { detectarLacunas } from '../src/utils/lacunas.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'development') {
@@ -28,6 +29,20 @@ if (process.env.NODE_ENV !== 'development') {
 const DEMO_EMAIL = 'demo@lex.dev';
 const DEMO_SENHA = 'Lex123456';
 const IS_CLEAN   = process.argv.includes('--clean');
+
+// ── Logo de demonstracao ──────────────────────────────────────────────────────
+// Monograma "LEX" 96x96, PNG embutido como constante: 450 caracteres, 0,22% do
+// teto de 200 KB. Constante e nao arquivo para o seed nao depender de binario
+// versionado — e para deixar evidente que o limite de 200 KB e folgado para um
+// logo de verdade.
+const DEMO_LOGO_BASE64 =
+  'data:image/png;base64,' +
+  'iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABB0lEQVR42u3cSw6DIBQFUFfUQffn' +
+  'jp01nXcBjYggCo+TvKHekBPla1y+n00lakEACBCgjoBe63vyAgQIECBAkYBij+KAAAECBAgQIECA' +
+  'AAECBAgQIECAAAECBAjQ6ED1iJWHDZltOBsCaCagw2YUJACaDCjRkrLb+wW6ahgClBWVHw4I0FGP' +
+  'FmSiCKgt0J5RnKUGoOZAZZnDTxQBXQYU/BUD1BYo/jAPyFIDkO0OQOGAJtpyBfRMQpxjH0BtE4ov' +
+  'uwmo/ly0MgFQKiH/WQME6C/hVIcFqBsgH1ABAgQIECBAgAABAgQIECBAgAABAgQIECBA9wP5VSkg' +
+  'QIAAARoFSAECBAhQR/UDgQj+JCz56MMAAAAASUVORK5CYII=';
 
 // ── Dados: Clientes ───────────────────────────────────────────────────────────
 // CPF/CNPJ apenas com dígitos e com dígitos verificadores válidos (a nova
@@ -207,16 +222,29 @@ const SECOES_DATA = [
     texto: 'OBJETO: constitui objeto do presente contrato a prestação de serviços advocatícios pelo(a) CONTRATADO(A) ao(à) CONTRATANTE, com atuação no processo nº {{numeroProcesso}}, referente a {{tituloProcesso}}, na área {{areaProcesso}}, perante {{orgaoProcesso}}, comarca de {{comarcaProcesso}}.',
   },
   {
+    // Fase 2C: passa a usar as variaveis de honorario, inclusive o extenso.
+    // E o extenso que da valor juridico ao numero — divergindo os dois, e ele
+    // que prevalece.
     chave: 'clausula_honorarios',
     titulo: 'Cláusula de honorários e forma de pagamento',
     tipo: 'clausula',
-    texto: 'DOS HONORÁRIOS: os honorários contratados serão pagos na forma ajustada entre as partes, admitido o pagamento por meio da chave PIX {{chavePix}}, de titularidade de {{nomeAdvocacia}}. O inadimplemento autoriza a cobrança na forma da lei, sem prejuízo dos honorários de sucumbência, que pertencem ao(à) advogado(a).',
+    texto: 'DOS HONORÁRIOS: pela prestação dos serviços descritos nesta avença, o(a) CONTRATANTE pagará ao(à) CONTRATADO(A) honorários do tipo {{tipoHonorario}}, no valor de {{valorHonorario}} ({{valorHonorarioExtenso}}), com vencimento em {{dataVencimentoHonorario}}.\n\nO pagamento será feito em {{numeroParcelas}} parcela(s) de {{valorParcela}}, admitido o pagamento por meio da chave PIX {{chavePix}}, de titularidade de {{nomeAdvocacia}}. O inadimplemento autoriza a cobrança na forma da lei, sem prejuízo dos honorários de sucumbência, que pertencem ao(à) advogado(a).',
   },
   {
     chave: 'obrigacoes',
     titulo: 'Obrigações das partes',
     tipo: 'fundamentacao',
     texto: 'DAS OBRIGAÇÕES: o(a) CONTRATADO(A) obriga-se a conduzir a causa com zelo e a manter o(a) CONTRATANTE informado(a) do andamento processual, podendo ser contatado(a) pelo telefone {{telefoneEscritorio}} ou pelo e-mail {{emailEscritorio}}. O(A) CONTRATANTE obriga-se a fornecer documentos e informações verídicas, respondendo por eventual omissão.',
+  },
+  {
+    // LACUNA INTENCIONAL: o "[...]" nao e erro. E o marcador de trecho a
+    // preencher depois — aqui, o que so se define na audiencia. Serve para o
+    // aviso de lacuna ter o que detectar, e para demonstrar que lacuna NAO
+    // bloqueia geracao nem download (diferente de pendencia, que bloqueia).
+    chave: 'foro_e_condicoes',
+    titulo: 'Foro e condições a combinar',
+    tipo: 'clausula',
+    texto: 'DAS CONDIÇÕES ESPECIAIS: as partes ajustam que eventuais despesas com diligências, cópias e deslocamentos correrão por conta do(a) CONTRATANTE, mediante prestação de contas.\n\nCondições complementares acordadas em audiência: [...]\n\nDO FORO: fica eleito o foro da comarca de {{cidadeEscritorio}} para dirimir as questões oriundas deste contrato.',
   },
   {
     chave: 'encerramento',
@@ -246,7 +274,7 @@ const MODELOS_DATA = [
     nome: 'Contrato de Prestação de Serviços Advocatícios',
     tipo: 'contrato_prestacao_servicos',
     descricao: 'Modelo de contrato de honorários e prestação de serviços',
-    secoes: ['qualificacao_pf', 'objeto_contrato', 'clausula_honorarios', 'encerramento'],
+    secoes: ['qualificacao_pf', 'objeto_contrato', 'clausula_honorarios', 'foro_e_condicoes', 'encerramento'],
   },
   {
     // Modelo de PJ: é o único que resolve razaoSocialCliente, nomeFantasiaCliente,
@@ -482,6 +510,8 @@ async function main() {
       chavePix: 'demo@lex.dev',
       instagram: '@demolex.adv',
       site: 'https://demolex.adv.br',
+      // Aparece no timbrado do PDF e do DOCX baixados.
+      logoBase64: DEMO_LOGO_BASE64,
     },
     endereco: {
       cep: '84010-330', pais: 'Brasil', estado: 'PR', cidade: 'Ponta Grossa',
@@ -688,6 +718,42 @@ async function main() {
   console.log(`${totalInstallments} parcelas criadas (via installmentService + recalculo status)`);
   console.log(`${totalPayments} pagamentos criados (via paymentService + overpayment guard)`);
 
+  // ── CONTRATOS COM HONORÁRIO (depois das FEES, de proposito) ───────────────
+  // O modelo de contrato usa {{valorHonorario}} e {{valorHonorarioExtenso}};
+  // sem honorario cadastrado a geracao pararia com 422. Por isso este bloco
+  // vem DEPOIS do de honorarios, e nao junto com as procuracoes.
+  //
+  // Os dois processos escolhidos tem exatamente UM honorario ativo, entao o
+  // `honorarioId` e resolvido sozinho — o caso ambiguo (varios honorarios)
+  // fica no processo 0, para exercitar o 422 que pede a escolha.
+  const contratoAna = await gerarDocumentoService(
+    modelosPorChave.contrato._id,
+    uid,
+    { processoId: processes[1]._id.toString() }
+  );
+
+  const contratoCarlos = await gerarDocumentoService(
+    modelosPorChave.contrato._id,
+    uid,
+    { processoId: processes[2]._id.toString() }
+  );
+
+  console.log('2 contratos gerados com honorario resolvido:');
+  for (const c of [contratoAna, contratoCarlos]) {
+    console.log(`  "${c.nome}" -> ${c.variaveisResolvidas.valorHonorario} (${c.variaveisResolvidas.valorHonorarioExtenso})`);
+  }
+
+  // ── DOCUMENTO EDITADO A MAO ───────────────────────────────────────────────
+  // Passa pelo service real, marcando `editadoManualmente`. E o caso que faz
+  // regerar este contrato devolver 409 sem `confirmarSobrescrita: true`.
+  const textoAjustado = contratoCarlos.textoResolvido.replace(
+    'Condições complementares acordadas em audiência: [...]',
+    'Condições complementares acordadas em audiência: desconto de 10% em caso de quitação antecipada, conforme tratado na sessão de conciliação de 22/01/2025.'
+  );
+
+  await atualizarTextoService(contratoCarlos._id, uid, textoAjustado);
+  console.log(`1 documento editado a mao: "${contratoCarlos.nome}" (processo de Carlos) — regerar exige confirmarSobrescrita`);
+
   // ── RESUMO ────────────────────────────────────────────────────────────────
   // Contagens lidas do banco, não das constantes: se algo deixar de ser criado,
   // o resumo mostra o número real em vez de repetir a expectativa.
@@ -718,6 +784,16 @@ async function main() {
   };
   const statusParcelas = await porStatus(Installment);
   const statusProcessos = await porStatus(Process);
+
+  const nEditados = await Document.countDocuments({
+    usuarioId: uid, ativo: true, editadoManualmente: true
+  });
+
+  // Conta pelo texto congelado, não pelas seções: é o texto que vai para o PDF.
+  const comTexto = await Document.find({
+    usuarioId: uid, ativo: true, ehModelo: false, origem: 'gerado'
+  }).select('textoResolvido');
+  const nComLacuna = comTexto.filter(d => detectarLacunas(d.textoResolvido).length > 0).length;
 
   const papeis = await ProcessoCliente.aggregate([
     { $match: { usuarioId: uid, ativo: true } },
@@ -784,6 +860,18 @@ async function main() {
   });
   console.log('    Foram geradas 2 procuracoes do MESMO modelo, uma por cliente,');
   console.log('    cada uma com a qualificacao do seu proprio outorgante.');
+  console.log('-'.repeat(66));
+  console.log('  FASE 2C — RENDERIZACAO');
+  console.log(`    Logo do escritorio : ${DEMO_LOGO_BASE64.length} caracteres ` +
+              `(${(DEMO_LOGO_BASE64.length / 1024).toFixed(1)} KB de 200 KB)`);
+  console.log(`    Contratos c/ honorario resolvido : 2`);
+  console.log(`      - ${contratoAna.variaveisResolvidas.valorHonorario} (${contratoAna.variaveisResolvidas.valorHonorarioExtenso})`);
+  console.log(`      - ${contratoCarlos.variaveisResolvidas.valorHonorario} (${contratoCarlos.variaveisResolvidas.valorHonorarioExtenso})`);
+  console.log(`    Documentos editados a mao       : ${nEditados}`);
+  console.log(`    Documentos com lacuna ([...])   : ${nComLacuna}`);
+  console.log('    Baixe qualquer documento gerado em:');
+  console.log('      GET /api/documents/:id/download?formato=pdf');
+  console.log('      GET /api/documents/:id/download?formato=docx');
   console.log('-'.repeat(66));
   console.log('  LACUNAS INTENCIONAIS (nao sao bug)');
   console.log('    - Cliente "Beatriz Ramos Pereira" (PF) nao tem profissao.');

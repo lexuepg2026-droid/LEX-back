@@ -11,17 +11,24 @@
 //   rotulo      — nome legível, usado nas mensagens de pendência
 //   formatador  — chave de templateFormatters aplicada ao valor bruto
 //
-// Todos os caminhos foram conferidos contra os schemas reais de User, Client e
-// Process. Variáveis de honorário ficam para depois da revisão de Fee (Fase 4).
+// Todos os caminhos foram conferidos contra os schemas reais de User, Client,
+// Process e Fee.
+//
+// Honorário (Fase 2C): a origem `honorario` cobre apenas o que o Fee ATUAL
+// suporta. `percentualHonorario` fica de fora de propósito — o campo
+// `percentual` só nasce na Fase 4, e declarar a variável antes do campo
+// produziria pendência perpétua numa seção que a advogada não teria como
+// resolver.
 
-export const ORIGENS = ["usuario", "cliente", "processo", "sistema"];
+export const ORIGENS = ["usuario", "cliente", "processo", "sistema", "honorario"];
 
 // Onde o usuário vai preencher o campo que faltou.
 export const ONDE_PREENCHER = {
   usuario: "no seu perfil",
   cliente: "no cadastro do cliente",
   processo: "no cadastro do processo",
-  sistema: "automaticamente pelo sistema"
+  sistema: "automaticamente pelo sistema",
+  honorario: "no honorário vinculado ao processo"
 };
 
 export const CATALOGO_VARIAVEIS = {
@@ -74,10 +81,29 @@ export const CATALOGO_VARIAVEIS = {
   // assinatura é a do escritório, e é lá que ela é corrigida.
   cidadeEscritorio:        { origem: "usuario", caminho: "endereco.cidade",           rotulo: "Cidade do escritório",       formatador: "texto" },
 
+  // ── Honorário ──────────────────────────────────────────────────────────────
+  // `numeroParcelas` e `valorParcela` não são campos do Fee: são derivados das
+  // parcelas ativas, calculados em documentGenerationService ao montar a
+  // origem. Sem parcela cadastrada, o honorário é pagamento único (1 parcela
+  // do valor cheio) — que é como o contrato deve descrevê-lo.
+  valorHonorario:          { origem: "honorario", caminho: "valor",                   rotulo: "Valor do honorário",         formatador: "moeda" },
+  valorHonorarioExtenso:   { origem: "honorario", caminho: "valor",                   rotulo: "Valor do honorário por extenso", formatador: "extenso" },
+  tipoHonorario:           { origem: "honorario", caminho: "tipo",                    rotulo: "Tipo de honorário",          formatador: "tipoHonorario" },
+  dataVencimentoHonorario: { origem: "honorario", caminho: "dataVencimento",          rotulo: "Vencimento do honorário",    formatador: "data" },
+  numeroParcelas:          { origem: "honorario", caminho: "numeroParcelas",          rotulo: "Número de parcelas",         formatador: "inteiro" },
+  valorParcela:            { origem: "honorario", caminho: "valorParcela",            rotulo: "Valor da parcela",           formatador: "moeda" },
+
   // ── Sistema ────────────────────────────────────────────────────────────────
   dataAtual:               { origem: "sistema", caminho: "hoje",                      rotulo: "Data atual",                 formatador: "data" },
   dataAtualExtenso:        { origem: "sistema", caminho: "hoje",                      rotulo: "Data atual por extenso",     formatador: "dataExtenso" }
 };
+
+// Variáveis que exigem um honorário resolvido. O gerador só cobra a escolha de
+// `honorarioId` quando o texto usa alguma delas — documento sem variável de
+// honorário não deve nem perguntar.
+export const VARIAVEIS_DE_HONORARIO = Object.entries(CATALOGO_VARIAVEIS)
+  .filter(([, def]) => def.origem === "honorario")
+  .map(([nome]) => nome);
 
 export const NOMES_VARIAVEIS = Object.keys(CATALOGO_VARIAVEIS);
 

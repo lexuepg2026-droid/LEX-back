@@ -50,6 +50,51 @@ const validateOab = (oab, { obrigatorio }) => {
   return null;
 };
 
+// ── Logo do escritório ──────────────────────────────────────────────────────
+
+export const LOGO_MIMES_ACEITOS = ["image/png", "image/jpeg"];
+export const LOGO_LIMITE_BYTES = 200 * 1024;
+
+const LOGO_DATA_URI_REGEX = /^data:([a-zA-Z0-9/+.-]+);base64,([A-Za-z0-9+/]+={0,2})$/;
+
+const formatarKB = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
+
+// O limite é sobre a string base64 inteira, que é o que de fato vai para o
+// banco e volta em toda requisição autenticada — não sobre o binário decodificado
+// (~25% menor). Medir o decodificado deixaria passar payload maior do que o
+// custo real.
+const validateLogo = (logoBase64) => {
+  if (logoBase64 === undefined) {
+    return null;
+  }
+
+  // null e "" removem o logo: é assim que o botão "Remover" do perfil funciona.
+  if (logoBase64 === null || logoBase64 === "") {
+    return null;
+  }
+
+  if (typeof logoBase64 !== "string") {
+    return "Logo deve ser uma string em data URI (data:image/png;base64,...)";
+  }
+
+  const match = LOGO_DATA_URI_REGEX.exec(logoBase64.trim());
+  if (!match) {
+    return 'Logo deve estar em data URI válido, no formato "data:image/png;base64,..."';
+  }
+
+  const [, mime] = match;
+  if (!LOGO_MIMES_ACEITOS.includes(mime.toLowerCase())) {
+    return `Formato de logo não aceito: ${mime}. Use PNG ou JPEG.`;
+  }
+
+  const tamanho = Buffer.byteLength(logoBase64.trim(), "utf8");
+  if (tamanho > LOGO_LIMITE_BYTES) {
+    return `Logo muito grande: ${formatarKB(tamanho)}. O limite é ${formatarKB(LOGO_LIMITE_BYTES)}.`;
+  }
+
+  return null;
+};
+
 const validateAdvocacia = (advocacia, { obrigatorio }) => {
   if (advocacia === undefined) {
     return obrigatorio ? "Dados da advocacia são obrigatórios" : null;
@@ -76,6 +121,11 @@ const validateAdvocacia = (advocacia, { obrigatorio }) => {
   }
   if (advocacia.site !== undefined && advocacia.site !== null && String(advocacia.site).length > 200) {
     return "Site deve ter no máximo 200 caracteres";
+  }
+
+  const logoError = validateLogo(advocacia.logoBase64);
+  if (logoError) {
+    return logoError;
   }
 
   return null;
@@ -221,5 +271,7 @@ export default {
   validateRegisterPayload,
   validateLoginPayload,
   validateUpdateProfilePayload,
-  validateChangePasswordPayload
+  validateChangePasswordPayload,
+  LOGO_MIMES_ACEITOS,
+  LOGO_LIMITE_BYTES
 };
