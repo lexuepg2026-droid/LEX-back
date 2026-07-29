@@ -15,6 +15,12 @@ import {
 
 // pdfmake 0.3 é CommonJS e exporta uma instância única; `createRequire` é o que
 // permite carregá-la de um módulo ESM sem transpilar nada.
+//
+// Versão: 0.3.11, conferida na Fase 2D.1 contra o registro. A linha 0.3.x já
+// não é pré-lançamento — `npm view pdfmake dist-tags` devolve
+// `{ beta: '0.3.0', latest: '0.3.11' }`, ou seja, a tag `latest` aponta para a
+// própria 0.3.11 e a `beta` ficou para trás, em versão mais antiga. Não há
+// 0.2.x estável mais recente para a qual voltar; a API usada aqui é a da 0.3.
 const require = createRequire(import.meta.url);
 const pdfmake = require("pdfmake");
 
