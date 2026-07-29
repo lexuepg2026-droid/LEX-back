@@ -86,8 +86,8 @@ export const CATALOGO_VARIAVEIS = {
   statusProcesso:          { origem: "processo", caminho: "status",                   rotulo: "Status do processo",         formatador: "texto" },
 
   // ── Usuário / escritório ───────────────────────────────────────────────────
-  nomeAdvogado:            { origem: "usuario", caminho: "nomeCompleto",              rotulo: "Seu nome completo",          formatador: "texto" },
-  cpfAdvogado:             { origem: "usuario", caminho: "cpf",                       rotulo: "Seu CPF",                    formatador: "cpf" },
+  nomeAdvogada:            { origem: "usuario", caminho: "nomeCompleto",              rotulo: "Seu nome completo",          formatador: "texto" },
+  cpfAdvogada:             { origem: "usuario", caminho: "cpf",                       rotulo: "Seu CPF",                    formatador: "cpf" },
   numOAB:                  { origem: "usuario", caminho: "oab.numero",                rotulo: "Número da OAB",              formatador: "texto" },
   estadoOAB:               { origem: "usuario", caminho: "oab.estado",                rotulo: "UF da OAB",                  formatador: "texto" },
   nomeAdvocacia:           { origem: "usuario", caminho: "advocacia.nome",            rotulo: "Nome da advocacia",          formatador: "texto" },
