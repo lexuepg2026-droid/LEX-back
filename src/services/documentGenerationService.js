@@ -604,6 +604,17 @@ export const alternarVisibilidadePortalService = async (documentoId, usuarioId, 
     throw createError("Modelo não pode ser exibido no portal do cliente", 400);
   }
 
+  // Upload também não: o portal da Fase 3 serve o texto gerado pelo sistema, e
+  // o arquivo anexado não passou pela conferência de pendências que garante que
+  // não há campo vazio no meio da peça. Liberar upload para o cliente é decisão
+  // de outra fase, com outra tela.
+  if (documento.origem !== "gerado" || !documento.dataGeracao) {
+    throw createError(
+      "Apenas documentos gerados podem ser exibidos no portal do cliente",
+      400
+    );
+  }
+
   documento.visivelPortal =
     typeof visivelPortal === "boolean" ? visivelPortal : !documento.visivelPortal;
 
