@@ -3,7 +3,8 @@ import crypto from "crypto";
 // ═══════════════════════════════════════════════════════════════════════════
 // CÓDIGO DE ACESSO DO PAR CLIENTE/PROCESSO (Fase 3 — portal do cliente)
 //
-// Formato: LEX-XXXX-XXXX (12 caracteres com os hífens).
+// Formato: LEX-XXXX-XXXX — 13 caracteres com os hífens ("LEX" + "-" + 4 + "-"
+// + 4), dos quais 8 são sorteados. Ver TAMANHO_CODIGO abaixo.
 //
 // Alfabeto Crockford Base32 — 32 símbolos, sem I, L, O e U. A advogada dita
 // esse código por telefone e WhatsApp: "I" vira "1", "O" vira "0", "L" vira

@@ -111,8 +111,14 @@ const registerUser = async (data) => {
       endereco: data.endereco
     });
 
+    // Devolve token junto: quem acabou de se cadastrar já está autenticado, e
+    // o controller emite o mesmo cookie `lex-token` do login. Mandar a
+    // advogada digitar de novo a senha que ela escolheu dois campos atrás é
+    // atrito sem contrapartida de segurança — a identidade acabou de ser
+    // comprovada pelo próprio cadastro.
     return {
       message: "Usuário cadastrado com sucesso",
+      token: generateToken(novoUsuario._id),
       usuario: sanitizeUser(novoUsuario)
     };
   } catch (error) {
@@ -233,12 +239,18 @@ const updateMe = async (userId, payload) => {
 
     // Remover o logo é mandar null ou "". Guardar a string vazia faria o
     // renderizador tratar "tem logo" como verdadeiro e montar o cabeçalho com
-    // uma imagem que não existe — `undefined` tira o campo do documento.
+    // uma imagem que não existe.
+    //
+    // Grava `null`, não `undefined`: a convenção do projeto é que campo apagado
+    // vira null. `undefined` some do documento e faz o GET /me devolver a chave
+    // ausente em vez de nula, e o frontend não consegue distinguir "logo
+    // removido" de "campo que nunca existiu". O renderizador testa por
+    // falsidade, então null e undefined lhe são equivalentes.
     if (
       Object.prototype.hasOwnProperty.call(payload.advocacia, "logoBase64") &&
       !payload.advocacia.logoBase64
     ) {
-      usuario.advocacia.logoBase64 = undefined;
+      usuario.advocacia.logoBase64 = null;
     }
   }
 

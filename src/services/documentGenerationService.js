@@ -431,14 +431,6 @@ export const gerarDocumentoService = async (
     );
   }
 
-  // Confirmada a sobrescrita, o anterior sai de cena por soft delete. Mantê-lo
-  // ativo faria a listagem exibir duas versões do mesmo documento sem dizer
-  // qual vale; o soft delete preserva o texto revisado caso tenha sido engano.
-  if (anterior && confirmarSobrescrita === true) {
-    anterior.ativo = false;
-    await anterior.save();
-  }
-
   const gerado = await Document.create({
     usuarioId,
     processoId,
@@ -461,6 +453,20 @@ export const gerarDocumentoService = async (
     dataGeracao: new Date(),
     geradoDeModeloId: modelo._id
   });
+
+  // Confirmada a sobrescrita, o anterior sai de cena por soft delete. Mantê-lo
+  // ativo faria a listagem exibir duas versões do mesmo documento sem dizer
+  // qual vale; o soft delete preserva o texto revisado caso tenha sido engano.
+  //
+  // Acontece DEPOIS da criação, e não antes, porque `substituidoPorId` precisa
+  // do _id do documento novo. É essa referência que mantém a cadeia navegável:
+  // o texto que a advogada revisou à mão continua recuperável e diz para onde
+  // a versão vigente foi.
+  if (anterior && confirmarSobrescrita === true) {
+    anterior.ativo = false;
+    anterior.substituidoPorId = gerado._id;
+    await anterior.save();
+  }
 
   // Replica a composição, para o documento gerado saber de quais seções veio.
   if (vinculos.length > 0) {
