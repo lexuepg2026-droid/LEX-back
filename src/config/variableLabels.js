@@ -174,11 +174,11 @@ export const ROTULOS_VARIAVEIS = {
   },
 
   // ── Advogada e escritório ──────────────────────────────────────────────────
-  nomeAdvogado: {
+  nomeAdvogada: {
     rotulo: "Nome da advogada",
     descricao: "Nome da titular, do seu perfil."
   },
-  cpfAdvogado: {
+  cpfAdvogada: {
     rotulo: "CPF",
     descricao: "CPF da titular, do seu perfil."
   },

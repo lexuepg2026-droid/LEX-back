@@ -207,7 +207,7 @@ const SECOES_DATA = [
     chave: 'outorgado',
     titulo: 'Qualificação do outorgado',
     tipo: 'qualificacao',
-    texto: 'OUTORGADO: {{nomeAdvogado}}, inscrito(a) no CPF sob o nº {{cpfAdvogado}}, advogado(a) inscrito(a) na OAB/{{estadoOAB}} sob o nº {{numOAB}}, integrante de {{nomeAdvocacia}}, com escritório profissional em {{enderecoEscritorio}}, telefone {{telefoneEscritorio}}, e-mail {{emailEscritorio}} e chave PIX {{chavePix}} para fins de pagamento de honorários.',
+    texto: 'OUTORGADO: {{nomeAdvogada}}, inscrito(a) no CPF sob o nº {{cpfAdvogada}}, advogado(a) inscrito(a) na OAB/{{estadoOAB}} sob o nº {{numOAB}}, integrante de {{nomeAdvocacia}}, com escritório profissional em {{enderecoEscritorio}}, telefone {{telefoneEscritorio}}, e-mail {{emailEscritorio}} e chave PIX {{chavePix}} para fins de pagamento de honorários.',
   },
   {
     chave: 'poderes_procuracao',
@@ -256,7 +256,7 @@ const SECOES_DATA = [
     chave: 'assinatura',
     titulo: 'Bloco de assinaturas',
     tipo: 'assinatura',
-    texto: '_______________________________________\n{{nomeCliente}}\nCPF {{cpfCliente}}\n\n_______________________________________\n{{nomeAdvogado}}\nOAB/{{estadoOAB}} nº {{numOAB}}',
+    texto: '_______________________________________\n{{nomeCliente}}\nCPF {{cpfCliente}}\n\n_______________________________________\n{{nomeAdvogada}}\nOAB/{{estadoOAB}} nº {{numOAB}}',
   },
 ];
 
