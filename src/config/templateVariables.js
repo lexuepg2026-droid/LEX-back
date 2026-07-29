@@ -19,6 +19,24 @@
 // `percentual` só nasce na Fase 4, e declarar a variável antes do campo
 // produziria pendência perpétua numa seção que a advogada não teria como
 // resolver.
+//
+// ── Contagem, conferida na Fase 2D.1 ───────────────────────────────────────
+// 47 variáveis: cliente 20, usuario 10, processo 9, honorario 6, sistema 2.
+//
+// A auditoria da Fase 2C falou em "45 antes das 6 de honorário"; o número era
+// erro de contagem, não divergência real. O arquivo imediatamente anterior ao
+// commit de honorário (1acc9bf^) tinha exatamente 41 chaves — o mesmo 41 que a
+// Fase 2A registrou. Ou seja: 41 documentadas + 6 de honorário = 47, e nunca
+// houve chave a mais sem origem conhecida.
+//
+// Todos os 47 `caminho` foram conferidos contra os schemas reais de User,
+// Client, Process e Fee — nenhum resolver órfão, nenhum campo inexistente.
+// `numeroParcelas` e `valorParcela` não são campos do Fee: são derivados das
+// parcelas ativas em documentGenerationService, e por isso não aparecem no
+// schema. As 10 seções do seed exercitam as 47.
+//
+// Quem acrescentar variável aqui precisa acrescentar rótulo e descrição em
+// `variableLabels.js` — há guarda em teste de carga que falha se faltar.
 
 export const ORIGENS = ["usuario", "cliente", "processo", "sistema", "honorario"];
 
