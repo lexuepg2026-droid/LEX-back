@@ -16,12 +16,17 @@ import {
   previewDocumento,
   atualizarTexto,
   baixarDocumento,
-  alternarVisibilidadePortal
+  alternarVisibilidadePortal,
+  listarVariaveis
 } from "../controllers/documentController.js";
 
 const router = Router();
 
 router.use(authMiddleware);
+
+// ── Catálogo de variáveis ──────────────────────────────────────────────────
+// Antes de "/:id" pelo mesmo motivo de "modelos": senão "variaveis" viraria id.
+router.get("/variaveis", listarVariaveis);
 
 // ── Modelos ────────────────────────────────────────────────────────────────
 // Declaradas ANTES de "/:id": na ordem inversa, "modelos" seria capturado como

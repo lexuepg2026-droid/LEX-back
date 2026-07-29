@@ -2,6 +2,7 @@ import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
 import Document from "../models/Document.js";
 import secaoValidation from "../validations/secaoValidation.js";
+import { regexBuscaTexto } from "../utils/texto.js";
 
 const erro = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -42,11 +43,13 @@ export const listSecoes = async (usuarioId, { page = 1, limit = 20, tipo, busca 
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
   if (tipo) filter.tipo = tipo;
-  if (busca && typeof busca === "string") {
-    const termo = busca.slice(0, 80).trim();
-    if (termo) {
-      filter.titulo = new RegExp(termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    }
+
+  // Busca por título, ignorando caixa E acento. Os títulos das seções são
+  // acentuados ("Qualificação do outorgante"), e obrigar a advogada a acertar
+  // o acento para encontrar a própria seção é atrito à toa.
+  if (busca) {
+    const regex = regexBuscaTexto(busca);
+    if (regex) filter.titulo = regex;
   }
 
   const [data, total] = await Promise.all([

@@ -18,6 +18,7 @@ import {
   alternarVisibilidadePortalService
 } from "../services/documentGenerationService.js";
 import { baixarDocumentoService } from "../services/documentDownloadService.js";
+import { montarCatalogoParaExibicao } from "../config/variableLabels.js";
 import {
   validateCreateDocument,
   validateUpdateDocument,
@@ -243,6 +244,17 @@ export const baixarDocumento = async (req, res, next) => {
     res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
 
     return res.status(200).send(buffer);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Catálogo de variáveis para o seletor da tela de seção. Somente leitura e
+// autenticado (o router aplica authMiddleware): é conteúdo estático do sistema,
+// não dado de usuário, mas não há motivo para expô-lo fora da sessão.
+export const listarVariaveis = async (req, res, next) => {
+  try {
+    return res.status(200).json(montarCatalogoParaExibicao());
   } catch (error) {
     return next(error);
   }

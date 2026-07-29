@@ -431,14 +431,6 @@ export const gerarDocumentoService = async (
     );
   }
 
-  // Confirmada a sobrescrita, o anterior sai de cena por soft delete. Mantê-lo
-  // ativo faria a listagem exibir duas versões do mesmo documento sem dizer
-  // qual vale; o soft delete preserva o texto revisado caso tenha sido engano.
-  if (anterior && confirmarSobrescrita === true) {
-    anterior.ativo = false;
-    await anterior.save();
-  }
-
   const gerado = await Document.create({
     usuarioId,
     processoId,
@@ -461,6 +453,20 @@ export const gerarDocumentoService = async (
     dataGeracao: new Date(),
     geradoDeModeloId: modelo._id
   });
+
+  // Confirmada a sobrescrita, o anterior sai de cena por soft delete. Mantê-lo
+  // ativo faria a listagem exibir duas versões do mesmo documento sem dizer
+  // qual vale; o soft delete preserva o texto revisado caso tenha sido engano.
+  //
+  // Acontece DEPOIS da criação, e não antes, porque `substituidoPorId` precisa
+  // do _id do documento novo. É essa referência que mantém a cadeia navegável:
+  // o texto que a advogada revisou à mão continua recuperável e diz para onde
+  // a versão vigente foi.
+  if (anterior && confirmarSobrescrita === true) {
+    anterior.ativo = false;
+    anterior.substituidoPorId = gerado._id;
+    await anterior.save();
+  }
 
   // Replica a composição, para o documento gerado saber de quais seções veio.
   if (vinculos.length > 0) {
@@ -596,6 +602,17 @@ export const alternarVisibilidadePortalService = async (documentoId, usuarioId, 
   // Modelo é peça interna de trabalho: nunca vai para o portal do cliente.
   if (documento.ehModelo) {
     throw createError("Modelo não pode ser exibido no portal do cliente", 400);
+  }
+
+  // Upload também não: o portal da Fase 3 serve o texto gerado pelo sistema, e
+  // o arquivo anexado não passou pela conferência de pendências que garante que
+  // não há campo vazio no meio da peça. Liberar upload para o cliente é decisão
+  // de outra fase, com outra tela.
+  if (documento.origem !== "gerado" || !documento.dataGeracao) {
+    throw createError(
+      "Apenas documentos gerados podem ser exibidos no portal do cliente",
+      400
+    );
   }
 
   documento.visivelPortal =

@@ -123,6 +123,23 @@ const documentSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
+    // Para qual documento este aqui foi substituído numa regeração confirmada.
+    // Preenchido no documento ANTIGO — o que sai por soft delete — apontando
+    // para o novo.
+    //
+    // Sem isto, o texto revisado à mão continua no banco mas fica órfão: dá
+    // para saber que foi desativado e não para onde a versão vigente foi
+    // parar. Com a referência, a cadeia de versões é percorrível, e o diálogo
+    // de confirmação da Fase 2D.2 consegue dizer o que substituiu o quê.
+    //
+    // Índice esparso: só uma minoria dos documentos é substituída, e entrada
+    // nula no índice não tem serventia.
+    substituidoPorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Document",
+      default: null,
+      index: { sparse: true }
+    },
 
     ativo: {
       type: Boolean,

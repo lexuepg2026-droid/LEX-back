@@ -110,6 +110,14 @@ export const estadoCivil = (valor) =>
 
 // "R$ 5.000,00". Zero é valor legítimo num contrato (honorário pro bono, custas
 // isentas), então não cai no `vazio` — só null/undefined/"" caem.
+//
+// O separador entre "R$" e o número é ESPAÇO NÃO-SEPARÁVEL (U+00A0), vindo do
+// toLocaleString do Node. É intencional: impede que a quebra de linha do PDF
+// deixe o "R$" no fim de uma linha e o valor no começo da outra, no meio de
+// uma cláusula de honorários. Não trocar por espaço comum.
+//
+// Quem for COMPARAR essa saída com string digitada à mão precisa normalizar
+// antes — ver README, seção 5.2.
 export const moeda = (valor) => {
   if (valor === undefined || valor === null || valor === "") return "";
   const numero = typeof valor === "number" ? valor : Number(valor);

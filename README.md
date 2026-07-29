@@ -63,6 +63,25 @@ Preencha o `.env`:
 
 > ⚠️ **Não** deixe `NODE_ENV=production` no `.env` local nem exportado no shell: em produção o cookie de sessão vira `Secure` e o navegador não o grava em `http://localhost`, quebrando o login silenciosamente.
 
+#### Rate limit dos endpoints de autenticação
+
+Cadastro, login e troca de senha têm um balde de tentativas cada, por IP. Os
+tetos são configuráveis, e **os valores default são os de produção** — não
+configurar nada mantém exatamente o comportamento que já valia:
+
+| Variável                    | Default | Endpoint protegido        |
+|-----------------------------|---------|---------------------------|
+| `RATE_LIMIT_CADASTRO`       | `5`     | `POST /api/auth/register` |
+| `RATE_LIMIT_LOGIN`          | `10`    | `POST /api/auth/login`    |
+| `RATE_LIMIT_SENHA`          | `5`     | `POST /api/auth/alterar-senha` |
+| `RATE_LIMIT_JANELA_MINUTOS` | `15`    | janela dos três baldes    |
+
+Fora de produção (`NODE_ENV != "production"`) cada teto é **multiplicado por
+20**. Testar o cadastro seis vezes seguidas em desenvolvimento é rotina, e
+ficar 15 minutos travado no meio de uma sessão custa mais do que protege numa
+base local. Em produção o multiplicador não se aplica: valem os números da
+tabela.
+
 ### 3.3. Liberar seu IP no MongoDB Atlas
 
 No painel do Atlas → **Network Access** → confirme que seu IP (ou `0.0.0.0/0` para o ambiente de dev da equipe) está liberado. Sem isso, o backend não conecta e encerra na inicialização.
@@ -167,6 +186,28 @@ São coisas diferentes, e a distinção importa:
 
 Lacuna é aviso. O download **nunca** é bloqueado por ela: o documento está
 exatamente como foi pedido.
+
+## 5.2. Valores monetários usam espaço não-separável
+
+O formatador `moeda` (`src/utils/templateFormatters.js`) devolve
+`R$ 3.000,00` — o caractere entre `R$` e o número é um **espaço
+não-separável** (U+00A0), não um espaço comum (U+0020). Ele vem do
+`toLocaleString("pt-BR", { style: "currency" })` do próprio Node, e é o
+comportamento correto: sem ele, a quebra de linha do PDF pode separar o `R$`
+do valor e deixar o símbolo pendurado no fim de uma linha e o número no
+começo da seguinte, no meio de uma cláusula de honorários.
+
+**Isso é intencional e não deve ser "corrigido".** As consequências práticas:
+
+- Ao **comparar** strings de valor em script ou teste, `"R$ 3.000,00"` digitado
+  à mão **não** é igual ao que o formatador produz. Normalize a comparação
+  antes de comparar:
+  ```js
+  const normalizar = (s) => s.replace(/ /g, " ");
+  ```
+- Ao **buscar** por um valor colado da tela, o mesmo cuidado vale.
+- Na renderização (PDF e DOCX) nada precisa ser feito: os dois formatos
+  respeitam o U+00A0 nativamente, que é justamente o motivo de ele estar lá.
 
 ---
 
