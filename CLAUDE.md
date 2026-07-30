@@ -338,6 +338,83 @@ ORIGENS_VARIAVEL  usuario, cliente, processo, sistema, honorario
 
 ---
 
+## Contrato do 409 — chaves estruturadas
+
+Fixado na Fase 2E.1. O `errorHandler` só repassa ao cliente as chaves de uma
+**allowlist** (`CHAVES_ESTRUTURADAS`, em `middleware/errorMiddleware.js`);
+qualquer outra propriedade pendurada no `Error` fica fora da resposta.
+
+Existem **dois** tipos de 409, com chaves diferentes, e a diferença é
+deliberada.
+
+### 1. Conflito de campo de formulário → `campo`
+
+Algum input que ela acabou de preencher colide com um registro existente. A
+tela destaca aquele input. Valor de `campo` é o **nome do campo no payload**.
+
+| Origem                                    | `campo`          |
+|-------------------------------------------|------------------|
+| `processService` — número duplicado        | `numeroProcesso` |
+| `installmentService` — nº de parcela no mesmo honorário | `numeroParcela` |
+| `secaoService` — título de seção duplicado | `titulo`         |
+| `documentService` — seção já vinculada     | `secaoId`        |
+| `clientService` — CPF/CNPJ/e-mail          | `cpf` / `cnpj` / `email` |
+| `paymentService` — valor excede a parcela  | `valorPago`      |
+
+### 2. Integridade referencial → `dependencia` + `quantidade`
+
+A exclusão é recusada porque **outros registros ativos dependem** do que se
+quer apagar. **`campo` não se usa aqui**: `campo` existe para destacar um
+input, e neste 409 não há input em conflito — o conflito é entre registros já
+gravados. Devolver `campo` mandaria a tela destacar um campo que não tem nada
+de errado.
+
+- `dependencia` — string do **vocabulário fechado** abaixo.
+- `quantidade` — number, dependentes **ativos** encontrados. Vem da consulta
+  que o service já faz para detectar o bloqueio; nunca de consulta extra.
+
+**Vocabulário fechado de `dependencia`** — definido em
+`src/config/integrityConflicts.js`, exportado como `DEPENDENCIA` (mapa) e
+`DEPENDENCIAS` (array derivado do mapa, para os dois não divergirem). Os
+valores são **nome da coleção dependente, em português, no plural**, seguindo
+a convenção do projeto.
+
+| Valor        | Quando                                     | Service              |
+|--------------|--------------------------------------------|----------------------|
+| `processos`  | cliente participa de processos ativos      | `clientService`      |
+| `parcelas`   | honorário tem parcelas ativas              | `feeService`         |
+| `pagamentos` | parcela tem pagamentos ativos              | `installmentService` |
+| `documentos` | seção está vinculada a documentos ativos   | `secaoService`       |
+
+**Não inventar valor novo fora dessa lista.** Ela existe porque, sem ela, em
+três fases existiriam `parcelas`, `parcela` e `installments` como valores
+possíveis, e o frontend voltaria a chutar.
+
+### 3. Outra regra de negócio → `regra` + chaves próprias
+
+Nem todo 409 é contagem de dependente. Quando não for,
+`dependencia`/`quantidade` não descrevem nada e **não se força o formato**: a
+regra declara as chaves que a descrevem, listadas em `REGRA_CONFLITO` no
+mesmo arquivo.
+
+| `regra`                    | Chaves que acompanham            | Quando                          |
+|----------------------------|----------------------------------|---------------------------------|
+| `pagamentoExcedeParcela`   | `saldoDisponivel`, `valorParcela` (numbers), e `campo: "valorPago"` | soma dos pagamentos passaria o valor da parcela |
+
+### Regra que vale para os três
+
+**A mensagem em prosa continua existindo e cita a quantidade e o tipo** — é o
+que a advogada lê. As chaves estruturadas são para o frontend decidir o que
+oferecer. Sem elas, a tela que quiser um botão "ver as 3 parcelas" extrai o
+número por regex de dentro da string, que foi exatamente como a Fase 1.3
+quebrou, quando o roteamento de etapa do cadastro dependia de `/mail/i` bater
+na mensagem.
+
+**O frontend ainda não consome `dependencia`/`quantidade`.** A tela que vai
+usar é a ficha financeira da Fase 4. O contrato existe e está acima.
+
+---
+
 ## Dívidas conhecidas e aceitas
 
 - **`src/utils/texto.js` duplica `semAcento`**, que também existe dentro de
@@ -352,6 +429,56 @@ ORIGENS_VARIAVEL  usuario, cliente, processo, sistema, honorario
   corresponde a nenhuma cobrança real.
 - Não há `CLAUDE.md` no repositório do frontend. As convenções de interface
   estão no `README.md` e em `docs/validacao-manual.md`.
+
+### Três índices não consultados — MANTIDOS de propósito
+
+Registrado na Fase 2E.1. Nenhuma consulta atual os usa. **Não remover**: o
+custo no volume de hoje é desprezível, e tirar agora para readicionar em duas
+fases é churn.
+
+| Índice                          | Quem vai consultar                                    |
+|---------------------------------|-------------------------------------------------------|
+| `documents.substituidoPorId_1`  | a cadeia de substituição, quando existir reativação de documento |
+| `documents.honorarioId_1`       | a ficha financeira do processo, na Fase 4             |
+| `processes.clientePrincipalId_1`| leitura por cliente principal                         |
+
+### Resíduo removível — `res.data.data ?? res.data`
+
+Depois que a Fase 2E.1 padronizou `GET /processes/:id/clientes` e
+`GET /documents/:id/secoes` no envelope, **todas** as listagens da API
+devolvem `{ data, total, page, limit, totalPages }`. Os ~20 sítios do
+frontend que escrevem `res.data.data ?? res.data` continuam **corretos**, mas
+o fallback nunca mais dispara. Removível quando houver fase que já mexa
+nesses arquivos; alterar 20 sítios só para isso é risco sem retorno.
+
+### Decisão mantida — envelope de `/auth`
+
+`GET /auth/me` e `POST /auth/login` devolvem `{ usuario }`. Todo outro
+`GET /:id` devolve o objeto cru. É diferença **entre** módulos, consistente
+**dentro** de cada um, e o `AuthContext` do frontend depende dela. **Não se
+mexe** por ganho cosmético.
+
+### Suspeita diferida — índice composto `{ usuarioId: 1, ativo: 1 }`
+
+Toda leitura filtra por `usuarioId` **e** `ativo`, e não há índice composto
+para esse par. Hoje o ganho seria imperceptível. **A confirmar com
+`.explain("executionStats")` sob alguns milhares de documentos** antes de
+criar qualquer índice — número, não intuição.
+
+### DEC-029 — projeção allowlist no portal do cliente (Fase 3)
+
+Asserção **a testar quando a Fase 3 criar as rotas do portal**. Hoje não há
+função de projeção para testar: o teste nasce junto com a rota.
+
+- O portal responde por **projeção allowlist** — campo entra por decisão
+  explícita, nunca por exclusão de blocklist.
+- **`observacoes` de cliente e `observacoes` de processo NUNCA vão para o
+  portal.** São anotação interna da advogada sobre a parte, não informação
+  para a parte.
+- **Nenhuma rota do portal reaproveita `clientService` ou `processService`
+  sem projeção explícita.** Esses services devolvem o documento inteiro; usar
+  um deles direto no portal vaza tudo que for adicionado ao schema depois,
+  em silêncio.
 
 ---
 
@@ -559,6 +686,57 @@ está correta — verificado, nada alterado):
 **Decisões:** o `DocumentFormPage.jsx` é formulário de **upload**
 (`urlArquivo` obrigatório), e a decisão 16 tira upload da interface. Ele
 segue vivo e fora da navegação nova — remover é decisão de outra fase.
+
+---
+
+### Fase 2E.1 — Correções da auditoria geral
+
+**Resumo:** vulnerabilidades do frontend, 409 com informação estruturada,
+envelope das duas listagens que faltavam, tratamento de erro nas telas,
+`PATCH` no processo, remoção de código morto e `__v` fora da saída JSON.
+
+**Backend:**
+- `config/integrityConflicts.js` (novo) — vocabulário fechado de
+  `dependencia` e das regras de conflito. Contrato completo documentado
+  acima, em "Contrato do 409".
+- `config/mongooseDefaults.js` (novo) — `toJSON` global tirando `__v` da
+  saída. **Não** `versionKey: false`: o `__v` continua gravado, verificado
+  por consulta direta ao driver. As duas consultas com `.lean()` do projeto
+  (`listProcesses` e `getProcessById`) resolvem por `.select("-__v")`, porque
+  `lean()` não passa por `toJSON`.
+- `errorHandler` com **allowlist** de chaves estruturadas, em vez de repassar
+  propriedade do `Error` por nome solto.
+- `GET /processes/:id/clientes` e `GET /documents/:id/secoes` no envelope
+  padrão, montado no service como todos os outros.
+
+**Frontend:**
+- `npm update` dentro do semver: 15 → 7 vulnerabilidades. As 3 de produção
+  fecharam (axios, form-data, follow-redirects). `package.json` não mudou
+  uma linha — só o lock.
+- 13 telas passam a usar `getApiErrorMessage`; as 2 de detalhe deixam de
+  mentir sobre a causa; os 4 formulários que faltavam passam a destacar o
+  campo do 409 (7 de 7 agora).
+- Apagados `components/ui/Button.jsx`, `Card.jsx` e `Card.css`.
+  **`Button.css` continua**, importado por `PageHeader.jsx`.
+
+**Decisões:**
+- **`campo` não entra em 409 de integridade referencial.** Ele existe para
+  destacar input, e ali o conflito é entre registros gravados. Ver o contrato
+  acima — é a decisão central desta fase.
+- O 409 de excedente de pagamento **não** foi forçado no formato
+  `dependencia`/`quantidade`, que não descreveriam nada nele. Ganhou `regra`,
+  `saldoDisponivel`, `valorParcela` — e `campo: "valorPago"`, porque ali
+  existe input em conflito de verdade.
+- `secaoService.deleteSecao` recebeu as duas chaves de integridade sem estar
+  na lista da auditoria: era o único 409 de integridade que ficaria falando
+  língua diferente, e é isso que o vocabulário fechado existe para evitar.
+
+**Onde um serviço de relato de erro se ligaria:** os 6 `console.error` de
+`catch` do frontend foram removidos — a mensagem ao usuário permanece. É
+**exatamente nesses `catch`** que um Sentry/Rollbar entraria, se um dia
+existir: `ClientFormPage`, `ClientDetailPage`, `ProcessFormPage`,
+`ProcessDetailPage` (2) e `LoginPage`. Os logs do **backend** não foram
+tocados — são saída de CLI, log operacional ou diagnóstico documentado.
 
 ---
 
