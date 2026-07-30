@@ -480,6 +480,71 @@ função de projeção para testar: o teste nasce junto com a rota.
   um deles direto no portal vaza tudo que for adicionado ao schema depois,
   em silêncio.
 
+### DEC-027 — três pré-requisitos que vão no MESMO commit (Fase 4)
+
+Registrado na Fase 2E.2. **Um bloco só, não três itens espalhados** — três
+coisas num commit é onde se esquece uma.
+
+Ao dar ao `Fee` o hook condicional de `percentual` e `valorBase`:
+
+1. **O hook condicional** de `pre("validate")` validando `percentual` e
+   `valorBase` conforme o tipo de honorário.
+2. **Migrar `feeService` de `findOneAndUpdate` para `save()` no mesmo
+   commit.** Hoje não há regra sendo burlada porque o model não tem hook; no
+   instante em que tiver, `findOneAndUpdate` passa por cima dele. Isso **não
+   é limpeza** — é a diferença entre o hook existir e o hook funcionar.
+3. **Emitir `campo` nos 409 do `feeService`.** Hoje ele não emite em nenhum,
+   e o `getApiErrorField` do `FeeFormPage` está **inerte**: a tela chama o
+   helper e não há o que destacar. Os erros de campo do honorário nascem
+   justamente com a validação condicional do item 1.
+
+Se qualquer um dos três ficar de fora, os outros dois entregam menos do que
+parecem.
+
+### Envelope é contrato de LISTAGEM, não de resposta em geral
+
+Registrado na Fase 2E.2. O envelope
+`{ data, total, page, limit, totalPages }` descreve uma **listagem**. Em
+resposta de **mutação**, `total`, `page` e `limit` não descrevem nada.
+
+Por isso `PATCH /documents/:id/secoes/reordenar`
+(`documentController.js:159`) devolve **array cru de propósito**. Não é
+divergência a corrigir, e uma varredura literal vai continuar acusando — é
+falso positivo conhecido.
+
+A Fase 2E.1 padronizou as **duas listagens** que faltavam
+(`GET /processes/:id/clientes` e `GET /documents/:id/secoes`) e **parou aí,
+corretamente**.
+
+### Risco conhecido de dependência do frontend — a conta honesta
+
+Registrado na Fase 2E.2. Se alguém rodar `npm audit` na defesa, a resposta
+precisa estar escrita. **Resposta honesta é melhor que otimista**, e por isso
+o registro não é "15 → 7".
+
+**O que se ganhou.** A atualização da Fase 2E.1 fechou **3 vulnerabilidades
+de produção que atingiam o navegador**: `axios` 1.13.2 → 1.19.0 (alta),
+`form-data` 4.0.4 → 4.0.6 (alta), `follow-redirects` 1.15.11 → 1.16.0
+(moderada). **O bump do `axios` se pagou.**
+
+**O que não se ganhou.** O bump do `react-router-dom` de 7.9.5 para 7.18.2
+foram **nove minors e não fechou a vulnerabilidade**.
+`react-router-dom@7.18.2` fixa `react-router: "7.18.2"` exato, não existe
+`react-router-dom` 8.x, e a correção de **GHSA-qwww-vcr4-c8h2** está em
+`react-router@8.3.0`, major. Ou seja: **assumimos risco de regressão sem
+ganho de segurança naquele pacote.** Manter a versão nova é decisão de
+**coerência de lockfile, não de benefício**.
+
+**Por que o risco residual é aceito.** O **modo RSC não é usado**: o app é
+SPA com `BrowserRouter`, e as 11 APIs de `react-router-dom` em uso
+(`BrowserRouter`, `Routes`, `Route`, `Link`, `NavLink`, `Navigate`,
+`Outlet`, `useNavigate`, `useParams`, `useSearchParams`, `useLocation`)
+resolvem em 7.18.2 sem depreciação. **O caminho vulnerável não existe neste
+código.**
+
+**As outras 5** (`brace-expansion`, `minimatch`, `@eslint/*`) exigem
+`eslint@10`, major, e **não saem no build** — são cadeia de desenvolvimento.
+
 ---
 
 ## Limites permanentes
