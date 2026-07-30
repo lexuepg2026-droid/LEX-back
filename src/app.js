@@ -1,4 +1,8 @@
 // src/app.js
+// Primeiro import de propósito: define os defaults de schema do Mongoose antes
+// de qualquer model ser compilado pela cadeia de rotas abaixo.
+import "./config/mongooseDefaults.js";
+
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";

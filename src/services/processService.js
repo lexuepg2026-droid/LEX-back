@@ -16,9 +16,10 @@ import {
   montarVinculos
 } from "./processoClienteService.js";
 
-const createError = (message, statusCode) => {
+const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  Object.assign(error, extra);
   return error;
 };
 
@@ -57,7 +58,9 @@ const normalizePayload = (data) => {
 
 const handleDuplicateKeyError = (error) => {
   if (error?.code === 11000 && error?.keyPattern?.numeroProcesso) {
-    throw createError("Já existe um processo com este número para este usuário", 409);
+    throw createError("Já existe um processo com este número para este usuário", 409, {
+      campo: "numeroProcesso"
+    });
   }
 
   throw error;
@@ -192,7 +195,10 @@ export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, st
   const [data, total] = await Promise.all([
     // `lean` para que `participantes` possa ser anexado ao objeto devolvido —
     // um documento Mongoose ignoraria a propriedade por não estar no schema.
+    // `-__v` na projeção porque `lean()` não passa por `toJSON`, que é onde a
+    // chave sai em todo o resto da API (config/mongooseDefaults.js).
     Process.find(filter)
+      .select("-__v")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -213,11 +219,14 @@ export const getProcessById = async (usuarioId, processId) => {
     throw createError(errors.join(", "), 400);
   }
 
+  // `-__v` na projeção porque `lean()` não passa por `toJSON`, que é onde a
+  // chave sai em todo o resto da API (config/mongooseDefaults.js).
   const process = await Process.findOne({
     _id: processId,
     usuarioId,
     ativo: true
   })
+    .select("-__v")
     .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO)
     .lean();
 

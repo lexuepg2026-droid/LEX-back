@@ -7,10 +7,12 @@ import {
   validarAtualizacaoInstallment
 } from "../validations/installmentValidation.js";
 import { recalcularStatusInstallment } from "./paymentService.js";
+import { DEPENDENCIA } from "../config/integrityConflicts.js";
 
-const erro = (status, message) => {
+const erro = (status, message, extra = {}) => {
   const error = new Error(message);
   error.statusCode = status;
+  Object.assign(error, extra);
   return error;
 };
 
@@ -65,7 +67,11 @@ const verificarNumeroParcelaDuplicado = async ({
   const existente = await Installment.findOne(filtro);
 
   if (existente) {
-    throw erro(409, "Já existe uma parcela com esse número para este honorário");
+    // Conflito de campo de formulário, e não de integridade: leva `campo`, no
+    // mesmo padrão de `processService` e `secaoService`.
+    throw erro(409, "Já existe uma parcela com esse número para este honorário", {
+      campo: "numeroParcela"
+    });
   }
 };
 
@@ -226,7 +232,15 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 
   const paymentsAtivos = await Payment.countDocuments({ installmentId: installment._id, ativo: true });
   if (paymentsAtivos > 0) {
-    throw erro(409, "Não é possível excluir esta cobrança pois existem pagamentos vinculados.");
+    const um = paymentsAtivos === 1;
+    // `dependencia` e `quantidade` são para o frontend; a prosa é o que a
+    // advogada lê, e passa a citar o número em vez de só dizer que existem.
+    throw erro(
+      409,
+      `Não é possível excluir esta parcela: ${um ? "existe" : "existem"} ${paymentsAtivos} ` +
+      `${um ? "pagamento ativo vinculado" : "pagamentos ativos vinculados"}. Exclua os pagamentos antes.`,
+      { dependencia: DEPENDENCIA.PAGAMENTOS, quantidade: paymentsAtivos }
+    );
   }
 
   installment.ativo = false;

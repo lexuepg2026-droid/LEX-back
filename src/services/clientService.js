@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Client from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente } from "./processoClienteService.js";
+import { DEPENDENCIA } from "../config/integrityConflicts.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -105,6 +106,16 @@ const conflict = (message, campo) => {
   const error = new Error(message);
   error.statusCode = 409;
   if (campo) error.campo = campo;
+  return error;
+};
+
+// 409 de integridade referencial. Não leva `campo`: não há input em conflito,
+// e sim registros já gravados. Ver `config/integrityConflicts.js`.
+const conflictDeDependencia = (message, dependencia, quantidade) => {
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.dependencia = dependencia;
+  error.quantidade = quantidade;
   return error;
 };
 
@@ -275,8 +286,10 @@ const deleteClient = async (usuarioId, clientId) => {
 
   if (vinculosAtivos > 0) {
     const plural = vinculosAtivos === 1 ? "processo" : "processos";
-    throw conflict(
-      `Não é possível excluir este cliente: ele participa de ${vinculosAtivos} ${plural} ativo${vinculosAtivos === 1 ? "" : "s"}. Desvincule-o dos processos antes.`
+    throw conflictDeDependencia(
+      `Não é possível excluir este cliente: ele participa de ${vinculosAtivos} ${plural} ativo${vinculosAtivos === 1 ? "" : "s"}. Desvincule-o dos processos antes.`,
+      DEPENDENCIA.PROCESSOS,
+      vinculosAtivos
     );
   }
 

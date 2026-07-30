@@ -149,10 +149,16 @@ export const listarVinculosDeProcessos = (usuarioId, processoIds) =>
 export const listarParticipantes = async (usuarioId, processoId) => {
   await assertProcessoDoUsuario(usuarioId, processoId);
 
-  return ProcessoCliente.find({ usuarioId, processoId, ativo: true })
+  const data = await ProcessoCliente.find({ usuarioId, processoId, ativo: true })
     .select(PROJECAO_SEM_CODIGO)
     .populate("clienteId", CAMPOS_CLIENTE_POPULADO)
     .sort({ principal: -1, createdAt: 1 });
+
+  // Mesmo envelope de toda listagem. O conjunto é limitado aos participantes de
+  // um processo e não pagina: uma página só, `limit` igual ao tamanho — a mesma
+  // forma que `listarInstallments` e `listarPayments` já usam quando filtram
+  // por processo.
+  return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
 };
 
 export const obterCodigoAcesso = async (usuarioId, processoId, clienteId) => {
