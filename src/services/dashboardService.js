@@ -5,6 +5,7 @@ import Fee from "../models/Fee.js";
 import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
+import ConfirmacaoVisualizacao from "../models/ConfirmacaoVisualizacao.js";
 
 const toCountMap = (arr) =>
   arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
@@ -20,7 +21,14 @@ export const getSummary = async (usuarioId) => {
     honorariosAReceber,
     parcelasVencidas,
     documentosCadastrados,
-    pagamentosResult
+    pagamentosResult,
+    // Contador de confirmações de visualização não vistas (Fase 3.1).
+    //
+    // Entra AQUI, no resumo que já existe, e não em rota nova: é mais um
+    // número do mesmo painel, sai da mesma consulta paralela, e uma rota
+    // própria obrigaria a tela a fazer duas chamadas para desenhar um cabeçalho.
+    // Apoiado pelo índice { usuarioId, vistaPelaAdvogada }.
+    confirmacoesNaoVistas
   ] = await Promise.all([
     Process.countDocuments({ usuarioId, status: "ativo", ativo: true }),
     Client.countDocuments({ usuarioId, ativo: true }),
@@ -41,7 +49,8 @@ export const getSummary = async (usuarioId) => {
           total: { $sum: "$valorPago" }
         }
       }
-    ])
+    ]),
+    ConfirmacaoVisualizacao.countDocuments({ usuarioId, vistaPelaAdvogada: false })
   ]);
 
   return {
@@ -50,7 +59,8 @@ export const getSummary = async (usuarioId) => {
     honorariosAReceber,
     parcelasVencidas,
     documentosCadastrados,
-    pagamentosRecebidosMes: pagamentosResult[0]?.total ?? 0
+    pagamentosRecebidosMes: pagamentosResult[0]?.total ?? 0,
+    confirmacoesNaoVistas
   };
 };
 

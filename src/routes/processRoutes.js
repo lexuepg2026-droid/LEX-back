@@ -10,6 +10,10 @@ router.use(authMiddleware);
 // Declaradas ANTES de "/:id" pelo mesmo motivo das rotas de /documents: na
 // ordem inversa, um GET /:id capturaria o prefixo e a rota nunca seria
 // alcançada. A mais específica (.../principal) vem antes da genérica.
+// Antes das rotas genéricas de `/:id`, como as de participantes.
+router.get("/:id/confirmacoes", processController.listConfirmacoes);
+router.patch("/:id/confirmacoes/vistas", processController.marcarConfirmacoesVistas);
+
 router.get("/:id/clientes", processController.listClientes);
 router.post("/:id/clientes", processController.addCliente);
 router.get("/:id/clientes/:clienteId/codigo-acesso", processController.getCodigoAcesso);

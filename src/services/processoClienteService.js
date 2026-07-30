@@ -3,6 +3,7 @@ import Client from "../models/Client.js";
 import Process from "../models/Process.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import { gerarCodigoAcessoUnico } from "../utils/accessCode.js";
+import { estadoDoParticipante } from "../config/portalEstados.js";
 import {
   validateClienteId,
   validateProcessId,
@@ -149,10 +150,22 @@ export const listarVinculosDeProcessos = (usuarioId, processoIds) =>
 export const listarParticipantes = async (usuarioId, processoId) => {
   await assertProcessoDoUsuario(usuarioId, processoId);
 
-  const data = await ProcessoCliente.find({ usuarioId, processoId, ativo: true })
+  const vinculos = await ProcessoCliente.find({ usuarioId, processoId, ativo: true })
     .select(PROJECAO_SEM_CODIGO)
     .populate("clienteId", CAMPOS_CLIENTE_POPULADO)
     .sort({ principal: -1, createdAt: 1 });
+
+  // Estado do portal, pronto, para a interface da Fase 3.2 não derivá-lo.
+  // `codigoAcesso` CONTINUA fora — `PROJECAO_SEM_CODIGO` acima —, e a Fase 3.1
+  // não abriu exceção: ele segue saindo só na rota dedicada.
+  //
+  // Sai de `ultimaConfirmacaoEm` e `primeiroAcessoPortal`, ambos desnormalizados
+  // no próprio vínculo: a listagem não faz consulta por participante, e portanto
+  // não tem N+1.
+  const data = vinculos.map((vinculo) => ({
+    ...vinculo.toJSON(),
+    estadoPortal: estadoDoParticipante(vinculo)
+  }));
 
   // Mesmo envelope de toda listagem. O conjunto é limitado aos participantes de
   // um processo e não pagina: uma página só, `limit` igual ao tamanho — a mesma

@@ -418,14 +418,32 @@ export const gerarDocumentoService = async (
   const anterior = await buscarGeradoAnterior(usuarioId, modelo._id, processoId, cliente._id);
 
   if (anterior?.editadoManualmente === true && confirmarSobrescrita !== true) {
+    // ── O aviso do portal (Fase 3.1) ────────────────────────────────────────
+    // Documento novo nasce com `visivelPortal: false` (decisão de segurança do
+    // model, mantida de propósito), e não existe rota que leia documento
+    // inativo. Logo, regerar um documento que ESTAVA visível o faz DESAPARECER
+    // do portal do cliente — em silêncio, do ponto de vista da advogada.
+    //
+    // O comportamento não muda: default `false` continua sendo a escolha certa,
+    // porque a alternativa é uma peça nova aparecer para o cliente sem ninguém
+    // ter liberado. O que muda é que ele deixa de ser invisível: a resposta
+    // passa a dizer que o anterior estava no portal, para a tela poder avisar
+    // "este documento sairá do portal até você liberar o novo".
+    //
+    // `visivelPortal` está na allowlist de `CHAVES_ESTRUTURADAS` do
+    // `errorHandler`; sem isso a chave não chegaria ao cliente.
     throw createError(
       "Este documento já foi gerado e editado manualmente. Regerar vai substituir o texto revisado. Envie \"confirmarSobrescrita\": true para prosseguir.",
       409,
       {
+        visivelPortal: anterior.visivelPortal === true,
         errors: {
           documentoId: anterior._id,
           dataGeracao: anterior.dataGeracao,
-          editadoManualmente: true
+          editadoManualmente: true,
+          // Se o anterior estava visível, o novo NÃO nasce visível: a advogada
+          // precisa liberar de novo.
+          sairaDoPortal: anterior.visivelPortal === true
         }
       }
     );

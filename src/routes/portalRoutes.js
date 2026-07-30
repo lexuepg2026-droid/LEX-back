@@ -67,6 +67,22 @@ router.use(portalAuthMiddleware);
 router.get("/sessao", portalAuthController.sessao);
 router.patch("/senha", portalAuthController.trocarSenha);
 
+// O texto da declaração é constante do backend e a tela precisa dele para
+// renderizar a área de confirmação mesmo antes da troca — inclusive para
+// explicar por que a confirmação ainda está bloqueada.
+router.get("/confirmacoes/texto", portalController.textoConfirmacao);
+
+// `POST /confirmacoes` fica ANTES do portão genérico de propósito. Ele é
+// bloqueado do mesmo jeito, mas por `confirmacaoService`, que devolve o código
+// `confirmacaoExigeSenhaPropria` em vez do genérico `senhaPortalProvisoria`.
+//
+// Os dois 403 acontecem na mesma condição e mesmo assim são distintos, porque
+// a tela precisa dizer coisas diferentes: "troque a senha para continuar" e "a
+// confirmação só vale depois que você definir uma senha que só você conhece".
+// O segundo explica o PORQUÊ, e é o que sustenta o valor do recibo. Passar
+// pelo portão genérico apagaria essa distinção.
+router.post("/confirmacoes", portalController.confirmar);
+
 router.use(exigirSenhaDefinitiva);
 
 // ── Registro de acesso ─────────────────────────────────────────────────────
@@ -88,5 +104,8 @@ router.use(async (req, _res, next) => {
 router.get("/processo", portalController.processo);
 router.get("/documentos", portalController.documentos);
 router.get("/documentos/:id/download", portalController.baixarDocumento);
+
+// O histórico é DADO, e por isso fica depois do portão genérico.
+router.get("/confirmacoes", portalController.minhasConfirmacoes);
 
 export default router;

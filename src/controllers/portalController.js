@@ -1,5 +1,8 @@
 import portalService from "../services/portalService.js";
+import confirmacaoService from "../services/confirmacaoService.js";
+import { projetarConfirmacao, projetarConfirmacoes } from "../services/portalProjection.js";
 import { renderizarDocumento, FORMATOS } from "../services/documentRenderService.js";
+import { TEXTO_CONFIRMACAO, VERSAO_TEXTO_CONFIRMACAO } from "../config/textoConfirmacao.js";
 import User from "../models/User.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -77,4 +80,43 @@ const baixarDocumento = async (req, res, next) => {
   }
 };
 
-export default { processo, documentos, baixarDocumento };
+// O texto que o portal deve EXIBIR, e que será gravado no registro. Sai do
+// backend para que a tela e o recibo não possam divergir: os dois vêm daqui.
+const textoConfirmacao = (_req, res) =>
+  res.status(200).json({
+    texto: TEXTO_CONFIRMACAO,
+    versao: VERSAO_TEXTO_CONFIRMACAO
+  });
+
+// `textoConfirmado` NÃO vem do corpo. Ver `config/textoConfirmacao.js`: o
+// recibo tem de registrar o que o SISTEMA apresentou, não o que o navegador
+// mandou.
+const confirmar = async (req, res, next) => {
+  try {
+    const confirmacao = await confirmacaoService.registrarConfirmacao(req.portal);
+    return res.status(201).json(projetarConfirmacao(confirmacao));
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// O cliente vê o próprio histórico de confirmações — é dele, e poder reler o
+// que declarou faz parte de a declaração ser dele.
+const minhasConfirmacoes = async (req, res, next) => {
+  try {
+    const confirmacoes = await confirmacaoService.listarConfirmacoesDoVinculo(
+      req.portal.processoClienteId
+    );
+    const data = projetarConfirmacoes(confirmacoes);
+    return res.status(200).json({
+      data, total: data.length, page: 1, limit: data.length, totalPages: 1
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export default {
+  processo, documentos, baixarDocumento,
+  textoConfirmacao, confirmar, minhasConfirmacoes
+};
