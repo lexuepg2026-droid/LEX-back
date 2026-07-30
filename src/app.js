@@ -3,6 +3,11 @@
 // de qualquer model ser compilado pela cadeia de rotas abaixo.
 import "./config/mongooseDefaults.js";
 
+// Guarda de configuração do portal do cliente. Roda na CARGA, antes de
+// qualquer rota ser montada: um segredo ausente ou compartilhado com o
+// `JWT_SECRET` derruba a subida em vez de quebrar no primeiro login real.
+import assertSegredoDoPortal from "./config/portalSecret.js";
+
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -19,6 +24,8 @@ import dashboardRoutes from "./routes/dashboardRoutes.js";
 import financeiroRoutes from "./routes/financeiroRoutes.js";
 import notFound from "./middleware/notFoundMiddleware.js";
 import errorHandler from "./middleware/errorMiddleware.js";
+
+assertSegredoDoPortal();
 
 const app = express();
 

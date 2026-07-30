@@ -56,12 +56,19 @@ Preencha o `.env`:
 | Variável      | Descrição                                                                 |
 |---------------|---------------------------------------------------------------------------|
 | `MONGO_URI`   | String de conexão do cluster Atlas (`mongodb+srv://...`). Peça ao responsável. |
-| `JWT_SECRET`  | Segredo para assinar os tokens JWT. Use uma string longa e aleatória.     |
+| `JWT_SECRET`  | Segredo para assinar os tokens JWT **da advogada**. Use uma string longa e aleatória. |
+| `JWT_PORTAL_SECRET` | Segredo para assinar os tokens **do portal do cliente**. Obrigatório, e precisa ser **diferente** do `JWT_SECRET`. |
 | `PORT`        | Porta do backend. Padrão `3001`.                                          |
 | `CORS_ORIGIN` | URL(s) do frontend permitidas. Padrão `http://localhost:5173,http://localhost:5174`. |
 | `NODE_ENV`    | Deixe `development` no ambiente local.                                     |
 
 > ⚠️ **Não** deixe `NODE_ENV=production` no `.env` local nem exportado no shell: em produção o cookie de sessão vira `Secure` e o navegador não o grava em `http://localhost`, quebrando o login silenciosamente.
+
+> ⚠️ **`JWT_PORTAL_SECRET` derruba a subida se faltar ou se for igual ao
+> `JWT_SECRET`**, com mensagem dizendo o motivo. Não é chatice: nome de cookie
+> não é fronteira de segurança. Com o mesmo segredo nos dois domínios, um token
+> de portal renomeado para `lex-token` passa na verificação de assinatura do
+> middleware da advogada, e a única barreira restante vira uma condição de `if`.
 
 #### Rate limit dos endpoints de autenticação
 
@@ -74,7 +81,13 @@ configurar nada mantém exatamente o comportamento que já valia:
 | `RATE_LIMIT_CADASTRO`       | `5`     | `POST /api/auth/register` |
 | `RATE_LIMIT_LOGIN`          | `10`    | `POST /api/auth/login`    |
 | `RATE_LIMIT_SENHA`          | `5`     | `POST /api/auth/alterar-senha` |
-| `RATE_LIMIT_JANELA_MINUTOS` | `15`    | janela dos três baldes    |
+| `RATE_LIMIT_JANELA_MINUTOS` | `15`    | janela de todos os baldes |
+| `RATE_LIMIT_PORTAL_LOGIN`   | `5`     | `POST /api/portal/login`  |
+
+O balde do portal é **independente** dos outros três: estourar o do portal não
+trava o login da advogada, e vice-versa. O teto é mais apertado que o do login
+da advogada de propósito — o código de acesso circula por WhatsApp e por papel,
+e a senha é o único fator.
 
 Fora de produção (`NODE_ENV != "production"`) cada teto é **multiplicado por
 20**. Testar o cadastro seis vezes seguidas em desenvolvimento é rotina, e
