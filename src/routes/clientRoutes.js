@@ -6,6 +6,10 @@ const router = Router();
 
 router.use(authMiddleware);
 
+// Antes das rotas genéricas de `/:id`, pela mesma razão que em documentRoutes:
+// na ordem inversa "senha-portal" seria capturado como id.
+router.delete("/:id/senha-portal", clientController.revokePortalAccess);
+
 router.post("/", clientController.createClient);
 router.get("/", clientController.getAllClients);
 router.get("/:id", clientController.getClientById);

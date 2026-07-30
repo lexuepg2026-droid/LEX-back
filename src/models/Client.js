@@ -113,6 +113,37 @@ const clientSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+
+    // ── Portal do cliente (DEC-029) ─────────────────────────────────────────
+    // A senha é do CLIENTE, não do vínculo: um cliente com três processos tem
+    // três códigos de acesso e uma senha só. Códigos identificam qual processo
+    // a sessão enxerga; a senha identifica a pessoa.
+    //
+    // `select: false` é a defesa de base. Toda leitura do projeto usa
+    // `Client.find`/`findOne` sem projeção explícita, então sem isto o hash
+    // sairia em TODA resposta de cliente — listagem, detalhe, populate de
+    // participante. Quem precisar do hash pede por `.select("+senhaPortalHash")`,
+    // e hoje só o login do portal e a troca de senha pedem.
+    senhaPortalHash: {
+      type: String,
+      select: false
+    },
+    // Enquanto for `true`, o portal só oferece a tela de troca. É o que
+    // sustenta o recibo: se a advogada continuar conhecendo a senha, a
+    // confirmação de leitura é repudiável e não prova que o cliente foi
+    // informado. Ver o comentário em `portalAuthService.trocarSenha`.
+    senhaPortalProvisoria: {
+      type: Boolean,
+      default: false
+    },
+    // Quando o CLIENTE definiu a própria senha. Fica nulo enquanto a senha for
+    // a provisória da advogada — é justamente a diferença que dá valor ao
+    // recibo, e por isso é campo próprio e não um booleano derivado.
+    senhaPortalDefinidaEm: {
+      type: Date,
+      default: null
+    },
+
     ativo: {
       type: Boolean,
       default: true

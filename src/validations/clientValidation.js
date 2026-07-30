@@ -34,6 +34,53 @@ const isFilled = (value) => {
   return true;
 };
 
+// ── Senha do portal do cliente (DEC-029) ───────────────────────────────────
+// Mesmo teto de força da senha da advogada (`authValidation.validateSenhaForte`):
+// 8 caracteres, ao menos uma letra e um número. Não é o mesmo código porque
+// não é a mesma regra — esta tem a recusa de CPF/CNPJ, que lá não faz sentido.
+//
+// A recusa de CPF/CNPJ existe porque documento NÃO é segredo: ele está na
+// procuração, no contrato e no próprio cadastro que a advogada acabou de
+// preencher. Senha igual ao documento significa que qualquer pessoa com uma
+// cópia da peça entra no portal — e a confirmação de leitura, que é o artefato
+// que esta fase existe para produzir, deixaria de provar coisa alguma.
+export const TAMANHO_MINIMO_SENHA_PORTAL = 8;
+
+const validateSenhaPortal = (senha, documentos = {}) => {
+  if (typeof senha !== "string") {
+    return `A senha do portal deve ter no mínimo ${TAMANHO_MINIMO_SENHA_PORTAL} caracteres`;
+  }
+
+  // A checagem de documento vem PRIMEIRO, antes das regras de força, e a ordem
+  // é o que a faz existir: CPF e CNPJ são só dígitos, então "12345678909" e
+  // "123.456.789-09" reprovariam antes por "falta uma letra" e a advogada
+  // receberia uma dica de formatação em vez do motivo real. Depois de corrigir
+  // para "Cpf123456" ela tentaria de novo — e a senha continuaria derivada do
+  // documento. O erro precisa dizer a coisa certa na primeira tentativa.
+  //
+  // Comparação por dígitos, não pela string: as duas formatações acima são o
+  // mesmo documento.
+  const digitosDaSenha = onlyNumbers(senha);
+  if (digitosDaSenha.length > 0) {
+    for (const [rotulo, valor] of [["CPF", documentos.cpf], ["CNPJ", documentos.cnpj]]) {
+      const digitosDoDocumento = onlyNumbers(valor);
+      if (digitosDoDocumento.length > 0 && digitosDaSenha === digitosDoDocumento) {
+        return `A senha do portal não pode ser o ${rotulo} do cliente. O ${rotulo} está na procuração e no contrato — não é segredo.`;
+      }
+    }
+  }
+
+  if (senha.length < TAMANHO_MINIMO_SENHA_PORTAL) {
+    return `A senha do portal deve ter no mínimo ${TAMANHO_MINIMO_SENHA_PORTAL} caracteres`;
+  }
+
+  if (!/[a-zA-Z]/.test(senha) || !/\d/.test(senha)) {
+    return "A senha do portal deve conter ao menos uma letra e um número";
+  }
+
+  return null;
+};
+
 const validateEndereco = (endereco) => {
   if (endereco === undefined) {
     return null;
@@ -199,13 +246,51 @@ const validateCreateClientPayload = (data) => {
     }
   }
 
+  const senhaPortalError = validateSenhaPortalDoPayload(data, data);
+  if (senhaPortalError) {
+    return senhaPortalError;
+  }
+
   return null;
+};
+
+// Campos de estado da senha do portal que o cliente HTTP nunca define: eles são
+// consequência de definir/trocar a senha, e aceitá-los no payload deixaria a
+// advogada marcar `senhaPortalProvisoria: false` sem o cliente ter trocado
+// nada — o que esvaziaria o recibo em silêncio.
+const CAMPOS_PORTAL_PROTEGIDOS = [
+  "senhaPortalHash",
+  "senhaPortalProvisoria",
+  "senhaPortalDefinidaEm"
+];
+
+// `documentos` vem do payload na criação e do cliente já gravado na
+// atualização — no PATCH a senha pode chegar sem o CPF junto, e comparar com
+// `undefined` não protegeria nada.
+const validateSenhaPortalDoPayload = (data, documentos) => {
+  for (const campo of CAMPOS_PORTAL_PROTEGIDOS) {
+    if (hasOwnProperty(data, campo)) {
+      return `O campo "${campo}" não pode ser definido diretamente`;
+    }
+  }
+
+  if (!hasOwnProperty(data, "senhaPortal")) {
+    return null;
+  }
+
+  // `null` e "" limpam a senha (revogam o acesso ao portal). É o mesmo
+  // vocabulário do resto do projeto: campo apagado grava null.
+  if (data.senhaPortal === null || data.senhaPortal === "") {
+    return null;
+  }
+
+  return validateSenhaPortal(data.senhaPortal, documentos);
 };
 
 // tipoPessoaEfetivo = tipo do payload, se enviado; senão o tipo já armazenado
 // (resolvido pelo service). Com ele a exclusividade é sempre verificável, mesmo
 // quando o PATCH não reenvia tipoPessoa.
-const validateUpdateClientPayload = (data, tipoPessoaEfetivo) => {
+const validateUpdateClientPayload = (data, tipoPessoaEfetivo, documentosAtuais = {}) => {
   const enderecoError = validateEndereco(data.endereco);
   if (enderecoError) {
     return enderecoError;
@@ -246,10 +331,23 @@ const validateUpdateClientPayload = (data, tipoPessoaEfetivo) => {
     return representanteError;
   }
 
+  // Documento efetivo = o do payload, se veio; senão o já gravado. Um PATCH que
+  // manda só `senhaPortal` precisa ser comparado com o CPF que está no banco.
+  const senhaPortalError = validateSenhaPortalDoPayload(data, {
+    cpf: hasOwnProperty(data, "cpf") ? data.cpf : documentosAtuais.cpf,
+    cnpj: hasOwnProperty(data, "cnpj") ? data.cnpj : documentosAtuais.cnpj
+  });
+  if (senhaPortalError) {
+    return senhaPortalError;
+  }
+
   return null;
 };
 
+export { validateSenhaPortal, validateSenhaPortalDoPayload };
+
 export default {
   validateCreateClientPayload,
-  validateUpdateClientPayload
+  validateUpdateClientPayload,
+  validateSenhaPortal
 };
