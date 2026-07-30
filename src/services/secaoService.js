@@ -3,6 +3,7 @@ import DocumentoSecao from "../models/DocumentoSecao.js";
 import Document from "../models/Document.js";
 import secaoValidation from "../validations/secaoValidation.js";
 import { regexBuscaTexto } from "../utils/texto.js";
+import { DEPENDENCIA } from "../config/integrityConflicts.js";
 
 const erro = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -128,10 +129,17 @@ export const deleteSecao = async (usuarioId, secaoId) => {
   // processo: não se apaga o que está em uso.
   const { total, documentos } = await contarDocumentosVinculados(usuarioId, secaoId);
   if (total > 0) {
+    // `errors.documentos` (os nomes) já existia e continua. `dependencia` e
+    // `quantidade` entram para este 409 falar a mesma língua dos de cliente,
+    // honorário e parcela — ver `config/integrityConflicts.js`.
     throw erro(
       `Seção vinculada a ${total} documento(s) ativo(s). Desvincule antes de excluir.`,
       409,
-      { errors: { documentos: documentos.map((d) => d.nome) } }
+      {
+        errors: { documentos: documentos.map((d) => d.nome) },
+        dependencia: DEPENDENCIA.DOCUMENTOS,
+        quantidade: total
+      }
     );
   }
 

@@ -75,6 +75,18 @@ const campoDuplicado = (err) => {
   return chaves[0] || null;
 };
 
+// Chaves estruturadas que um service pode anexar ao erro e que chegam ao
+// cliente. É uma allowlist de propósito: qualquer outra propriedade pendurada
+// no Error fica fora da resposta, para não vazar detalhe interno de passagem.
+const CHAVES_ESTRUTURADAS = [
+  "campo", // input do formulário a destacar (409 de duplicidade)
+  "dependencia", // 409 de integridade: coleção que bloqueia a exclusão
+  "quantidade", // 409 de integridade: quantos dependentes ativos existem
+  "regra", // 409 de regra de negócio que não é contagem de dependente
+  "saldoDisponivel", // regra `pagamentoExcedeParcela`
+  "valorParcela", // regra `pagamentoExcedeParcela`
+];
+
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (err, req, res, next) => {
   if (process.env.NODE_ENV !== "production") {
@@ -116,7 +128,9 @@ const errorHandler = (err, req, res, next) => {
 
   const body = { message: message || "Erro interno do servidor" };
   if (err.errors) body.errors = err.errors;
-  if (err.campo) body.campo = err.campo;
+  for (const chave of CHAVES_ESTRUTURADAS) {
+    if (err[chave] !== undefined) body[chave] = err[chave];
+  }
 
   return res.status(status).json(body);
 };

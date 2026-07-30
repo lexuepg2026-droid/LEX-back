@@ -16,9 +16,10 @@ import {
   montarVinculos
 } from "./processoClienteService.js";
 
-const createError = (message, statusCode) => {
+const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  Object.assign(error, extra);
   return error;
 };
 
@@ -57,7 +58,9 @@ const normalizePayload = (data) => {
 
 const handleDuplicateKeyError = (error) => {
   if (error?.code === 11000 && error?.keyPattern?.numeroProcesso) {
-    throw createError("Já existe um processo com este número para este usuário", 409);
+    throw createError("Já existe um processo com este número para este usuário", 409, {
+      campo: "numeroProcesso"
+    });
   }
 
   throw error;
