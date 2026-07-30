@@ -10,6 +10,8 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 
 import portalAuthController from "../controllers/portalAuthController.js";
+import portalController from "../controllers/portalController.js";
+import portalService from "../services/portalService.js";
 import portalAuthMiddleware, {
   exigirSenhaDefinitiva
 } from "../middleware/portalAuthMiddleware.js";
@@ -66,5 +68,25 @@ router.get("/sessao", portalAuthController.sessao);
 router.patch("/senha", portalAuthController.trocarSenha);
 
 router.use(exigirSenhaDefinitiva);
+
+// ── Registro de acesso ─────────────────────────────────────────────────────
+// Depois do portão da senha provisória, de propósito: enquanto o cliente não
+// tiver assumido a senha, quem está entrando pode ser a advogada testando a
+// credencial que acabou de criar. Registrar isso como "o cliente acessou"
+// seria rastro falso — e é justamente o rastro que a advogada vai olhar antes
+// de afirmar que a pessoa foi informada.
+//
+// Aguardado, e não disparado e esquecido: sem `await` a escrita corria com a
+// leitura da requisição seguinte e o rastro gravava de forma intermitente.
+// Rastro que às vezes grava é pior que rastro nenhum — a advogada leria "nunca
+// acessou" para alguém que acessou.
+router.use(async (req, _res, next) => {
+  await portalService.registrarAcesso(req.portal.processoClienteId);
+  next();
+});
+
+router.get("/processo", portalController.processo);
+router.get("/documentos", portalController.documentos);
+router.get("/documentos/:id/download", portalController.baixarDocumento);
 
 export default router;
