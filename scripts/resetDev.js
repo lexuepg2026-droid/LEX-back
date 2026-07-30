@@ -28,6 +28,12 @@ const COLLECTIONS = [
   // coleção ser fixada como "secoes". Fica na lista para limpar bases que
   // rodaram a versão inicial da Fase 2A.
   'secaos',
+  // Confirmações de visualização do portal (Fase 3.1). Entram aqui, no reset de
+  // DESENVOLVIMENTO, porque `resetDev` derruba a base inteira para o seed
+  // recriá-la — é operação de bancada, não cascata de produção. A regra de que
+  // confirmação não some por desativação de vínculo, processo ou cliente
+  // continua valendo em toda a API; ver `models/ConfirmacaoVisualizacao.js`.
+  'confirmacoes_visualizacao',
 ];
 
 async function main() {

@@ -13,12 +13,14 @@ import DocumentoSecao from '../src/models/DocumentoSecao.js';
 import Fee from '../src/models/Fee.js';
 import Installment from '../src/models/Installment.js';
 import Payment from '../src/models/Payment.js';
+import ConfirmacaoVisualizacao from '../src/models/ConfirmacaoVisualizacao.js';
 import feeService from '../src/services/feeService.js';
 import { createProcess } from '../src/services/processService.js';
 import { criarInstallment } from '../src/services/installmentService.js';
 import { create as criarPayment } from '../src/services/paymentService.js';
 import { gerarDocumentoService, atualizarTextoService } from '../src/services/documentGenerationService.js';
 import { detectarLacunas } from '../src/utils/lacunas.js';
+import { TEXTO_CONFIRMACAO } from '../src/config/textoConfirmacao.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'development') {
@@ -28,6 +30,18 @@ if (process.env.NODE_ENV !== 'development') {
 
 const DEMO_EMAIL = 'demo@lex.dev';
 const DEMO_SENHA = 'Lex123456';
+
+// ── Portal do cliente (Fase 3.1) ─────────────────────────────────────────────
+// Duas senhas de demonstração, para a Fase 3.2 ter os dois estados na tela:
+//   PROVISORIA — a que a advogada define e entrega. O portal só oferece a tela
+//                de troca enquanto ela valer.
+//   PROPRIA    — a que o cliente definiu depois de entrar. É a partir daqui que
+//                a confirmação de visualização vale como recibo, porque a
+//                advogada deixou de conhecer a senha.
+// Documentadas no README, junto de demo@lex.dev. São de demonstração e estão
+// no repositório de propósito — a base `lex` é descartável e recriada pelo seed.
+const PORTAL_SENHA_PROVISORIA = 'Portal2026';
+const PORTAL_SENHA_PROPRIA    = 'MinhaSenha2026';
 const IS_CLEAN   = process.argv.includes('--clean');
 
 // ── Logo de demonstracao ──────────────────────────────────────────────────────
@@ -471,6 +485,7 @@ async function main() {
       ProcessoCliente.deleteMany({ usuarioId: uid }),
       Process.deleteMany({ usuarioId: uid }),
       Client.deleteMany({ usuarioId: uid }),
+      ConfirmacaoVisualizacao.deleteMany({ usuarioId: uid }),
     ]);
     await User.deleteOne({ _id: uid });
 
@@ -526,6 +541,35 @@ async function main() {
     CLIENTS_DATA.map(c => Client.create({ ...c, usuarioId: uid }))
   );
   console.log(`${clients.length} clientes criados`);
+
+  // ── SENHAS DE PORTAL (Fase 3.1) ───────────────────────────────────────────
+  // Três estados, para a interface da 3.2 ter o que desenhar:
+  //   idx 0 (Ana Lima)      — senha PROVISÓRIA: só vê a tela de troca.
+  //   idx 2 e 3 (herdeiros) — senha PRÓPRIA, já trocada: portal liberado.
+  //   os demais             — SEM senha: não acessam o portal, e isso é estado
+  //                           válido, não pendência. Cliente que não usa o
+  //                           portal não precisa de senha.
+  const hashProvisoria = await bcrypt.hash(PORTAL_SENHA_PROVISORIA, 10);
+  const hashPropria    = await bcrypt.hash(PORTAL_SENHA_PROPRIA, 10);
+
+  await Client.updateOne(
+    { _id: clients[0]._id },
+    { $set: { senhaPortalHash: hashProvisoria, senhaPortalProvisoria: true, senhaPortalDefinidaEm: null } }
+  );
+  for (const idx of [2, 3]) {
+    await Client.updateOne(
+      { _id: clients[idx]._id },
+      {
+        $set: {
+          senhaPortalHash: hashPropria,
+          senhaPortalProvisoria: false,
+          // Data no passado: quem trocou a senha fez isso antes de confirmar.
+          senhaPortalDefinidaEm: new Date('2026-06-15T14:20:00.000Z'),
+        },
+      }
+    );
+  }
+  console.log('3 clientes com senha de portal (1 provisoria, 2 ja trocadas pelo cliente)');
 
   // ── PROCESSOS (via processService, nunca por insert direto) ───────────────
   // Passa pelo mesmo caminho da API: valida os participantes, grava processo e
@@ -753,6 +797,108 @@ async function main() {
 
   await atualizarTextoService(contratoCarlos._id, uid, textoAjustado);
   console.log(`1 documento editado a mao: "${contratoCarlos.nome}" (processo de Carlos) — regerar exige confirmarSobrescrita`);
+
+  // ── PORTAL: ACESSO E CONFIRMAÇÕES (Fase 3.1) ──────────────────────────────
+  //
+  // O cenário que a Fase 3.2 precisa desenhar, montado no processo de
+  // litisconsórcio ("Inventario e Partilha de Bens"), onde os DOIS herdeiros
+  // têm senha própria e cada um tem a sua procuração:
+  //
+  //   herdeiro 1 (autor, principal) — acessou E confirmou DUAS vezes, em datas
+  //       diferentes. A primeira já foi vista pela advogada; a segunda não —
+  //       assim o contador do dashboard tem exatamente 1 para contar.
+  //   herdeiro 2 (litisconsorte)    — acessou e NÃO confirmou. É o estado
+  //       `acessou_sem_confirmar`, o que a advogada olha antes de ligar
+  //       cobrando ciência.
+  //
+  // As duas procurações do litisconsórcio vão para o portal, senão a
+  // confirmação seria sobre uma tela vazia e o instantâneo não descreveria
+  // nada.
+  for (const g of geradosLitisconsorcio) {
+    await Document.updateOne({ _id: g._id }, { $set: { visivelPortal: true } });
+  }
+
+  const vinculosLitis = await ProcessoCliente.find({
+    usuarioId: uid,
+    processoId: litisconsorcio._id,
+    ativo: true,
+  }).sort({ principal: -1 });
+
+  const [vinculoQueConfirmou, vinculoSoAcessou] = vinculosLitis;
+
+  const docDeQuemConfirmou = geradosLitisconsorcio.find(
+    g => String(g.clienteId) === String(vinculoQueConfirmou.clienteId)
+  );
+
+  const D1 = new Date('2026-06-20T13:05:00.000Z');
+  const D2 = new Date('2026-07-14T09:40:00.000Z');
+
+  // Duas confirmações, escritas direto no model: o service exige uma sessão de
+  // portal, e o seed não simula navegador. O FORMATO é o mesmo que o service
+  // grava — inclusive o texto vindo da constante e o instantâneo com os
+  // documentos que estavam visíveis.
+  await ConfirmacaoVisualizacao.create([
+    {
+      usuarioId: uid,
+      processoClienteId: vinculoQueConfirmou._id,
+      processoId: litisconsorcio._id,
+      clienteId: vinculoQueConfirmou.clienteId,
+      dataHora: D1,
+      textoConfirmado: TEXTO_CONFIRMACAO,
+      instantaneo: {
+        statusProcesso: litisconsorcio.status,
+        documentosVisiveis: [docDeQuemConfirmou._id],
+        quantidadeDocumentos: 1,
+      },
+      // Já vista: a advogada abriu a ficha depois desta e antes da seguinte.
+      vistaPelaAdvogada: true,
+      ativo: true,
+    },
+    {
+      usuarioId: uid,
+      processoClienteId: vinculoQueConfirmou._id,
+      processoId: litisconsorcio._id,
+      clienteId: vinculoQueConfirmou.clienteId,
+      dataHora: D2,
+      textoConfirmado: TEXTO_CONFIRMACAO,
+      instantaneo: {
+        statusProcesso: litisconsorcio.status,
+        documentosVisiveis: [docDeQuemConfirmou._id],
+        quantidadeDocumentos: 1,
+      },
+      // NÃO vista: é esta que o contador do dashboard vai mostrar.
+      vistaPelaAdvogada: false,
+      ativo: true,
+    },
+  ]);
+
+  await ProcessoCliente.updateOne(
+    { _id: vinculoQueConfirmou._id },
+    {
+      $set: {
+        primeiroAcessoPortal: new Date('2026-06-20T13:02:00.000Z'),
+        ultimoAcessoPortal:   D2,
+        ultimaConfirmacaoEm:  D2,
+      },
+    }
+  );
+
+  // Acessou e não confirmou. `ultimaConfirmacaoEm` fica null de propósito.
+  await ProcessoCliente.updateOne(
+    { _id: vinculoSoAcessou._id },
+    {
+      $set: {
+        primeiroAcessoPortal: new Date('2026-06-21T18:11:00.000Z'),
+        ultimoAcessoPortal:   new Date('2026-07-02T20:35:00.000Z'),
+        ultimaConfirmacaoEm:  null,
+      },
+    }
+  );
+
+  console.log('Portal do cliente:');
+  console.log('  2 procuracoes do litisconsorcio liberadas para o portal');
+  console.log('  1 participante com 2 confirmacoes (1 vista, 1 NAO vista)');
+  console.log('  1 participante que acessou e NAO confirmou');
 
   // ── RESUMO ────────────────────────────────────────────────────────────────
   // Contagens lidas do banco, não das constantes: se algo deixar de ser criado,

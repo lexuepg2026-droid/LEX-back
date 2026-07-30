@@ -110,6 +110,31 @@ Isso cria o usuário de teste e a massa de dados (clientes, processos, honorári
 - **E-mail:** `demo@lex.dev`
 - **Senha:** `Lex123456`
 
+#### Portal do cliente (Fase 3.1)
+
+O login do portal é **código de acesso + senha**, e não e-mail. O código sai por
+vínculo processo-cliente, em `GET /api/processes/:id/clientes/:clienteId/codigo-acesso`
+— o seed imprime todos no resumo final, no formato `LEX-XXXX-XXXX`.
+
+O seed deixa os **três estados** que a interface precisa desenhar:
+
+| Cliente | Senha | Estado |
+|---|---|---|
+| Ana Lima Santos | `Portal2026` | **provisória** — o portal só oferece a tela de troca |
+| Maria Aparecida Costa | `MinhaSenha2026` | já trocada pelo cliente — portal liberado |
+| Joao Paulo Oliveira | `MinhaSenha2026` | já trocada pelo cliente — portal liberado |
+| os outros 5 | — | **sem senha**: não acessam o portal, e isso é estado válido |
+
+No processo **"Inventario e Partilha de Bens"** (litisconsórcio) os dois
+herdeiros têm acesso e a procuração de cada um está liberada no portal. Maria
+**confirmou duas vezes** (uma já vista pela advogada, outra não — é a que o
+contador do dashboard mostra); Joao **acessou e não confirmou**.
+
+> A senha provisória serve para a primeira entrada e nada mais. Enquanto ela
+> valer, a advogada ainda conhece a senha, e por isso a **confirmação de
+> visualização é recusada** — ela só vale como recibo depois que o cliente
+> definir uma senha que só ele conhece.
+
 O seed é protegido: se a conta demo já existir, ele recusa rodar. Para recriar do zero:
 
 ```bash
