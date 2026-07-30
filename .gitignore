@@ -9,6 +9,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+# O `.env.*` acima engoliria também o exemplo da suíte de testes, que É para
+# ser versionado — é ele que documenta o `MONGO_URI_TEST` e as duas guardas.
+!.env.test.example
 
 # ========================
 # LOGS
