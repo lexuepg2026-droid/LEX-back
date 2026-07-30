@@ -79,12 +79,14 @@ const campoDuplicado = (err) => {
 // cliente. É uma allowlist de propósito: qualquer outra propriedade pendurada
 // no Error fica fora da resposta, para não vazar detalhe interno de passagem.
 const CHAVES_ESTRUTURADAS = [
+  "codigo", // código de erro estável do portal (src/config/portalErrors.js)
   "campo", // input do formulário a destacar (409 de duplicidade)
   "dependencia", // 409 de integridade: coleção que bloqueia a exclusão
   "quantidade", // 409 de integridade: quantos dependentes ativos existem
   "regra", // 409 de regra de negócio que não é contagem de dependente
   "saldoDisponivel", // regra `pagamentoExcedeParcela`
   "valorParcela", // regra `pagamentoExcedeParcela`
+  "visivelPortal", // regeração: avisa que o documento novo nasce fora do portal
 ];
 
 // eslint-disable-next-line no-unused-vars

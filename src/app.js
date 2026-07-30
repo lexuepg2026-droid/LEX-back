@@ -22,6 +22,7 @@ import installmentRoutes from "./routes/installmentRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import financeiroRoutes from "./routes/financeiroRoutes.js";
+import portalRoutes from "./routes/portalRoutes.js";
 import notFound from "./middleware/notFoundMiddleware.js";
 import errorHandler from "./middleware/errorMiddleware.js";
 
@@ -60,6 +61,8 @@ app.use("/api/installments", installmentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/financeiro", financeiroRoutes);
+// Portal do cliente: prefixo, middleware e segredo próprios.
+app.use("/api/portal", portalRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
