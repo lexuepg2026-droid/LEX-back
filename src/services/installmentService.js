@@ -232,12 +232,13 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 
   const paymentsAtivos = await Payment.countDocuments({ installmentId: installment._id, ativo: true });
   if (paymentsAtivos > 0) {
-    const plural = paymentsAtivos === 1 ? "pagamento ativo" : "pagamentos ativos";
+    const um = paymentsAtivos === 1;
     // `dependencia` e `quantidade` são para o frontend; a prosa é o que a
     // advogada lê, e passa a citar o número em vez de só dizer que existem.
     throw erro(
       409,
-      `Não é possível excluir esta parcela: existem ${paymentsAtivos} ${plural} vinculados. Exclua os pagamentos antes.`,
+      `Não é possível excluir esta parcela: ${um ? "existe" : "existem"} ${paymentsAtivos} ` +
+      `${um ? "pagamento ativo vinculado" : "pagamentos ativos vinculados"}. Exclua os pagamentos antes.`,
       { dependencia: DEPENDENCIA.PAGAMENTOS, quantidade: paymentsAtivos }
     );
   }

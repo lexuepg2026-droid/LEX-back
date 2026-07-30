@@ -198,11 +198,12 @@ const deleteFee = async (feeId, usuarioId) => {
 
   const installmentsAtivas = await Installment.countDocuments({ feeId: fee._id, ativo: true });
   if (installmentsAtivas > 0) {
-    const plural = installmentsAtivas === 1 ? "parcela ativa" : "parcelas ativas";
+    const uma = installmentsAtivas === 1;
     // `dependencia` e `quantidade` são para o frontend; a prosa é o que a
     // advogada lê, e passa a citar o número em vez de só dizer que existem.
     const error = new Error(
-      `Não é possível excluir este honorário: existem ${installmentsAtivas} ${plural} vinculadas. Exclua as parcelas antes.`
+      `Não é possível excluir este honorário: ${uma ? "existe" : "existem"} ${installmentsAtivas} ` +
+      `${uma ? "parcela ativa vinculada" : "parcelas ativas vinculadas"}. Exclua as parcelas antes.`
     );
     error.statusCode = 409;
     error.dependencia = DEPENDENCIA.PARCELAS;
