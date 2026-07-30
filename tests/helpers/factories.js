@@ -216,9 +216,14 @@ export const dadosModelo = (extra = {}) => ({
   ...extra
 });
 
+// `origem` cai em "upload" quando omitida, e aí `urlArquivo` é obrigatório
+// (`documentValidation.js:100`). O caminho de upload está dormente na
+// interface (decisão 16), mas a API continua aceitando — é por ele que a
+// suíte cria documento avulso sem passar pela geração.
 export const dadosDocumento = (processoId, extra = {}) => ({
   nome: `Documento de Teste ${randomUUID().slice(0, 8)}`,
   tipo: "outro",
   processoId,
+  urlArquivo: "https://arquivos.lex.test/documento.pdf",
   ...extra
 });
