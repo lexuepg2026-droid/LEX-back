@@ -242,9 +242,15 @@ export const listDocumentSecoesService = async (documentoId, usuarioId) => {
 
   await autocorrigirOrdens(documentoId, usuarioId);
 
-  return DocumentoSecao.find({ documentoId, usuarioId, ativo: true })
+  const data = await DocumentoSecao.find({ documentoId, usuarioId, ativo: true })
     .populate("secaoId", "titulo tipo texto variaveis")
     .sort({ ordem: 1 });
+
+  // Mesmo envelope de toda listagem. O conjunto é limitado às seções de um
+  // documento e não pagina: uma página só, `limit` igual ao tamanho — a mesma
+  // forma que `listarInstallments` e `listarPayments` já usam quando filtram
+  // por processo.
+  return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
 };
 
 export const vincularSecaoService = async (documentoId, usuarioId, { secaoId, ordem } = {}) => {
