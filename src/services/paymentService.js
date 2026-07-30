@@ -48,7 +48,10 @@ const validarOverpayment = async (installment, novoValorPago, usuarioId, exclude
     // nada aqui. As chaves descrevem a regra — `saldoDisponivel` é o número que
     // a tela precisa para oferecer "pagar o saldo" sem extrair "R$ 1.234,56" da
     // prosa por regex.
+    // Este 409, ao contrário dos de integridade, TEM input em conflito: é o
+    // valor que ela acabou de digitar. Por isso leva `campo` também.
     throw criarErro(409, `Pagamento excede o valor da parcela. Saldo disponível: R$ ${saldoFormatado}`, {
+      campo: "valorPago",
       regra: REGRA_CONFLITO.PAGAMENTO_EXCEDE_PARCELA,
       saldoDisponivel: Number(saldo.toFixed(2)),
       valorParcela: Number(installment.valor)

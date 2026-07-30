@@ -67,7 +67,11 @@ const verificarNumeroParcelaDuplicado = async ({
   const existente = await Installment.findOne(filtro);
 
   if (existente) {
-    throw erro(409, "Já existe uma parcela com esse número para este honorário");
+    // Conflito de campo de formulário, e não de integridade: leva `campo`, no
+    // mesmo padrão de `processService` e `secaoService`.
+    throw erro(409, "Já existe uma parcela com esse número para este honorário", {
+      campo: "numeroParcela"
+    });
   }
 };
 
