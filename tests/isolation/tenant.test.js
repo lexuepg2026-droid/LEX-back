@@ -229,22 +229,60 @@ describe("isolamento por usuarioId", () => {
       );
     });
 
+    // O `PATCH` das três rotas nasceu na Fase 4.1 e entra na varredura junto
+    // com o `PUT`: verbo novo é superfície nova, e alias que não é varrido é
+    // exatamente por onde o filtro esquecido passaria.
     test("honorário de A", async () => {
       await negado(await B.get(`/fees/${a.honorario._id}`), "GET /fees/:id de A");
+      await negado(await B.patch(`/fees/${a.honorario._id}`, { valor: 1 }), "PATCH /fees/:id de A");
       await negado(await B.put(`/fees/${a.honorario._id}`, { valor: 1 }), "PUT /fees/:id de A");
       await negado(await B.delete(`/fees/${a.honorario._id}`), "DELETE /fees/:id de A");
     });
 
     test("parcela de A", async () => {
       await negado(await B.get(`/installments/${a.parcela._id}`), "GET /installments/:id de A");
+      await negado(await B.patch(`/installments/${a.parcela._id}`, { valor: 1 }), "PATCH /installments/:id de A");
       await negado(await B.put(`/installments/${a.parcela._id}`, { valor: 1 }), "PUT /installments/:id de A");
       await negado(await B.delete(`/installments/${a.parcela._id}`), "DELETE /installments/:id de A");
     });
 
     test("pagamento de A", async () => {
       await negado(await B.get(`/payments/${a.pagamento._id}`), "GET /payments/:id de A");
+      await negado(await B.patch(`/payments/${a.pagamento._id}`, { valorPago: 1 }), "PATCH /payments/:id de A");
       await negado(await B.put(`/payments/${a.pagamento._id}`, { valorPago: 1 }), "PUT /payments/:id de A");
       await negado(await B.delete(`/payments/${a.pagamento._id}`), "DELETE /payments/:id de A");
+    });
+
+    // ── As duas rotas novas da Fase 4.1 ────────────────────────────────────
+    // A ficha financeira devolve a árvore inteira do processo — honorários,
+    // parcelas, pagamentos e totais. É a rota que mais tem a perder num filtro
+    // esquecido, porque um único vazamento entrega o financeiro completo.
+    //
+    // O recibo é PDF, e portanto um vazamento aqui não apareceria em nenhuma
+    // varredura de JSON: sairia como arquivo, com o nome do cliente de A no
+    // `Content-Disposition`.
+    test("ficha financeira do processo de A", async () => {
+      await negado(
+        await B.get(`/financeiro/processos/${a.processo._id}`),
+        "GET /financeiro/processos/:id de A"
+      );
+    });
+
+    test("recibo do pagamento de A", async () => {
+      const r = await B.get(`/payments/${a.pagamento._id}/recibo`);
+      await negado(r, "GET /payments/:id/recibo de A");
+
+      // Contraprova sobre o binário: se um dia o 404 virar 200, o corpo não
+      // pode conter o nome do cliente de A nem no header do arquivo.
+      const disposition = r.headers.get("content-disposition") ?? "";
+      placar.tentativas += 1;
+      if (/cliente/i.test(disposition)) {
+        placar.vazamentos.push("recibo de A vazou o nome do cliente no Content-Disposition");
+      }
+      assert.ok(
+        !/cliente/i.test(disposition),
+        `VAZAMENTO — o recibo de A devolveu Content-Disposition a B: ${disposition}`
+      );
     });
 
     test("seção de A", async () => {
@@ -412,6 +450,43 @@ describe("isolamento por usuarioId", () => {
       assert.ok(
         !bruto.includes(String(a.honorario._id)),
         "VAZAMENTO — financeiro de B cita o honorário de A"
+      );
+    });
+
+    test("a ficha financeira de B não cita nenhum recurso de A", async () => {
+      // Contraprova do 404 do bloco 3.1: aqui B pergunta pelo PRÓPRIO processo
+      // e a resposta é varrida inteira. Um `$in` sem `usuarioId` numa das
+      // consultas de parcela ou pagamento vazaria por aqui, e não pelo id do
+      // processo — que continuaria sendo o de B.
+      const ficha = esperado(
+        await B.get(`/financeiro/processos/${b.processo._id}`),
+        200,
+        "ficha financeira de B"
+      );
+      const bruto = JSON.stringify(ficha);
+
+      for (const [rotulo, id] of Object.entries({
+        processo: a.processo._id,
+        honorario: a.honorario._id,
+        parcela: a.parcela._id,
+        pagamento: a.pagamento._id,
+        documento: a.documento._id
+      })) {
+        placar.tentativas += 1;
+        if (bruto.includes(String(id))) {
+          placar.vazamentos.push(`ficha financeira de B cita ${rotulo} de A`);
+        }
+        assert.ok(
+          !bruto.includes(String(id)),
+          `VAZAMENTO — a ficha financeira de B cita o ${rotulo} de A`
+        );
+      }
+
+      // Contraprova positiva: a ficha de B enxerga o honorário de B. Sem isto,
+      // uma ficha que devolvesse árvore vazia para todo mundo passaria acima.
+      assert.ok(
+        bruto.includes(String(b.honorario._id)),
+        "a ficha financeira de B deixou de enxergar o próprio honorário"
       );
     });
   });
