@@ -40,9 +40,14 @@ gerencia exclusivamente os seus próprios dados.
 | Config      | dotenv                              |
 | Dev         | nodemon                             |
 
-Variáveis de ambiente: `PORT`, `MONGO_URI`, `JWT_SECRET`, `CORS_ORIGIN`,
-`RATE_LIMIT_JANELA_MINUTOS` e os tetos por operação — definidas em `.env`
-(nunca versionado). Ver `.env.example`.
+Variáveis de ambiente: `PORT`, `MONGO_URI`, `JWT_SECRET`,
+**`JWT_PORTAL_SECRET`**, `CORS_ORIGIN`, `RATE_LIMIT_JANELA_MINUTOS` e os tetos
+por operação (inclusive `RATE_LIMIT_PORTAL_LOGIN`) — definidas em `.env` (nunca
+versionado). Ver `.env.example`.
+
+**`JWT_PORTAL_SECRET` é obrigatório e precisa ser diferente do `JWT_SECRET`.**
+`src/app.js` chama `assertSegredoDoPortal()` na carga e **derruba o processo**
+se faltar ou se forem iguais. Ver DEC-029 mais abaixo.
 
 **`pdfmake` fica na linha 0.3.x.** A 0.4 mudou a API de fontes e não traz nada
 que esta fase precise. Não subir sem motivo escrito.
@@ -145,8 +150,18 @@ junção é a fonte da verdade; se divergirem, a junção está certa.
 | Payments         | ✅    | ✅         | ✅      | `Payment`                       | ✅         |
 | Dashboard        | ✅    | ✅         | ✅      | — (agrega)                      | —          |
 | Financeiro       | ✅    | (fee)      | ✅      | — (agrega)                      | —          |
+| **Portal** (3.1) | ✅    | ✅×2       | ✅×4    | `ConfirmacaoVisualizacao`       | ✅         |
 
-**10 módulos, 11 models** (`shared/enderecoSchema.js` é sub-schema, não model).
+**11 módulos, 12 models** (`shared/enderecoSchema.js` é sub-schema, não model).
+
+O portal tem **quatro** services, pela mesma razão que o de documentos:
+
+| Service                     | Responsabilidade                                  |
+|-----------------------------|---------------------------------------------------|
+| `portalAuthService.js`      | login, 401 unificado, troca de senha, reemissão    |
+| `portalService.js`          | consulta — lê os models direto, sem os da advogada |
+| `portalProjection.js`       | **allowlist** — monta a resposta campo a campo     |
+| `confirmacaoService.js`     | confirmação de visualização, os dois lados         |
 
 O módulo de documentos tem **quatro** services, por responsabilidade:
 
@@ -241,6 +256,50 @@ dela era recusada para sempre.
 
 ### `/api/fees`, `/api/installments`, `/api/payments`
 `POST /` · `GET /` · `GET /:id` · `PUT /:id` · `DELETE /:id`
+
+### `/api/portal` (Fase 3.1)
+
+Superfície **separada**: middleware próprio (`portalAuthMiddleware`), segredo
+próprio (`JWT_PORTAL_SECRET`), cookie próprio (`lex-portal-token`). Nenhuma
+rota daqui usa `authMiddleware`, e nenhuma de lá usa o do portal.
+
+| Verbo | Caminho | Nota |
+|-------|---------|------|
+| POST  | `/login` | público; balde de rate limit próprio; **401 unificado** |
+| POST  | `/logout` | público (limpa o cookie) |
+| GET   | `/sessao` | responde com senha provisória — é quem precisa saber |
+| PATCH | `/senha` | troca obrigatória; **reemite a sessão** |
+| GET   | `/confirmacoes/texto` | o texto que será gravado, para a tela exibir |
+| POST  | `/confirmacoes` | 403 `confirmacaoExigeSenhaPropria` com senha provisória |
+| GET   | `/processo` | ⬇ daqui para baixo, 403 com senha provisória |
+| GET   | `/documentos` | só `visivelPortal && ativo && origem: "gerado"` |
+| GET   | `/documentos/:id/download` | `?formato=pdf\|docx`; fora do escopo ⇒ **404** |
+| GET   | `/confirmacoes` | histórico do próprio cliente |
+
+**Códigos de erro estáveis** (`src/config/portalErrors.js`), que o frontend usa
+para rotear:
+
+| Código | Status | Quando |
+|--------|--------|--------|
+| `credenciaisInvalidas` | 401 | login — **os seis casos**, corpo idêntico |
+| `sessaoPortalInvalida` | 401 | cookie ausente, expirado, assinatura errada, vínculo/cliente/processo desativado, senha trocada depois da emissão |
+| `senhaPortalProvisoria` | 403 | rota de dado com senha provisória |
+| `confirmacaoExigeSenhaPropria` | 403 | confirmação com senha provisória |
+
+### Rotas da advogada acrescentadas na Fase 3.1
+
+| Verbo | Caminho | Nota |
+|-------|---------|------|
+| DELETE | `/api/clients/:id/senha-portal` | revoga o acesso ao portal |
+| GET | `/api/processes/:id/confirmacoes` | confirmações do processo |
+| PATCH | `/api/processes/:id/confirmacoes/vistas` | marca todas as não vistas |
+
+`GET /api/processes/:id/clientes` passa a devolver **`estadoPortal`**
+(`nunca_acessou` / `acessou_sem_confirmar` / `confirmou`), de
+`src/config/portalEstados.js`. **`codigoAcesso` continua fora** — só sai na rota
+dedicada.
+
+`GET /api/dashboard` ganha **`confirmacoesNaoVistas`**.
 
 ### `/api/dashboard`
 `GET /` · `GET /status` · `GET /honorarios-por-mes`
@@ -465,20 +524,167 @@ para esse par. Hoje o ganho seria imperceptível. **A confirmar com
 `.explain("executionStats")` sob alguns milhares de documentos** antes de
 criar qualquer índice — número, não intuição.
 
-### DEC-029 — projeção allowlist no portal do cliente (Fase 3)
+### DEC-029 — portal do cliente. FECHADA e implementada na Fase 3.1
 
-Asserção **a testar quando a Fase 3 criar as rotas do portal**. Hoje não há
-função de projeção para testar: o teste nasce junto com a rota.
+Os 12 pontos ratificados, agora todos com código e teste. **Não reabrir.**
 
-- O portal responde por **projeção allowlist** — campo entra por decisão
-  explícita, nunca por exclusão de blocklist.
-- **`observacoes` de cliente e `observacoes` de processo NUNCA vão para o
-  portal.** São anotação interna da advogada sobre a parte, não informação
-  para a parte.
-- **Nenhuma rota do portal reaproveita `clientService` ou `processService`
-  sem projeção explícita.** Esses services devolvem o documento inteiro; usar
-  um deles direto no portal vaza tudo que for adicionado ao schema depois,
-  em silêncio.
+1. **Login = código de acesso + senha.** O `codigoAcesso` já existe por vínculo
+   `ProcessoCliente` desde a Fase 2B, formato `LEX-XXXX-XXXX`.
+2. **A senha é do CLIENTE, não do vínculo.** Campo no `Client`. Quem tem três
+   processos tem três códigos e uma senha só: o código diz qual processo a
+   sessão enxerga, a senha diz quem é a pessoa.
+3. **Senha inicial definida pela advogada**, no fluxo de cadastro do cliente
+   que já existe, e entregue junto com o código.
+4. **Troca obrigatória no primeiro acesso.** Enquanto `senhaPortalProvisoria`
+   for `true`, toda rota do portal responde **403** com código
+   `senhaPortalProvisoria` — exceto `/sessao`, `/senha`, `/logout` e
+   `/confirmacoes/texto`. Ver o bloco próprio abaixo: **este ponto não é
+   conveniência.**
+5. **CPF nunca é senha**, nem definitiva nem provisória. A checagem roda ANTES
+   das regras de força — CPF é só dígito e reprovaria por "falta uma letra",
+   dando dica de formatação em vez do motivo real.
+6. **Sessão escopada ao VÍNCULO**, não ao cliente. Uma sessão enxerga um
+   processo.
+7. **Segredo próprio**: `JWT_PORTAL_SECRET`, cookie `lex-portal-token`. Ver o
+   bloco próprio abaixo.
+8. **Escopo do portal:** o processo do vínculo e os documentos com
+   `visivelPortal: true`. **Sem honorário, sem financeiro, sem parcela, sem
+   pagamento.**
+9. **`observacoes` de cliente e de processo NUNCA vão ao portal.** São anotação
+   interna da advogada sobre a parte, não informação para a parte. É o campo
+   mais perigoso do schema.
+10. **Outros participantes não são expostos.** O cliente vê o próprio papel,
+    não a lista de litisconsortes.
+11. **401 unificado** no login: os seis casos (código inexistente, vínculo
+    inativo, cliente sem senha, senha errada, cliente inativo, processo
+    inativo) devolvem corpo e status **byte-idênticos**, e a comparação bcrypt
+    roda sempre, inclusive quando o acesso já será negado — sem isso o tempo de
+    resposta reintroduziria pela lateral a distinção que o corpo único apaga.
+12. **Rate limit próprio**, `RATE_LIMIT_PORTAL_LOGIN`, default 5. Balde
+    separado dos três de `authRoutes.js`, com teste provando que estourar um
+    não afeta o outro.
+
+**Projeção allowlist, agora com teste.** `src/services/portalProjection.js`
+monta toda resposta campo a campo, por escrita explícita. Sem spread, sem
+`delete obj.x`, sem `.select("-campo")`.
+
+Allowlist e não blocklist porque blocklist protege o schema de **hoje**: no dia
+em que alguém acrescentar um campo ao `Client`, ele entra na resposta do portal
+sozinho, sem ninguém decidir e sem nenhum teste falhar.
+
+**Nenhuma rota do portal reaproveita `clientService`, `processService` ou
+`documentService`.** Eles devolvem o documento inteiro; "limpar depois"
+reintroduz a blocklist pela porta dos fundos, dentro de um service que ninguém
+suspeita. `portalService.js` lê os models direto e projeta.
+
+### Por que a troca de senha é obrigatória (DEC-029, ponto 4)
+
+**Enquanto a advogada conhecer a senha, a confirmação de leitura é repudiável e
+não serve como prova de que o cliente foi informado.**
+
+Essa é a frase inteira. A senha inicial é definida pela advogada e entregue ao
+cliente; enquanto for essa senha, ela consegue entrar no portal como se fosse
+ele e clicar em "confirmo que li". O cliente poderia dizer, com razão, que não
+foi ele — e o artefato que a Fase 3.1 existe para produzir viraria enfeite.
+
+Consequências no código, todas com teste:
+
+- a confirmação é **recusada** enquanto a senha for provisória, com código
+  próprio (`confirmacaoExigeSenhaPropria`), distinto do 403 genérico;
+- a nova senha **não pode ser igual à provisória** — "trocar" repetindo a que a
+  advogada entregou marcaria a senha como definitiva com ela ainda conhecendo;
+- o **acesso não é registrado** enquanto a senha for provisória: quem entra
+  pode ser a advogada testando a credencial que acabou de criar, e é justamente
+  esse rastro que ela vai olhar antes de afirmar que a pessoa foi informada;
+- a sessão é **reemitida** na troca, e o token anterior morre (ver abaixo).
+
+**Não remover a obrigatoriedade "para simplificar o fluxo".** Está escrito
+também em `portalAuthService.trocarSenha`.
+
+### Segredo separado, e por que o cookie não basta (DEC-029, ponto 7)
+
+**Nome de cookie não é fronteira de segurança.** Quem controla o navegador
+escolhe em qual cookie põe qual string.
+
+Com o mesmo segredo nos dois domínios, um token de portal renomeado para
+`lex-token` passaria na verificação de assinatura do `authMiddleware`, e a
+única coisa entre um cliente e o cadastro inteiro da advogada seria a checagem
+de `tipo` — uma condição de `if`, não criptografia. Com segredos distintos, a
+assinatura não confere: a defesa vira matemática em vez de disciplina.
+
+`assertSegredoDoPortal()` (`src/config/portalSecret.js`) roda na carga de
+`src/app.js` e **derruba o processo** se `JWT_PORTAL_SECRET` faltar ou for
+igual ao `JWT_SECRET`. Mesmo padrão das guardas de banco da 2E.2.
+
+A checagem de `tipo` continua existindo **nos dois middlewares**, como segunda
+tranca, para o dia em que alguém apontar as duas variáveis para o mesmo valor.
+
+**O token carrega o carimbo da senha** (`senhaCarimbo` =
+`senhaPortalDefinidaEm` em ISO). JWT não tem revogação: sem isso, "reemitir a
+sessão" não invalidaria o token anterior, e o token emitido enquanto a advogada
+conhecia a senha continuaria válido pelas 2 horas seguintes — a janela que a
+troca obrigatória fecha ficaria aberta. O middleware já carrega o `Client` para
+checar `senhaPortalProvisoria`, então a comparação não custa consulta nenhuma.
+
+**Sessão de 2 horas**, contra `1d` da advogada. O portal é consulta — entra, lê,
+confirma, sai —, não jornada de trabalho; e o código de acesso circula por
+WhatsApp e por papel, então "aparelho emprestado com sessão viva" é cenário
+realista, não hipótese.
+
+### Confirmação de visualização é IMUTÁVEL e NÃO cascateia
+
+**A cascata de soft delete é o padrão do projeto desde a Fase 2A. Esta é a
+exceção deliberada.** Está escrita no model, para quem vier "corrigir por
+consistência".
+
+Desativar o vínculo, o processo ou o cliente **não** desativa as confirmações.
+Elas são prova de que a informação foi entregue, e **prova que some não serve
+para nada** — o valor de um recibo está em ele sobreviver ao fim da relação que
+o gerou. Encerrar o processo é exatamente quando a advogada mais pode precisar
+mostrar que informou.
+
+- Nenhuma rota **altera** uma confirmação depois de criada, exceto marcar
+  `vistaPelaAdvogada` (por processo, não uma a uma).
+- Nenhuma rota **apaga** confirmação — nem o cliente, nem a advogada.
+- Confirmações repetidas são **permitidas** e todas registradas. Confirmar
+  hoje, a advogada liberar um documento amanhã, e o cliente confirmar de novo
+  são dois fatos distintos, sobre conteúdos distintos. Sobrescrever apagaria a
+  primeira ciência, que é a que talvez importe num prazo.
+
+**Confirmação não é acesso.** `ultimoAcessoPortal` registra que a tela foi
+aberta: é automático, é atividade e não notifica. Confirmação é clique
+deliberado e é o que notifica. "O sistema registrou que a página foi aberta" e
+"a pessoa declarou que leu" são afirmações de força muito diferente.
+
+**Sem IP e sem user-agent.** Minimização de dado pessoal: o carimbo de tempo
+sustenta o recibo, e aqui a advogada é controladora de dado de terceiro.
+
+**O texto vem do backend** (`src/config/textoConfirmacao.js`), nunca do corpo da
+requisição, e é **copiado inteiro** para dentro de cada registro. Se viesse do
+cliente, o recibo afirmaria o que o navegador mandou. E guardar só uma
+referência faria o registro de 2026 mudar de sentido quando alguém reescrevesse
+a constante em 2027.
+
+### Regerar documento visível o tira do portal — mantido, agora sinalizado
+
+Documento novo nasce com `visivelPortal: false` (decisão de segurança do model)
+e não há rota que leia documento inativo. Logo, **regerar um documento que
+estava visível o faz desaparecer do portal.**
+
+**O comportamento é mantido de propósito:** a alternativa é uma peça nova
+aparecer para o cliente sem ninguém ter liberado. O que mudou na Fase 3.1 é que
+ele deixou de ser silencioso — o 409 de regeração passa a carregar
+`visivelPortal` e `errors.sairaDoPortal`, para a interface avisar.
+
+### Fora do portal por decisão: honorário e financeiro
+
+**Não é esquecimento.** `Fee.status` **não é derivado das parcelas** — a Fase
+2E.2 provou isso e deixou teste travando o comportamento atual —, e a
+DEC-027/028 vai reescrever o vocabulário do módulo na Fase 4.
+
+Exibir número financeiro agora seria mostrar, **para a pessoa errada**, um
+valor que ninguém mantém. Quando a Fase 4 fechar o financeiro, a decisão pode
+ser reaberta com base em algo estável.
 
 ### DEC-027 — três pré-requisitos que vão no MESMO commit (Fase 4)
 
@@ -565,10 +771,12 @@ código.**
   a frente.
 - Não expor secrets, senhas, tokens, strings de conexão ou IPs. Não alterar
   `.env`.
+- **Confirmação de visualização não cascateia e não se apaga.** Exceção
+  deliberada ao soft delete — ver DEC-029.
 - Não remover regra de isolamento (`usuarioId`) nem filtro `ativo: true`.
 - `git push` só com confirmação explícita.
-- Suíte de testes automatizados é **fase própria, já planejada** — não criar
-  por conta.
+- **Nenhuma rota do portal reaproveita service da advogada.** Ler o model
+  direto e projetar por `portalProjection.js`.
 
 ---
 
@@ -584,6 +792,10 @@ npm run reset:dev      # só derruba (bloqueado em produção)
 
 Conta do seed: **demo@lex.dev** / **Lex123456**
 
+Portal do cliente (Fase 3.1): senha **provisória** `Portal2026` (Ana Lima) e
+senha **própria** `MinhaSenha2026` (Maria e Joao, do litisconsórcio). O código
+de acesso de cada vínculo sai no resumo final do seed.
+
 ### Contagens esperadas do seed
 
 | Coleção            | Qtde |
@@ -597,6 +809,7 @@ Conta do seed: **demo@lex.dev** / **Lex123456**
 | `documents`        | 17   |
 | `secoes`           | 10   |
 | `documento_secao`  | 33   |
+| `confirmacoes_visualizacao` | 2 |
 
 **Lacunas intencionais do seed — não são bug:**
 - Beatriz Ramos Pereira (PF) **sem `profissao`** → gerar para "Usucapião de
@@ -802,6 +1015,70 @@ envelope das duas listagens que faltavam, tratamento de erro nas telas,
 existir: `ClientFormPage`, `ClientDetailPage`, `ProcessFormPage`,
 `ProcessDetailPage` (2) e `LoginPage`. Os logs do **backend** não foram
 tocados — são saída de CLI, log operacional ou diagnóstico documentado.
+
+---
+
+### Fase 2E.2 — Suíte de testes automatizados
+
+**Resumo:** primeira coisa executável do repositório. 101 testes no backend
+(`node --test`, sem dependência nova) e 47 no frontend, mais varredura estática
+de classe CSS, correção dos defeitos que ela achou e o roteiro manual de 83
+para 79 passos.
+
+**Backend:** infraestrutura em `tests/helpers/` — guarda de banco que aborta se
+a URI apontar para `lex` ou para banco sem "test" no nome, app em porta
+efêmera, pote de cookies sobre `fetch` nativo, fábricas com CPF/CNPJ de dígito
+válido, e extração de texto de PDF com `node:zlib` (ToUnicode CMap), sem
+instalar nada. Blocos: isolamento (86 tentativas, 0 vazamentos), cadeia
+financeira, geração de documento, invariantes de vínculo.
+
+**Achados reportados e NÃO corrigidos:** `Fee.status` não é derivado das
+parcelas — teste trava o comportamento atual para a Fase 4 cair nele; e a
+cadeia de `substituidoPorId` está gravada mas não é navegável pela API, porque
+não há rota que leia documento inativo.
+
+**Frontend:** varredura de "classe aplicada sem regra alcançável", que achou 3
+defeitos reais — `ui-btn` inalcançável em 3 telas e no `Modal`, `.wizard-step` e
+`.breadcrumb-item` sem regra em lugar nenhum. Corrigidos. `utilities.css`
+apagado.
+
+---
+
+### Fase 3.1 — Portal do cliente: backend, confirmação e suíte
+
+**Resumo:** primeira vez que o LEX expõe dado a alguém que não é a advogada.
+Autenticação própria por código de acesso + senha, projeção allowlist,
+confirmação de visualização imutável, e 69 testes novos (101 → 170).
+
+**Arquivos novos:** `config/portalSecret.js`, `config/portalErrors.js`,
+`config/portalEstados.js`, `config/textoConfirmacao.js`,
+`models/ConfirmacaoVisualizacao.js`, `services/portalAuthService.js`,
+`services/portalService.js`, `services/portalProjection.js`,
+`services/confirmacaoService.js`, `controllers/portalAuthController.js`,
+`controllers/portalController.js`, `middleware/portalAuthMiddleware.js`,
+`routes/portalRoutes.js`, `validations/portalAuthValidation.js`.
+
+**Decisões**, todas com o porquê nos blocos acima: segredo separado com guarda
+de subida; token carregando o carimbo da senha para a troca invalidar o
+anterior; sessão de 2h; 401 unificado com bcrypt rodando sempre; texto da
+confirmação vindo do backend e copiado para dentro do registro; confirmação
+imutável e sem cascata; contador de não vistas dentro de `getSummary` em vez de
+rota nova.
+
+**Quatro defeitos meus, achados por teste antes do commit:** `select: false`
+não protege o documento recém-escrito (o hash saía no 201 de cadastro, e a
+correção foi centralizar em `mongooseDefaults.js`); a recusa de CPF como senha
+estava inalcançável por ordem das checagens; o registro de acesso corria com a
+requisição seguinte e o pipeline nem funcionava, porque o Mongoose 9 exige
+`updatePipeline: true` e um `catch` silencioso engoliu o erro; e
+`POST /confirmacoes` estava montado depois do portão genérico, então o código
+de erro específico nunca saía.
+
+**Isolamento:** 66 rotas da advogada e 8 do portal varridas nas duas direções,
+86 tentativas cruzadas, 20 respostas varridas campo a campo, **0 vazamentos**.
+
+**Não tocado:** frontend (Fase 3.2), `Fee`/`Installment`/`Payment`,
+`documentRenderService.js`, catálogo de variáveis, envelope de `/auth`.
 
 ---
 
