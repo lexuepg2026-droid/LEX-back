@@ -1,4 +1,5 @@
 import paymentService from "../services/paymentService.js";
+import { emitirRecibo } from "../services/receiptService.js";
 import {
   validateCreatePayment,
   validateUpdatePayment,
@@ -89,10 +90,32 @@ const remove = async (req, res, next) => {
   }
 };
 
+// Recibo em PDF do pagamento. Mesmos headers do download de documento,
+// inclusive o `Access-Control-Expose-Headers`: sem ele o frontend não lê o nome
+// do arquivo do fetch.
+const baixarRecibo = async (req, res, next) => {
+  try {
+    const { buffer, contentType, nomeArquivo } = await emitirRecibo(
+      req.params.id,
+      req.user._id
+    );
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${nomeArquivo}"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+
+    return res.status(200).send(buffer);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export default {
   create,
   findAll,
   findById,
   update,
-  remove
+  remove,
+  baixarRecibo
 };

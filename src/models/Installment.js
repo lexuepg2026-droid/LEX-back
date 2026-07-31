@@ -39,6 +39,19 @@ const installmentSchema = new mongoose.Schema(
       enum: ["pendente", "pago", "vencido", "parcial"],
       default: "pendente"
     },
+    // Soma dos pagamentos ATIVOS desta parcela, desnormalizada (Fase 4.1).
+    // Pagamento desativado sai da soma.
+    //
+    // NUNCA é escrito por rota: `installmentService` recusa com 400 quem o
+    // mandar no corpo, e o único ponto de escrita é
+    // `recalcularStatusInstallment`. Campo desnormalizado com duas fontes de
+    // escrita é campo que diverge — e aqui a divergência seria a advogada
+    // vendo na ficha um valor recebido que não existe no extrato.
+    valorPago: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
     dataPagamento: {
       type: Date,
       default: null

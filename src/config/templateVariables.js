@@ -14,14 +14,17 @@
 // Todos os caminhos foram conferidos contra os schemas reais de User, Client,
 // Process e Fee.
 //
-// Honorário (Fase 2C): a origem `honorario` cobre apenas o que o Fee ATUAL
-// suporta. `percentualHonorario` fica de fora de propósito — o campo
-// `percentual` só nasce na Fase 4, e declarar a variável antes do campo
+// Honorário: a origem `honorario` cobre o que o Fee suporta.
+// `percentualHonorario` ficou de fora da Fase 2C de propósito — o campo
+// `percentual` só nasceria na Fase 4, e declarar a variável antes do campo
 // produziria pendência perpétua numa seção que a advogada não teria como
-// resolver.
+// resolver. O campo nasceu na DEC-027 e a variável entrou na Fase 4.1.
 //
-// ── Contagem, conferida na Fase 2D.1 ───────────────────────────────────────
-// 47 variáveis: cliente 20, usuario 10, processo 9, honorario 6, sistema 2.
+// ── Contagem ───────────────────────────────────────────────────────────────
+// 48 variáveis: cliente 20, usuario 10, processo 9, honorario 7, sistema 2.
+//
+// Eram 47 até a Fase 3.2 (honorario 6). A Fase 4.1 acrescentou
+// `percentualHonorario`, e só ela.
 //
 // A auditoria da Fase 2C falou em "45 antes das 6 de honorário"; o número era
 // erro de contagem, não divergência real. O arquivo imediatamente anterior ao
@@ -29,11 +32,11 @@
 // Fase 2A registrou. Ou seja: 41 documentadas + 6 de honorário = 47, e nunca
 // houve chave a mais sem origem conhecida.
 //
-// Todos os 47 `caminho` foram conferidos contra os schemas reais de User,
+// Todos os 48 `caminho` foram conferidos contra os schemas reais de User,
 // Client, Process e Fee — nenhum resolver órfão, nenhum campo inexistente.
 // `numeroParcelas` e `valorParcela` não são campos do Fee: são derivados das
 // parcelas ativas em documentGenerationService, e por isso não aparecem no
-// schema. As 10 seções do seed exercitam as 47.
+// schema. As seções do seed exercitam as 48.
 //
 // Quem acrescentar variável aqui precisa acrescentar rótulo e descrição em
 // `variableLabels.js` — há guarda em teste de carga que falha se faltar.
@@ -110,6 +113,10 @@ export const CATALOGO_VARIAVEIS = {
   dataVencimentoHonorario: { origem: "honorario", caminho: "dataVencimento",          rotulo: "Vencimento do honorário",    formatador: "data" },
   numeroParcelas:          { origem: "honorario", caminho: "numeroParcelas",          rotulo: "Número de parcelas",         formatador: "inteiro" },
   valorParcela:            { origem: "honorario", caminho: "valorParcela",            rotulo: "Valor da parcela",           formatador: "moeda" },
+  // Fase 4.1: o campo `percentual` nasceu na DEC-027, e com ele a variável que
+  // a Fase 2C deixou de fora de propósito. Honorário sem percentual (fixo,
+  // custas) devolve "" e vira pendência 422 — não se inventa valor.
+  percentualHonorario:     { origem: "honorario", caminho: "percentual",              rotulo: "Percentual do honorário",    formatador: "percentual" },
 
   // ── Sistema ────────────────────────────────────────────────────────────────
   dataAtual:               { origem: "sistema", caminho: "hoje",                      rotulo: "Data atual",                 formatador: "data" },

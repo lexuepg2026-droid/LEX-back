@@ -194,17 +194,64 @@ describe("portal: consulta", () => {
     });
 
     test("nenhum dado financeiro sai no portal", async () => {
-      // DEC-029 ponto 8. Honorário e financeiro ficam fora por decisão: a
-      // DEC-027/028 vai reescrever o vocabulário na Fase 4, e exibir agora
-      // seria mostrar número que ninguém mantém, para a pessoa errada.
+      // DEC-029 ponto 8, e a decisão NÃO foi reaberta pela Fase 4.1: o portal
+      // continua sem honorário, sem parcela e sem pagamento. A Fase 3.2
+      // registrou que a exibição poderia ser reconsiderada "quando a Fase 4
+      // fechar o financeiro" — fechou, e a decisão segue a mesma. Cliente não
+      // precisa do extrato da advogada dentro do portal de acompanhamento.
       const { adv, processo, codigoAcesso } = await montarCenarioPortal("consulta-fin");
-      await criarHonorario(adv, processo._id, { valor: 987654, descricao: "VALOR SECRETO" });
+
+      // Um honorário PERCENTUAL, com os campos que a Fase 4.1 criou. Sem eles
+      // no cenário, a varredura passaria por não haver o que vazar.
+      const honorario = await criarHonorario(adv, processo._id, {
+        tipo: "percentual", percentual: 42, valorBase: 987654,
+        descricao: "VALOR SECRETO"
+      });
+      const parcela = esperado(
+        await adv.post("/installments", {
+          feeId: honorario._id, numeroParcela: 1,
+          valor: 100, dataVencimento: "2099-12-31"
+        }),
+        201, "parcela do cenário"
+      );
+      esperado(
+        await adv.post("/payments", {
+          installmentId: parcela._id, valorPago: 77,
+          dataPagamento: "2026-02-10", formaPagamento: "pix"
+        }),
+        201, "pagamento do cenário"
+      );
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const bruto = JSON.stringify(esperado(await portal.get("/portal/processo"), 200, "processo"));
 
-      for (const proibido of ["987654", "VALOR SECRETO", "honorario", "valor", "parcela", "pagamento"]) {
-        assert.ok(!bruto.toLowerCase().includes(proibido.toLowerCase()), `"${proibido}" vazou`);
+      // Todas as rotas de dado do portal, não só a do processo: um campo novo
+      // entra por qualquer uma delas.
+      const respostas = [
+        ["GET /portal/processo", await portal.get("/portal/processo")],
+        ["GET /portal/documentos", await portal.get("/portal/documentos")],
+        ["GET /portal/confirmacoes", await portal.get("/portal/confirmacoes")],
+        ["GET /portal/sessao", await portal.get("/portal/sessao")]
+      ];
+
+      // Os nomes de campo da Fase 4.1 entram na mesma rede que já pegava os
+      // antigos. Nomes de campo, e não só valores: um campo pode sair zerado
+      // hoje e preenchido amanhã, e a varredura precisa cair na primeira vez.
+      const PROIBIDOS = [
+        "987654", "VALOR SECRETO",
+        "honorario", "valor", "parcela", "pagamento",
+        "percentual", "valorBase", "valorPago", "saldoDisponivel",
+        "valorParcela", "contratado", "emAberto", "parcialmente_pago"
+      ];
+
+      for (const [rotulo, r] of respostas) {
+        assert.equal(r.status, 200, `${rotulo} — ${JSON.stringify(r.body)}`);
+        const bruto = JSON.stringify(r.body ?? {}).toLowerCase();
+        for (const proibido of PROIBIDOS) {
+          assert.ok(
+            !bruto.includes(proibido.toLowerCase()),
+            `VAZAMENTO — ${rotulo} trouxe "${proibido}": ${JSON.stringify(r.body)}`
+          );
+        }
       }
     });
   });

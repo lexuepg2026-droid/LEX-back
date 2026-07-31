@@ -143,19 +143,29 @@ describe("portal: isolamento — a terceira dimensão", () => {
       ["POST", "/secoes"], ["GET", "/secoes"], ["GET", `/secoes/${c.secao._id}`],
       ["PATCH", `/secoes/${c.secao._id}`], ["DELETE", `/secoes/${c.secao._id}`],
 
+      // O `PATCH` das três rotas financeiras e as duas rotas novas da Fase 4.1
+      // entram aqui: verbo novo e rota nova são superfície nova, e a DEC-029
+      // ponto 8 mantém o portal SEM nada financeiro. A ficha devolve a árvore
+      // inteira do processo e o recibo devolve um PDF — os dois piores lugares
+      // para um 200 indevido.
       ["POST", "/fees"], ["GET", "/fees"], ["GET", `/fees/${c.honorario._id}`],
-      ["PUT", `/fees/${c.honorario._id}`], ["DELETE", `/fees/${c.honorario._id}`],
+      ["PATCH", `/fees/${c.honorario._id}`], ["PUT", `/fees/${c.honorario._id}`],
+      ["DELETE", `/fees/${c.honorario._id}`],
 
       ["POST", "/installments"], ["GET", "/installments"],
-      ["GET", `/installments/${c.parcela._id}`], ["PUT", `/installments/${c.parcela._id}`],
+      ["GET", `/installments/${c.parcela._id}`],
+      ["PATCH", `/installments/${c.parcela._id}`], ["PUT", `/installments/${c.parcela._id}`],
       ["DELETE", `/installments/${c.parcela._id}`],
 
       ["POST", "/payments"], ["GET", "/payments"],
-      ["GET", `/payments/${c.pagamento._id}`], ["PUT", `/payments/${c.pagamento._id}`],
+      ["GET", `/payments/${c.pagamento._id}`],
+      ["PATCH", `/payments/${c.pagamento._id}`], ["PUT", `/payments/${c.pagamento._id}`],
       ["DELETE", `/payments/${c.pagamento._id}`],
+      ["GET", `/payments/${c.pagamento._id}/recibo`],
 
       ["GET", "/dashboard"], ["GET", "/dashboard/status"],
-      ["GET", "/dashboard/honorarios-por-mes"], ["GET", "/financeiro/resumo"]
+      ["GET", "/dashboard/honorarios-por-mes"], ["GET", "/financeiro/resumo"],
+      ["GET", `/financeiro/processos/${c.processo._id}`]
     ];
 
     // O token do portal, colocado no cookie da advogada. Nome de cookie não é

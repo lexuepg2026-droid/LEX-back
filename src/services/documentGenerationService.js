@@ -106,6 +106,9 @@ const montarOrigemHonorario = async (fee, usuarioId) => {
       _id: fee._id,
       valor: fee.valor,
       tipo: fee.tipo,
+      // Fase 4.1: `null` no honorário fixo ou de custas — o formatador devolve
+      // "" e a variável vira pendência 422, em vez de um percentual inventado.
+      percentual: fee.percentual ?? null,
       dataVencimento: fee.dataVencimento,
       numeroParcelas: 1,
       valorParcela: fee.valor
@@ -119,6 +122,7 @@ const montarOrigemHonorario = async (fee, usuarioId) => {
     _id: fee._id,
     valor: fee.valor,
     tipo: fee.tipo,
+    percentual: fee.percentual ?? null,
     dataVencimento: fee.dataVencimento,
     numeroParcelas: parcelas.length,
     // Parcelas desiguais não têm "valor da parcela" — deixar undefined vira

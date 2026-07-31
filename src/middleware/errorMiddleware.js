@@ -109,12 +109,21 @@ const errorHandler = (err, req, res, next) => {
   }
 
   // ── ValidationError: um ou mais campos reprovados pelo schema ───────────
+  //
+  // `campo` sai aqui só quando um service o anexou DE PROPÓSITO ao erro (ver
+  // `feeService.comCampoDoModel`). Deduzi-lo sozinho de "só um caminho falhou"
+  // mudaria, de uma vez, a resposta de todo módulo que reprova um campo — e
+  // nem toda tela quer destacar input a partir de um 400 de schema.
   if (err.name === "ValidationError") {
     const errors = {};
     for (const [caminho, detalhe] of Object.entries(err.errors || {})) {
       errors[caminho] = mensagemDeValidacao(detalhe);
     }
-    return res.status(400).json({ message: "Dados inválidos", errors });
+    return res.status(400).json({
+      message: "Dados inválidos",
+      errors,
+      ...(err.campo ? { campo: err.campo } : {})
+    });
   }
 
   // ── CastError solto: tipicamente ObjectId inválido vindo da URL ─────────

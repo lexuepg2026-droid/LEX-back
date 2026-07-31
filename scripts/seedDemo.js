@@ -20,6 +20,7 @@ import { criarInstallment } from '../src/services/installmentService.js';
 import { create as criarPayment } from '../src/services/paymentService.js';
 import { gerarDocumentoService, atualizarTextoService } from '../src/services/documentGenerationService.js';
 import { detectarLacunas } from '../src/utils/lacunas.js';
+import { CATALOGO_VARIAVEIS } from '../src/config/templateVariables.js';
 import { TEXTO_CONFIRMACAO } from '../src/config/textoConfirmacao.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
@@ -261,6 +262,19 @@ const SECOES_DATA = [
     texto: 'DAS CONDIÇÕES ESPECIAIS: as partes ajustam que eventuais despesas com diligências, cópias e deslocamentos correrão por conta do(a) CONTRATANTE, mediante prestação de contas.\n\nCondições complementares acordadas em audiência: [...]\n\nDO FORO: fica eleito o foro da comarca de {{cidadeEscritorio}} para dirimir as questões oriundas deste contrato.',
   },
   {
+    // Fase 4.1: a única seção que usa {{percentualHonorario}}, a chave 48 do
+    // catálogo. Sem ela o seed exercitaria 47 de 48, e a variável nova ficaria
+    // no catálogo sem prova de que resolve.
+    //
+    // Honorário de êxito é justamente onde o percentual aparece na prática: a
+    // advogada cobra sobre o proveito econômico, e o contrato precisa dizer
+    // sobre O QUÊ o percentual incide — daí o valor base entrar na frase.
+    chave: 'clausula_honorarios_exito',
+    titulo: 'Cláusula de honorários de êxito — percentual',
+    tipo: 'clausula',
+    texto: 'DOS HONORÁRIOS DE ÊXITO: pela prestação dos serviços descritos nesta avença, o(a) CONTRATANTE pagará ao(à) CONTRATADO(A) honorários do tipo {{tipoHonorario}}, correspondentes a {{percentualHonorario}} do valor apurado, o que perfaz, nesta data, {{valorHonorario}} ({{valorHonorarioExtenso}}), com vencimento em {{dataVencimentoHonorario}}.\n\nO pagamento será feito em {{numeroParcelas}} parcela(s) de {{valorParcela}}, admitido o pagamento por meio da chave PIX {{chavePix}}, de titularidade de {{nomeAdvocacia}}.',
+  },
+  {
     chave: 'encerramento',
     titulo: 'Encerramento com local e data',
     tipo: 'encerramento',
@@ -300,12 +314,35 @@ const MODELOS_DATA = [
     descricao: 'Modelo de procuração para cliente pessoa jurídica',
     secoes: ['qualificacao_pj', 'outorgado', 'poderes_procuracao'],
   },
+  {
+    // Fase 4.1: o modelo que exercita {{percentualHonorario}}. É gerado contra
+    // o processo de inventario, cujo unico honorario ativo e percentual — e o
+    // MESMO modelo, gerado contra um processo de honorario fixo, produz o 422
+    // de percentual ausente, conferido mais abaixo.
+    chave: 'contrato_exito',
+    nome: 'Contrato de Honorários de Êxito',
+    tipo: 'contrato_prestacao_servicos',
+    descricao: 'Modelo de contrato com honorários percentuais sobre o proveito econômico',
+    secoes: ['qualificacao_pf', 'objeto_contrato', 'clausula_honorarios_exito', 'encerramento'],
+  },
 ];
 
 // ── Dados: Honorários + Parcelas + Pagamentos ─────────────────────────────────
 // createdAt: backdate para popular gráfico "Honorários por Mês" (últimos 6 meses)
 // installments[].payments[]: inseridos via paymentService (overpayment guard ativo)
 // valorPago por payment NUNCA excede installment.valor
+//
+// ── Fase 4.1 ────────────────────────────────────────────────────────────────
+// `status` do honorário NÃO é mais escrita: é DERIVADO das parcelas (DEC-028).
+// O valor abaixo é a intenção inicial, e o recálculo reconcilia com as parcelas
+// logo depois — exceto `cancelado`, que é o único que a advogada escreve e o
+// sistema respeita. Cada comentário diz o status DERIVADO que sai no fim.
+//
+// Os dois honorários percentuais trazem `percentual` e `valorBase`: desde a
+// DEC-027 o tipo percentual exige os dois, e `valor` deixa de ser digitado —
+// é o hook que o calcula. Os números foram escolhidos para dar exatamente o
+// valor que o seed já mostrava, e o `valor` foi retirado do payload porque o
+// que fosse escrito ali seria descartado.
 
 const FEES_DATA = [
   // ── Processo 0 — Ana / Indenização ──────────────────────────────────────
@@ -313,15 +350,24 @@ const FEES_DATA = [
     processoIdx: 0,
     feeData:   { descricao: 'Honorários advocatícios — fase inicial', valor: 5000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-06-30' },
     createdAt: new Date(2026, 0, 15), // Jan
+    // DERIVADO: pendente — nenhuma parcela ativa com pagamento ativo.
     installments: [
-      { numeroParcela: 1, valor: 2500, dataVencimento: '2026-04-30', payments: [] },           // vencida, sem pagamento → vencido
+      {
+        numeroParcela: 1, valor: 2500, dataVencimento: '2026-04-30',
+        // PAGAMENTO DESATIVADO (Fase 4.1): estorno. Prova que pagamento
+        // inativo sai da soma — esta parcela continua com valorPago 0 e
+        // status `vencido`, e o honorário continua `pendente`.
+        payments: [{ valorPago: 2500, dataPagamento: '2026-04-28', formaPagamento: 'boleto', observacoes: 'Boleto estornado pelo banco — pagamento desfeito', ativo: false }],
+      },
       { numeroParcela: 2, valor: 2500, dataVencimento: '2026-07-31', payments: [] },           // futura → pendente
     ],
   },
   {
     processoIdx: 0,
-    feeData:   { descricao: 'Honorários de êxito — 10% sobre o valor da causa', valor: 8000, tipo: 'percentual', status: 'pendente', dataVencimento: '2026-08-30' },
+    // 10% de R$ 80.000 = R$ 8.000. `valor` não vai no payload: o hook calcula.
+    feeData:   { descricao: 'Honorários de êxito — 10% sobre o valor da causa', tipo: 'percentual', percentual: 10, valorBase: 80000, status: 'pendente', dataVencimento: '2026-08-30' },
     createdAt: new Date(2026, 1, 10), // Fev
+    // DERIVADO: pendente.
     installments: [
       { numeroParcela: 1, valor: 8000, dataVencimento: '2026-08-30', payments: [] },           // futura → pendente
     ],
@@ -362,8 +408,12 @@ const FEES_DATA = [
   // ── Processo 4 — Maria / Inventário ────────────────────────────────────
   {
     processoIdx: 4,
-    feeData:   { descricao: 'Honorários — inventário e partilha (% sobre monte)', valor: 12000, tipo: 'percentual', status: 'pendente', dataVencimento: '2026-09-30' },
+    // 6% de R$ 200.000 de monte-mor = R$ 12.000. É o honorário que o
+    // "Contrato de Honorários de Êxito" resolve — e a única fonte de
+    // {{percentualHonorario}} no seed.
+    feeData:   { descricao: 'Honorários — inventário e partilha (% sobre monte)', tipo: 'percentual', percentual: 6, valorBase: 200000, status: 'pendente', dataVencimento: '2026-09-30' },
     createdAt: new Date(2026, 4, 1), // Mai
+    // DERIVADO: pendente.
     installments: [
       { numeroParcela: 1, valor: 12000, dataVencimento: '2026-09-30', payments: [] },          // futura → pendente
     ],
@@ -453,7 +503,21 @@ const FEES_DATA = [
     processoIdx: 9,
     feeData:   { descricao: 'Custas administrativas — taxas e emolumentos', valor: 800, tipo: 'custas', status: 'cancelado', dataVencimento: '2026-05-01' },
     createdAt: new Date(2026, 1, 10), // Fev
-    installments: [], // cancelado — sem parcelas
+    // ── O CASO QUE PROVA A GUARDA DA DEC-028 (Fase 4.1) ────────────────────
+    // Honorário CANCELADO com a parcela INTEGRALMENTE PAGA. A cobrança foi
+    // desfeita depois de o cliente já ter recolhido a taxa, e o valor virou
+    // crédito para outra despesa.
+    //
+    // Pela regra derivada, "todas as parcelas ativas quitadas" seria `pago`.
+    // A guarda de `recalcularStatusFee` impede: `cancelado` só muda por
+    // escrita explícita, e este honorário continua `cancelado` no fim do seed.
+    // Se algum dia ele aparecer como `pago`, a guarda caiu.
+    installments: [
+      {
+        numeroParcela: 1, valor: 800, dataVencimento: '2026-05-01',
+        payments: [{ valorPago: 800, dataPagamento: '2026-04-28', formaPagamento: 'pix', observacoes: 'Taxa recolhida antes do cancelamento — virou crédito' }],
+      },
+    ],
   },
 ];
 
@@ -752,6 +816,9 @@ async function main() {
           dataPagamento:  paySpec.dataPagamento,
           formaPagamento: paySpec.formaPagamento,
           observacoes:    paySpec.observacoes ?? '',
+          // `ativo: false` monta o pagamento estornado da Fase 4.1. Ele existe
+          // no banco e NÃO entra em `Installment.valorPago` nem no status.
+          ...(paySpec.ativo === false ? { ativo: false } : {}),
         }, uid);
         totalPayments++;
       }
@@ -782,9 +849,58 @@ async function main() {
     { processoId: processes[2]._id.toString() }
   );
 
-  console.log('2 contratos gerados com honorario resolvido:');
-  for (const c of [contratoAna, contratoCarlos]) {
+  // ── CONTRATO DE ÊXITO — a chave 48 do catálogo (Fase 4.1) ────────────────
+  // Processo 4 (inventario) tem UM honorario ativo, e ele e percentual: o
+  // `honorarioId` resolve sozinho e {{percentualHonorario}} sai preenchido.
+  // E o unico documento do seed que exercita a variavel — sem ele o catalogo
+  // ficaria em 47 de 48.
+  const contratoExito = await gerarDocumentoService(
+    modelosPorChave.contrato_exito._id,
+    uid,
+    { processoId: processes[4]._id.toString() }
+  );
+
+  console.log('3 contratos gerados com honorario resolvido:');
+  for (const c of [contratoAna, contratoCarlos, contratoExito]) {
     console.log(`  "${c.nome}" -> ${c.variaveisResolvidas.valorHonorario} (${c.variaveisResolvidas.valorHonorarioExtenso})`);
+  }
+  console.log(`  percentual resolvido: ${contratoExito.variaveisResolvidas.percentualHonorario}`);
+
+  if (!contratoExito.variaveisResolvidas.percentualHonorario) {
+    throw new Error(
+      '{{percentualHonorario}} saiu vazio no contrato de exito: o seed deixaria o catalogo em 47 de 48.'
+    );
+  }
+
+  // ── O 422 DE PERCENTUAL AUSENTE (Fase 4.1) ───────────────────────────────
+  // O MESMO modelo, contra o processo 2 (divorcio), cujo unico honorario ativo
+  // e FIXO. Sem `percentual`, a variavel nao resolve e a geracao para com 422 —
+  // que e o comportamento correto: nao se inventa percentual.
+  //
+  // Conferido aqui, e nao apenas documentado, porque e um caminho de recusa: se
+  // um dia ele passar a gerar, o contrato sairia com o marcador cru no texto e
+  // ninguem perceberia ate o cliente ler.
+  let recusou = false;
+  try {
+    await gerarDocumentoService(
+      modelosPorChave.contrato_exito._id,
+      uid,
+      { processoId: processes[2]._id.toString() }
+    );
+  } catch (erro) {
+    const pendencias = erro?.errors?.pendencias ?? [];
+    recusou =
+      erro?.statusCode === 422 &&
+      pendencias.some(p => p.variavel === 'percentualHonorario');
+    if (recusou) {
+      const p = pendencias.find(x => x.variavel === 'percentualHonorario');
+      console.log(`  422 conferido: honorario fixo + {{percentualHonorario}} -> "${p.orientacao}"`);
+    }
+  }
+  if (!recusou) {
+    throw new Error(
+      'Gerar o contrato de exito sobre honorario FIXO deveria ter parado com 422 apontando percentualHonorario.'
+    );
   }
 
   // ── DOCUMENTO EDITADO A MAO ───────────────────────────────────────────────
@@ -930,6 +1046,29 @@ async function main() {
   };
   const statusParcelas = await porStatus(Installment);
   const statusProcessos = await porStatus(Process);
+  // Fase 4.1: os quatro estados DERIVADOS do honorário. Se algum sumir do
+  // resumo, o seed deixou de cobrir um dos casos da DEC-028.
+  const statusHonorarios = await porStatus(Fee);
+
+  const nPagamentosInativos = await Payment.countDocuments({ usuarioId: uid, ativo: false });
+
+  // Cobertura do catálogo: quais das 48 chaves algum documento gerado resolveu.
+  // Lida do banco, não das constantes — é a prova de que a variável RESOLVE, e
+  // não apenas de que existe no catálogo.
+  const geradosComVariaveis = await Document.find({
+    usuarioId: uid, ativo: true, ehModelo: false, origem: 'gerado'
+  }).select('variaveisResolvidas');
+
+  const resolvidas = new Set();
+  for (const doc of geradosComVariaveis) {
+    const mapa = doc.variaveisResolvidas ?? {};
+    const entradas = mapa instanceof Map ? mapa.entries() : Object.entries(mapa);
+    for (const [chave, valor] of entradas) {
+      if (valor !== undefined && valor !== null && String(valor).trim() !== '') resolvidas.add(chave);
+    }
+  }
+  const chavesDoCatalogo = Object.keys(CATALOGO_VARIAVEIS);
+  const naoExercitadas = chavesDoCatalogo.filter(c => !resolvidas.has(c));
 
   const nEditados = await Document.countDocuments({
     usuarioId: uid, ativo: true, editadoManualmente: true
@@ -972,13 +1111,21 @@ async function main() {
   console.log(`    Clientes          : ${nClients}   (5 PF + 3 PJ)`);
   console.log(`    Processos         : ${nProcesses}  ${statusProcessos}`);
   console.log(`    Vinculos proc-cli : ${nProcCli}  ${papeis}`);
-  console.log(`    Honorarios        : ${nFees}`);
+  console.log(`    Honorarios        : ${nFees}  ${statusHonorarios}`);
   console.log(`    Parcelas          : ${nInst}  ${statusParcelas}`);
-  console.log(`    Pagamentos        : ${nPay}`);
+  console.log(`    Pagamentos        : ${nPay}  (+${nPagamentosInativos} desativado, fora da soma)`);
   console.log(`    Documentos        : ${nDocs}  (${nUploads} upload + ${nModelos} modelos + ${nGerados} gerados)`);
   console.log(`    Secoes            : ${nSecoes}`);
   console.log(`    Vinculos doc-secao: ${nVinculos}`);
   console.log(`    Visiveis no portal: ${nPortal}`);
+  console.log('-'.repeat(66));
+  console.log('  CATALOGO DE VARIAVEIS EXERCITADO PELO SEED (Fase 4.1)');
+  console.log(`    ${resolvidas.size} de ${chavesDoCatalogo.length} chaves resolvidas por algum documento gerado`);
+  if (naoExercitadas.length > 0) {
+    console.log(`    NAO exercitadas: ${naoExercitadas.join(', ')}`);
+  } else {
+    console.log('    Nenhuma chave fica no catalogo sem prova de que resolve.');
+  }
   console.log('-'.repeat(66));
   console.log('  CODIGOS DE ACESSO POR PAR CLIENTE/PROCESSO (Fase 3 — portal)');
   console.log('    Nao aparecem em GET /api/processes nem no detalhe. Saem so em');
@@ -1010,9 +1157,11 @@ async function main() {
   console.log('  FASE 2C — RENDERIZACAO');
   console.log(`    Logo do escritorio : ${DEMO_LOGO_BASE64.length} caracteres ` +
               `(${(DEMO_LOGO_BASE64.length / 1024).toFixed(1)} KB de 200 KB)`);
-  console.log(`    Contratos c/ honorario resolvido : 2`);
+  console.log(`    Contratos c/ honorario resolvido : 3`);
   console.log(`      - ${contratoAna.variaveisResolvidas.valorHonorario} (${contratoAna.variaveisResolvidas.valorHonorarioExtenso})`);
   console.log(`      - ${contratoCarlos.variaveisResolvidas.valorHonorario} (${contratoCarlos.variaveisResolvidas.valorHonorarioExtenso})`);
+  console.log(`      - ${contratoExito.variaveisResolvidas.valorHonorario} (${contratoExito.variaveisResolvidas.valorHonorarioExtenso})` +
+              ` — ${contratoExito.variaveisResolvidas.percentualHonorario} sobre o monte-mor (Fase 4.1)`);
   console.log(`    Documentos editados a mao       : ${nEditados}`);
   console.log(`    Documentos com lacuna ([...])   : ${nComLacuna}`);
   console.log('    Baixe qualquer documento gerado em:');

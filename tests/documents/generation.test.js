@@ -92,7 +92,7 @@ describe("geração de documento", () => {
       assert.ok(profissao, `a pendência de profissão não veio: ${JSON.stringify(pendencias)}`);
 
       // O rótulo vem do catálogo, não da chave. Derivar "Profissao Cliente" da
-      // chave funciona e parece amador — a decisão de escrever os 47 rótulos à
+      // chave funciona e parece amador — a decisão de escrever os 48 rótulos à
       // mão está em `variableLabels.js`, e este teste é o que a defende.
       assert.equal(profissao.rotulo, CATALOGO_VARIAVEIS.profissaoCliente.rotulo);
       assert.equal(profissao.rotulo, "Profissão");
@@ -239,6 +239,49 @@ describe("geração de documento", () => {
       const r = await gerar(modelo._id, { processoId: processo._id, clienteId: cliente._id });
       assert.equal(r.status, 422, `esperado 422, veio ${r.status} — ${JSON.stringify(r.body)}`);
       assert.ok(r.body.errors.pendencias.some((p) => p.variavel === "valorParcela"));
+    });
+
+    // ── `percentualHonorario`, a chave 48 (Fase 4.1) ───────────────────────
+    // A Fase 2C manteve esta variável FORA do catálogo com razão escrita: o
+    // campo `percentual` só nasceria na Fase 4, e declarar a variável antes do
+    // campo produziria pendência perpétua. O campo nasceu na DEC-027, e com
+    // ele a variável — mas honorário fixo continua não tendo percentual, e é
+    // esse o caso que precisa continuar recusando.
+    test("`percentualHonorario` num honorário FIXO → 422, sem inventar valor", async () => {
+      const { modelo } = await montarModelo("Honorários de {{percentualHonorario}} sobre o proveito.");
+      const { cliente, processo } = await montarProcesso();
+      await criarHonorario(api, processo._id, { tipo: "fixo", valor: 1000 });
+
+      const r = await gerar(modelo._id, { processoId: processo._id, clienteId: cliente._id });
+
+      assert.equal(r.status, 422, `esperado 422, veio ${r.status} — ${JSON.stringify(r.body)}`);
+
+      const pendencia = r.body.errors.pendencias.find((p) => p.variavel === "percentualHonorario");
+      assert.ok(pendencia, `a pendência não veio: ${JSON.stringify(r.body.errors.pendencias)}`);
+
+      // Mensagem ACIONÁVEL, com o rótulo do catálogo e onde corrigir — nunca a
+      // chave crua.
+      assert.equal(pendencia.origem, "honorario");
+      assert.equal(pendencia.rotulo, CATALOGO_VARIAVEIS.percentualHonorario.rotulo);
+      assert.match(pendencia.orientacao, /honorário vinculado ao processo/i);
+      assert.notEqual(pendencia.rotulo, "percentualHonorario", "a lista veio com a chave crua");
+    });
+
+    test("no honorário PERCENTUAL a mesma variável resolve, formatada", async () => {
+      // Contraprova: sem ela, um resolver que devolvesse "" para tudo passaria
+      // no teste de cima e a variável nunca funcionaria.
+      const { modelo } = await montarModelo("Honorários de {{percentualHonorario}} sobre o proveito.");
+      const { cliente, processo } = await montarProcesso();
+      await criarHonorario(api, processo._id, {
+        tipo: "percentual", percentual: 12.5, valorBase: 40000
+      });
+
+      const r = await gerar(modelo._id, { processoId: processo._id, clienteId: cliente._id });
+      assert.equal(r.status, 201, `esperado 201, veio ${r.status} — ${JSON.stringify(r.body)}`);
+
+      // Vírgula decimal e símbolo colado, como se escreve em contrato.
+      assert.match(r.body.textoResolvido, /Honorários de 12,5% sobre o proveito\./);
+      assert.equal(r.body.variaveisResolvidas.percentualHonorario, "12,5%");
     });
   });
 
@@ -469,6 +512,26 @@ describe("geração de documento", () => {
         "o PDF foi recomposto a partir da seção — a edição dela seria perdida"
       );
 
+      // ── Canário da extração do timbrado (Fase 4.1) ─────────────────────
+      // O cabeçalho e o rodapé saíram de `documentRenderService.js` para
+      // `letterheadService.js`, para o recibo usar o mesmo papel. A extração
+      // foi declarada refatoração pura, e este teste é o que a mantém honesta:
+      // o timbrado tem de continuar saindo NO MESMO PDF que traz o texto
+      // editado — se ele sumir, a extração quebrou o documento e não o recibo.
+      const usuario = api.usuario;
+      assert.ok(
+        texto.includes(usuario.nomeCompleto),
+        "o timbrado perdeu o nome da advogada depois da extração"
+      );
+      assert.ok(
+        texto.includes(`OAB/${usuario.oab.estado} nº ${usuario.oab.numero}`),
+        "o timbrado perdeu a inscrição na OAB depois da extração"
+      );
+      assert.ok(
+        /página 1 de \d+/.test(texto),
+        "o rodapé de paginação sumiu depois da extração do timbrado"
+      );
+
       // Deixa o texto extraído na saída: a Parte 10.10 pede ele colado no
       // relatório, e vale mais vindo da execução do que copiado à mão.
       console.log(`\n  ── TEXTO EXTRAÍDO DO PDF (documento editado à mão) ──\n  ${texto.split("\n\n")[0]}\n`);
@@ -535,12 +598,14 @@ describe("geração de documento", () => {
       assert.match(JSON.stringify(r.body), /variavelInventadaNoUpdate/);
     });
 
-    test("as 47 chaves do catálogo são aceitas no cadastro", async () => {
+    test("as 48 chaves do catálogo são aceitas no cadastro", async () => {
       // Contraprova do teste acima, e guarda do catálogo: se uma chave for
       // renomeada em `templateVariables.js` sem que o parser acompanhe, cai
-      // aqui. Também confirma a contagem de 47 em 5 origens.
+      // aqui. Também confirma a contagem de 48 em 5 origens — 47 até a Fase
+      // 3.2, mais `percentualHonorario`, que a Fase 4.1 acrescentou quando o
+      // campo `percentual` finalmente nasceu (DEC-027).
       const chaves = Object.keys(CATALOGO_VARIAVEIS);
-      assert.equal(chaves.length, 47, "o catálogo deveria ter 47 chaves");
+      assert.equal(chaves.length, 48, "o catálogo deveria ter 48 chaves");
       assert.deepEqual(
         [...new Set(Object.values(CATALOGO_VARIAVEIS).map((d) => d.origem))].sort(),
         ["cliente", "honorario", "processo", "sistema", "usuario"]
@@ -551,9 +616,45 @@ describe("geração de documento", () => {
       });
 
       // `Secao.variaveis` é derivado por hook a partir do texto, nunca entrada
-      // do usuário — as 47 têm de aparecer lá.
-      assert.equal(secao.variaveis.length, 47, "o hook não extraiu as 47 variáveis");
+      // do usuário — as 48 têm de aparecer lá.
+      assert.equal(secao.variaveis.length, 48, "o hook não extraiu as 48 variáveis");
       assert.deepEqual([...secao.variaveis].sort(), [...chaves].sort());
+    });
+
+    test("GET /documents/variaveis publica as 48, com rótulo e descrição", async () => {
+      // A guarda `assertCatalogoRotulado()` roda na CARGA do módulo e derruba o
+      // processo se faltar rótulo — ou seja, se ela estivesse falhando, este
+      // arquivo não teria nem subido. O que se afirma aqui é o contrato que a
+      // tela consome: total, agrupamento e nenhum campo vazio.
+      const r = esperado(await api.get("/documents/variaveis"), 200, "catálogo");
+
+      assert.equal(r.total, 48, "o catálogo publicado deveria ter 48 chaves");
+      assert.equal(
+        r.grupos.reduce((soma, g) => soma + g.total, 0), 48,
+        "a soma dos grupos não bate com o total"
+      );
+
+      const honorario = r.grupos.find((g) => g.origem === "honorario");
+      assert.equal(honorario.total, 7, "a origem `honorario` foi de 6 para 7 na Fase 4.1");
+      assert.ok(
+        honorario.variaveis.some((v) => v.chave === "percentualHonorario"),
+        "`percentualHonorario` não apareceu no grupo Honorário"
+      );
+
+      for (const grupo of r.grupos) {
+        for (const v of grupo.variaveis) {
+          assert.ok(v.rotulo?.trim(), `${v.chave} sem rótulo`);
+          assert.ok(v.descricao?.trim(), `${v.chave} sem descrição`);
+          // Rótulo derivado da chave é o que a Fase 2D.1 proibiu: funciona e
+          // parece amador.
+          assert.notEqual(v.rotulo, v.chave, `${v.chave} tem a chave crua como rótulo`);
+        }
+      }
+
+      console.log(
+        `\n  ── GRUPO HONORÁRIO (${honorario.total} de ${r.total}) ──\n` +
+        honorario.variaveis.map((v) => `     ${v.chave} — ${v.rotulo}: ${v.descricao}`).join("\n") + "\n"
+      );
     });
   });
 });

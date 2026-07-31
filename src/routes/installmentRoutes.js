@@ -15,6 +15,9 @@ router.use(authMiddleware);
 router.post("/", createInstallment);
 router.get("/", getAllInstallments);
 router.get("/:id", getInstallmentById);
+// PATCH é o verbo de update do projeto; PUT fica como alias depreciado, no
+// mesmo padrão de `/clients`, `/processes` e `/documents`.
+router.patch("/:id", updateInstallment);
 router.put("/:id", updateInstallment);
 router.delete("/:id", deleteInstallment);
 

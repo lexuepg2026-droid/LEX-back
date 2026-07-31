@@ -6,7 +6,7 @@ import {
   validarCriacaoInstallment,
   validarAtualizacaoInstallment
 } from "../validations/installmentValidation.js";
-import { recalcularStatusInstallment } from "./paymentService.js";
+import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 
 const erro = (status, message, extra = {}) => {
@@ -50,6 +50,27 @@ const normalizarStatus = ({ status, dataVencimento, dataPagamento }) => {
   return "pendente";
 };
 
+// ── `valorPago` NÃO é escrito por rota (Fase 4.1) ──────────────────────────
+//
+// O campo é a soma dos pagamentos ativos da parcela e tem um único ponto de
+// escrita: `recalcularStatusInstallment`. Aceitá-lo no corpo criaria uma
+// segunda fonte, e a partir daí a ficha financeira mostraria um recebido que
+// não corresponde a pagamento nenhum.
+//
+// Recusa explícita, e não descarte silencioso: quem mandou o campo acreditava
+// estar registrando um recebimento, e ficar em silêncio o deixaria achando que
+// registrou. O caminho certo é `POST /payments`, e a mensagem diz isso.
+const recusarValorPagoNoCorpo = (dados) => {
+  if (!Object.prototype.hasOwnProperty.call(dados ?? {}, "valorPago")) return;
+
+  throw erro(
+    400,
+    "`valorPago` da parcela é calculado a partir dos pagamentos e não pode ser " +
+    "enviado. Registre um pagamento em POST /payments.",
+    { campo: "valorPago" }
+  );
+};
+
 const verificarNumeroParcelaDuplicado = async ({
   feeId,
   numeroParcela,
@@ -76,6 +97,8 @@ const verificarNumeroParcelaDuplicado = async ({
 };
 
 export const criarInstallment = async (usuarioId, dados) => {
+  recusarValorPagoNoCorpo(dados);
+
   const erros = validarCriacaoInstallment(dados);
 
   if (erros.length > 0) {
@@ -155,6 +178,8 @@ export const atualizarInstallment = async (
 ) => {
   validarObjectId(installmentId, "installmentId");
 
+  recusarValorPagoNoCorpo(dados);
+
   const erros = validarAtualizacaoInstallment(dados);
 
   if (erros.length > 0) {
@@ -171,6 +196,7 @@ export const atualizarInstallment = async (
     throw erro(404, "Parcela não encontrada");
   }
 
+  const feeIdOriginal = String(installment.feeId);
   let feeIdFinal = installment.feeId;
   let processoIdFinal = installment.processoId;
   if (dados.feeId !== undefined) {
@@ -213,7 +239,16 @@ export const atualizarInstallment = async (
     );
   }
 
+  // Recalcula a parcela — e, pela cadeia, o honorário de destino.
   const atualizado = await recalcularStatusInstallment(installmentId, usuarioId);
+
+  // Mudar a parcela de honorário tira uma parcela do conjunto do honorário
+  // ANTIGO. Sem este segundo recálculo, um honorário que perdeu a sua única
+  // parcela em aberto continuaria `parcialmente_pago` para sempre.
+  if (String(feeIdFinal) !== feeIdOriginal) {
+    await recalcularStatusFee(feeIdOriginal, usuarioId);
+  }
+
   return atualizado || installment;
 };
 
@@ -245,5 +280,11 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 
   installment.ativo = false;
   await installment.save();
+
+  // Desativar uma parcela muda o conjunto do qual o status do honorário é
+  // derivado. `recalcularStatusInstallment` não serve aqui — ela filtra
+  // `ativo: true` e devolveria `null` para a parcela que acabou de sair.
+  await recalcularStatusFee(installment.feeId, usuarioId);
+
   return installment;
 };

@@ -144,6 +144,32 @@ const ROTULOS_TIPO_HONORARIO = {
 export const tipoHonorario = (valor) =>
   vazio(valor) ? "" : ROTULOS_TIPO_HONORARIO[valor] || "";
 
+// "10%", "12,5%", "33,33%" — o percentual contratado (Fase 4.1).
+//
+// O símbolo acompanha o número pela mesma razão que `moeda` carrega o "R$":
+// sem ele a cláusula sairia "honorários de 10 sobre o valor da causa". Vírgula
+// decimal e no máximo duas casas, como todo número em pt-BR no documento; os
+// zeros à direita caem, porque "10,00%" num contrato parece saída de sistema e
+// não texto escrito por alguém.
+//
+// Diferente de `moeda`, aqui NÃO se usa espaço não-separável: em português o
+// símbolo de porcentagem cola no número, então não há o que separar nem risco
+// de quebra de linha no meio.
+//
+// Honorário sem percentual (tipo fixo, tipo custas) chega aqui como `null` e
+// sai como "" — o marcador permanece no texto e vira pendência 422, com a
+// orientação de sempre. Não se inventa valor.
+export const percentual = (valor) => {
+  if (valor === undefined || valor === null || valor === "") return "";
+  const numero = typeof valor === "number" ? valor : Number(valor);
+  if (!Number.isFinite(numero) || numero <= 0) return "";
+  const formatado = numero.toLocaleString("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
+  return `${formatado}%`;
+};
+
 // Contagem simples. Zero devolve "" de propósito: "em 0 parcelas" não é frase
 // que se escreva em contrato — vira pendência, e a advogada corrige.
 export const inteiro = (valor) => {
@@ -167,5 +193,6 @@ export default {
   moeda,
   extenso,
   tipoHonorario,
+  percentual,
   inteiro
 };
