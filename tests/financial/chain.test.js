@@ -4,16 +4,19 @@
 // Honorário → Parcela → Pagamento. É a cadeia onde um erro custa dinheiro real
 // da advogada, e onde as três formas de 409 do projeto convivem.
 //
-// ── Uma correção de premissa, registrada aqui porque o teste é o registro ──
-// O roteiro desta fase pedia "status do honorário derivado das parcelas". Ele
-// NÃO é. `Fee.status` é enum `pendente|pago|cancelado` (`models/Fee.js:32`) e
-// só muda por escrita explícita: nenhum service o recalcula — conferido em
-// `feeService.js`, `installmentService.js` e `paymentService.js`.
+// ── Uma correção de premissa, e o que aconteceu com ela depois ─────────────
+// A Fase 2E.2 registrou aqui que `Fee.status` NÃO era derivado das parcelas —
+// era enum `pendente|pago|cancelado` que só mudava por escrita explícita — e
+// deixou um teste travando esse comportamento, para que a fase seguinte caísse
+// nele.
 //
-// O que é derivado é `Installment.status`, por `recalcularStatusInstallment`
-// (`paymentService.js:72`), nos 4 estados do enum. É esse o recálculo testado
-// abaixo. A ausência do recálculo no Fee está reportada, e NÃO foi corrigida:
-// o `Fee` é da Fase 4 (DEC-027) e esta fase não altera produção.
+// A Fase 4.1 caiu. A DEC-028 tornou o status derivado, em quatro estados, e
+// aquele teste foi INVERTIDO no mesmo arquivo (ver "DEC-028" mais abaixo). Os
+// quatro estados e a guarda de `cancelado` têm suíte própria, ao lado deste
+// arquivo em `tests/financial/`.
+//
+// `Installment.status` continua derivado por `recalcularStatusInstallment`
+// (`paymentService.js`), nos 4 estados do enum, e é o recálculo testado aqui.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { test, describe, before, after } from "node:test";
@@ -133,10 +136,16 @@ describe("cadeia financeira", () => {
       );
     });
 
-    test("FATO REPORTADO: `Fee.status` NÃO é derivado das parcelas", async () => {
-      // Este teste trava o comportamento REAL, não o desejado. Ele existe para
-      // que a Fase 4, ao implementar a derivação (DEC-027), caia aqui e tenha
-      // de decidir conscientemente — em vez de a mudança passar despercebida.
+    // ── TESTE INVERTIDO NA FASE 4.1 — DEC-028 ────────────────────────────────
+    // Até a Fase 3.2 este teste afirmava o contrário: travava o FATO de que
+    // `Fee.status` NÃO era derivado das parcelas, para que a fase que
+    // implementasse a derivação caísse aqui e tivesse de decidir
+    // conscientemente. Foi o que aconteceu.
+    //
+    // A DEC-028 (Fase 4.1) tornou o status derivado, e o teste foi invertido no
+    // mesmo arquivo em vez de apagado: assim o histórico do Git mostra a
+    // transição deliberada, e não um teste que sumiu.
+    test("DEC-028: `Fee.status` É derivado das parcelas", async () => {
       const fee = await novoHonorario({ status: "pendente" });
       const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
       await criarPagamento(api, parcela._id, { valorPago: 1000 });
@@ -144,8 +153,8 @@ describe("cadeia financeira", () => {
       assert.equal((await lerParcela(parcela._id)).status, "pago", "a parcela foi quitada");
       assert.equal(
         (await lerHonorario(fee._id)).status,
-        "pendente",
-        "comportamento atual: o honorário continua `pendente` com todas as parcelas pagas"
+        "pago",
+        "com todas as parcelas quitadas o honorário passa a `pago` — era `pendente` até a Fase 3.2"
       );
     });
   });

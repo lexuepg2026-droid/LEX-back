@@ -7,6 +7,7 @@ import {
   validateFeeId
 } from "../validations/feeValidation.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { recalcularStatusFee } from "./paymentService.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEC-027 (Fase 4.1) — as três peças que saíram no MESMO commit
@@ -149,7 +150,14 @@ const createFee = async (usuarioId, feeData) => {
   const fee = new Fee({ ...sanitizedData, usuarioId });
   await gravar(fee);
 
-  return fee;
+  // DEC-028: `status` é derivado. O que veio no corpo vale como intenção
+  // inicial e é imediatamente reconciliado com as parcelas — que num honorário
+  // recém-criado são zero, logo `pendente`. A exceção é `cancelado`, que a
+  // guarda de `recalcularStatusFee` preserva: é o único status que a advogada
+  // escreve e o sistema respeita.
+  const derivado = await recalcularStatusFee(fee._id, usuarioId);
+
+  return derivado || fee;
 };
 
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -244,7 +252,12 @@ const updateFee = async (feeId, usuarioId, updateData) => {
 
   await gravar(existingFee);
 
-  return existingFee;
+  // Reconcilia com as parcelas depois da gravação: se o corpo trouxe um
+  // `status` que contradiz o que as parcelas dizem, quem manda são as
+  // parcelas. `cancelado` é a exceção, e é assim que se cancela um honorário.
+  const derivado = await recalcularStatusFee(existingFee._id, usuarioId);
+
+  return derivado || existingFee;
 };
 
 const deleteFee = async (feeId, usuarioId) => {

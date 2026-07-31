@@ -6,7 +6,7 @@ import {
   validarCriacaoInstallment,
   validarAtualizacaoInstallment
 } from "../validations/installmentValidation.js";
-import { recalcularStatusInstallment } from "./paymentService.js";
+import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 
 const erro = (status, message, extra = {}) => {
@@ -171,6 +171,7 @@ export const atualizarInstallment = async (
     throw erro(404, "Parcela não encontrada");
   }
 
+  const feeIdOriginal = String(installment.feeId);
   let feeIdFinal = installment.feeId;
   let processoIdFinal = installment.processoId;
   if (dados.feeId !== undefined) {
@@ -213,7 +214,16 @@ export const atualizarInstallment = async (
     );
   }
 
+  // Recalcula a parcela — e, pela cadeia, o honorário de destino.
   const atualizado = await recalcularStatusInstallment(installmentId, usuarioId);
+
+  // Mudar a parcela de honorário tira uma parcela do conjunto do honorário
+  // ANTIGO. Sem este segundo recálculo, um honorário que perdeu a sua única
+  // parcela em aberto continuaria `parcialmente_pago` para sempre.
+  if (String(feeIdFinal) !== feeIdOriginal) {
+    await recalcularStatusFee(feeIdOriginal, usuarioId);
+  }
+
   return atualizado || installment;
 };
 
@@ -245,5 +255,11 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 
   installment.ativo = false;
   await installment.save();
+
+  // Desativar uma parcela muda o conjunto do qual o status do honorário é
+  // derivado. `recalcularStatusInstallment` não serve aqui — ela filtra
+  // `ativo: true` e devolveria `null` para a parcela que acabou de sair.
+  await recalcularStatusFee(installment.feeId, usuarioId);
+
   return installment;
 };

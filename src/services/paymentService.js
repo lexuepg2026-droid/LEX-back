@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
+import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import { REGRA_CONFLITO } from "../config/integrityConflicts.js";
 
 const criarErro = (statusCode, message, extra = {}) => {
@@ -69,6 +70,76 @@ const definirStatusInstallment = (installment, totalPago) => {
   return "pendente";
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DEC-028 — STATUS DO HONORÁRIO DERIVADO DAS PARCELAS (Fase 4.1)
+//
+// Antes desta fase `Fee.status` só mudava por escrita explícita, e a Fase 2E.2
+// deixou um teste travando esse comportamento. O teste foi INVERTIDO, no mesmo
+// arquivo, para o histórico do Git mostrar a transição deliberada.
+//
+// O recálculo se pendura na MESMA cadeia que já recalcula a parcela — pagamento
+// gravado ou desativado → recalcula a parcela → recalcula o honorário. Não há
+// caminho paralelo: `recalcularStatusInstallment` chama este daqui no fim, e
+// quem mexe em pagamento já chamava aquele.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Honorário SEM parcela nenhuma é `pendente`, nunca `pago`.
+//
+// A Fase 2C decidiu que, para as variáveis de template, honorário sem parcela
+// vale como pagamento único — uma parcela do valor cheio. A leitura aqui é a
+// mesma, levada até o fim: essa parcela única existe e NÃO foi paga, porque
+// pagamento pendura em parcela e não há nenhuma. Chamar de `pago` um honorário
+// que nunca recebeu um centavo seria o pior erro possível neste módulo.
+//
+// A conta é feita sobre `Installment.status`, que `definirStatusInstallment`
+// acima já derivou — e não sobre uma segunda soma de pagamentos. `pago` é
+// exatamente "totalPago >= valor" e `parcial` é exatamente
+// "0 < totalPago < valor": recomputar daria duas fórmulas para a mesma
+// pergunta, livres para divergir.
+const derivarStatusFee = (parcelas) => {
+  if (parcelas.length === 0) return "pendente";
+
+  const quitadas = parcelas.filter((p) => p.status === "pago");
+  if (quitadas.length === parcelas.length) return "pago";
+
+  const comPagamento = parcelas.filter((p) => p.status === "pago" || p.status === "parcial");
+  if (comPagamento.length > 0) return "parcialmente_pago";
+
+  return "pendente";
+};
+
+export const recalcularStatusFee = async (feeId, usuarioId) => {
+  if (!feeId) return null;
+
+  const fee = await Fee.findOne({ _id: feeId, usuarioId, ativo: true });
+  if (!fee) return null;
+
+  // ── GUARDA: `cancelado` NUNCA é sobrescrito pelo recálculo ───────────────
+  // Escrita explícita, e só. Honorário cancelado não vira "pago" porque alguém
+  // quitou uma parcela antiga — a cobrança foi desfeita, e o dinheiro que
+  // entrou depois é outro assunto.
+  //
+  // Isto é um `return` próprio, e NÃO a ordem dos `if` de `derivarStatusFee`:
+  // efeito colateral de ordenação some na primeira vez que alguém reordena as
+  // condições "para ficar mais legível", e some em silêncio.
+  if (fee.status === STATUS_CANCELADO) return fee;
+
+  const parcelas = await Installment.find({
+    feeId: fee._id,
+    usuarioId,
+    ativo: true
+  }).select("status");
+
+  const novoStatus = derivarStatusFee(parcelas);
+
+  if (fee.status !== novoStatus) {
+    fee.status = novoStatus;
+    await fee.save();
+  }
+
+  return fee;
+};
+
 export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
   const installment = await Installment.findOne({
     _id: installmentId,
@@ -98,6 +169,9 @@ export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
       : null;
 
   await installment.save();
+
+  // A cadeia continua para cima: parcela recalculada → honorário recalculado.
+  await recalcularStatusFee(installment.feeId, usuarioId);
 
   return installment;
 };

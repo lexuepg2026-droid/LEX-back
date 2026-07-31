@@ -11,6 +11,10 @@ import mongoose from "mongoose";
 // `pre("validate")`: com ele vivo, a regra existiria no schema e não valeria no
 // update — que é justamente onde uma advogada troca o tipo de cobrança.
 //
+// DEC-028 (Fase 4.1): `status` passa a ser DERIVADO das parcelas, com quatro
+// valores. Quem deriva é `recalcularStatusFee` (`paymentService.js`), pendurado
+// na mesma cadeia que já recalcula a parcela. `cancelado` é o único que o
+// recálculo nunca sobrescreve — ver a guarda lá.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Vocabulário de tipo de honorário. PRECISA DE RATIFICAÇÃO DA ADVOGADA antes de
@@ -23,7 +27,17 @@ export const TIPOS_HONORARIO = Object.freeze(["fixo", "percentual", "custas"]);
 // arquivos precisam da mesma resposta para "este tipo admite percentual?".
 export const TIPO_PERCENTUAL = "percentual";
 
-export const STATUS_HONORARIO = Object.freeze(["pendente", "pago", "cancelado"]);
+// DEC-028 (Fase 4.1). `parcialmente_pago` é novo, e o conjunto passa a ser
+// DERIVADO das parcelas por `recalcularStatusFee` (`paymentService.js`).
+// `cancelado` é o único que nunca sai do recálculo: só de escrita explícita.
+export const STATUS_HONORARIO = Object.freeze([
+  "pendente",
+  "parcialmente_pago",
+  "pago",
+  "cancelado"
+]);
+
+export const STATUS_CANCELADO = "cancelado";
 
 const ehVazio = (v) => v === undefined || v === null || v === "";
 
