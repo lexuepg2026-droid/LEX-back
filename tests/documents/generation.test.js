@@ -92,7 +92,7 @@ describe("geração de documento", () => {
       assert.ok(profissao, `a pendência de profissão não veio: ${JSON.stringify(pendencias)}`);
 
       // O rótulo vem do catálogo, não da chave. Derivar "Profissao Cliente" da
-      // chave funciona e parece amador — a decisão de escrever os 47 rótulos à
+      // chave funciona e parece amador — a decisão de escrever os 48 rótulos à
       // mão está em `variableLabels.js`, e este teste é o que a defende.
       assert.equal(profissao.rotulo, CATALOGO_VARIAVEIS.profissaoCliente.rotulo);
       assert.equal(profissao.rotulo, "Profissão");
@@ -535,12 +535,14 @@ describe("geração de documento", () => {
       assert.match(JSON.stringify(r.body), /variavelInventadaNoUpdate/);
     });
 
-    test("as 47 chaves do catálogo são aceitas no cadastro", async () => {
+    test("as 48 chaves do catálogo são aceitas no cadastro", async () => {
       // Contraprova do teste acima, e guarda do catálogo: se uma chave for
       // renomeada em `templateVariables.js` sem que o parser acompanhe, cai
-      // aqui. Também confirma a contagem de 47 em 5 origens.
+      // aqui. Também confirma a contagem de 48 em 5 origens — 47 até a Fase
+      // 3.2, mais `percentualHonorario`, que a Fase 4.1 acrescentou quando o
+      // campo `percentual` finalmente nasceu (DEC-027).
       const chaves = Object.keys(CATALOGO_VARIAVEIS);
-      assert.equal(chaves.length, 47, "o catálogo deveria ter 47 chaves");
+      assert.equal(chaves.length, 48, "o catálogo deveria ter 48 chaves");
       assert.deepEqual(
         [...new Set(Object.values(CATALOGO_VARIAVEIS).map((d) => d.origem))].sort(),
         ["cliente", "honorario", "processo", "sistema", "usuario"]
@@ -551,8 +553,8 @@ describe("geração de documento", () => {
       });
 
       // `Secao.variaveis` é derivado por hook a partir do texto, nunca entrada
-      // do usuário — as 47 têm de aparecer lá.
-      assert.equal(secao.variaveis.length, 47, "o hook não extraiu as 47 variáveis");
+      // do usuário — as 48 têm de aparecer lá.
+      assert.equal(secao.variaveis.length, 48, "o hook não extraiu as 48 variáveis");
       assert.deepEqual([...secao.variaveis].sort(), [...chaves].sort());
     });
   });

@@ -246,6 +246,11 @@ export const ROTULOS_VARIAVEIS = {
     descricao:
       "Quanto vale cada parcela. Derivado das parcelas ativas do honorário. Sem parcela cadastrada, é o valor cheio."
   },
+  percentualHonorario: {
+    rotulo: "Percentual",
+    descricao:
+      "Percentual contratado sobre o valor base — o valor da causa, o monte-mor, o proveito econômico —, do cadastro de honorários. Só existe no honorário do tipo percentual."
+  },
 
   // ── Sistema ────────────────────────────────────────────────────────────────
   dataAtual: {
