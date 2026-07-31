@@ -665,16 +665,196 @@ cliente, o recibo afirmaria o que o navegador mandou. E guardar só uma
 referência faria o registro de 2026 mudar de sentido quando alguém reescrevesse
 a constante em 2027.
 
-### Regerar documento visível o tira do portal — mantido, agora sinalizado
+### Regerar documento visível — os DOIS caminhos, medidos na Fase 3.2
 
 Documento novo nasce com `visivelPortal: false` (decisão de segurança do model)
-e não há rota que leia documento inativo. Logo, **regerar um documento que
-estava visível o faz desaparecer do portal.**
+e não há rota que leia documento inativo. **O comportamento é mantido de
+propósito:** a alternativa é uma peça nova aparecer para o cliente sem ninguém
+ter liberado.
 
-**O comportamento é mantido de propósito:** a alternativa é uma peça nova
-aparecer para o cliente sem ninguém ter liberado. O que mudou na Fase 3.1 é que
-ele deixou de ser silencioso — o 409 de regeração passa a carregar
-`visivelPortal` e `errors.sairaDoPortal`, para a interface avisar.
+**A Fase 3.1 registrou que "regerar um documento visível o faz desaparecer do
+portal". Isso vale para UM dos dois caminhos, e a Fase 3.2 mediu os dois contra
+a base do seed.** O soft delete do anterior está sob
+`if (anterior && confirmarSobrescrita === true)`
+(`documentGenerationService.js:483`) — sem confirmação, o anterior **não é
+desativado**.
+
+| Caminho | 409? | O anterior | O novo | O que o cliente vê |
+|---|---|---|---|---|
+| **Editado à mão** + `confirmarSobrescrita` | sim | soft delete, com `substituidoPorId` | invisível | **perde** o documento |
+| **Não editado** | não | **continua ativo e visível** | invisível, ao lado | continua vendo a versão **ANTIGA** |
+
+O segundo caminho é o mais comum, porque a maioria dos documentos não é editada
+à mão — e era o que **não tinha aviso nenhum**, já que o aviso da 3.1 vive
+dentro do 409 e o 409 só dispara para documento editado.
+
+**Consequências, todas no frontend (`GenerationPanel.jsx`):**
+
+- o aviso vale para **toda** regeração de documento com `visivelPortal: true`,
+  antes de executar, nos dois caminhos;
+- **os textos são diferentes**, porque o efeito é diferente. Um texto único
+  dizendo "o documento sai do portal" estaria errado na metade dos casos, e
+  errado na direção pior: a advogada acharia que o cliente ficou sem nada
+  quando ele está lendo a versão velha;
+- no caminho **sem 409**, liberar o documento novo **também tira o anterior do
+  portal** — liberar um sem tirar o outro deixaria duas versões da mesma peça
+  lá, e o cliente sem saber qual vale;
+- o backend **não foi alterado**. O 409 continua carregando `visivelPortal` e
+  `errors.sairaDoPortal`, e o frontend aceita as duas fontes (a chave do 409 e
+  a própria consulta) para o aviso não depender de uma só.
+
+### O portal mora no MESMO app, sob `/portal/*` (Fase 3.2)
+
+Um build, um deploy, um domínio. O PWA existente continua valendo, não há
+segundo CORS para configurar nem segundo pipeline para esquecer.
+
+O que o portal tem de **próprio**, e por quê:
+
+| Peça | Arquivo | Por quê |
+|---|---|---|
+| Instância de HTTP | `api/portalAxios.js` | ver abaixo — é a mais importante |
+| Contexto de sessão | `contexts/PortalAuthContext.jsx` | dois cookies, dois segredos, dois ciclos de vida; o mesmo navegador pode ter as duas sessões |
+| Portão de rota | `components/portal/PortalProtectedRoute.jsx` | sem sessão → `/portal`; senha provisória → `/portal/senha` |
+| Layout | `components/portal/PortalLayout.jsx` | sem Sidebar e sem Header |
+| Folha de estilo | `components/portal/Portal.css` | não importa CSS das telas da advogada |
+
+**Tudo em `lazy()`, com chunk próprio**, no padrão de `DashboardCharts`
+(`DashboardHomePage.jsx:13`). Sem isso o cliente baixaria o bundle das telas da
+advogada — Financeiro, Perfil, montagem de documento, `recharts` — para ver um
+processo e dois PDFs, no celular dele, na rede dele.
+
+**Por que a instância de HTTP é separada.** O interceptor de resposta da
+instância da advogada (`api/axiosConfig.js:14-26`) reage a **qualquer** 401 que
+não seja de `/auth/me`, estando fora de `/login`, com
+`window.location.href = '/login'` e o toast "Sessão expirada". O portal
+responde 401 em dois casos **normais**: `credenciaisInvalidas` (o cliente errou
+a senha) e `sessaoPortalInvalida`. Com instância compartilhada, um cliente que
+errasse a senha seria arremessado para o login da advogada, em navegação de
+página inteira, sem nunca ver a mensagem do próprio portal.
+
+Interceptor no axios é **por instância**: como o portal nunca importa
+`axiosConfig.js`, o de lá não enxerga resposta daqui. A separação não depende
+de nenhum dos dois se comportar bem — depende de serem objetos diferentes. O
+interceptor existente **não foi alterado**, e há teste travando a ausência do
+import cruzado nas duas direções (`tests/portal/isolamento.test.js`).
+
+O interceptor do portal **não mexe em `window.location`**: navegação de página
+inteira recarrega o bundle e joga fora o estado do React. Ele avisa o contexto,
+que navega por `useNavigate` — sempre para `/portal`.
+
+**Sem Sidebar e sem Header** não é economia: aquelas peças são o menu de um
+sistema de gestão, e nenhum daqueles destinos existe para o cliente. Exibir a
+moldura de um sistema que ele não pode operar só sugere que há mais coisa
+atrás.
+
+### A tela nunca é mais rígida que a API
+
+**Regra geral do projeto, nascida do portal.**
+
+O caso que a fixou: o backend aceita o código de acesso em minúsculas e com
+espaços **de propósito**, porque a advogada dita o código por telefone e o
+cliente o recebe por WhatsApp ou num papel. Uma máscara na tela de login
+recusaria `lex-77c8 8fvs`, que o servidor aceitaria — e o cliente ficaria de
+fora do próprio processo por causa de uma letra minúscula, sem ter como
+descobrir o motivo.
+
+Formatar visualmente enquanto se digita é permitido. **Recusar não é.** A única
+validação de cliente aceitável no login do portal é campo vazio, e há teste
+travando a ausência de regex de formato, de máscara e de comparação de caixa
+(`tests/portal/isolamento.test.js`).
+
+Generalizando: quando as duas pontas divergem sobre o que é entrada válida,
+**quem manda é a mais permissiva**. Validação de tela existe para poupar uma
+viagem, não para inventar regra que o servidor não tem.
+
+### A confirmação fica DEPOIS do conteúdo, nunca em modal bloqueante
+
+O bloco de confirmação é o último da tela do processo, depois dos dados e da
+lista de documentos.
+
+**O motivo é probatório, não estético.** Um modal que exigisse confirmar para
+ver inverteria o sentido do recibo: o cliente estaria declarando que leu algo
+que a interface ainda não lhe mostrou. O registro continuaria sendo gravado e
+continuaria dizendo "declaro que tomei ciência" — só que sobre nada. Ler
+primeiro e confirmar depois é o que faz o registro valer.
+
+Pelo mesmo motivo o texto da declaração é exibido **literalmente**, como o
+backend o envia, sem reescrever, resumir ou truncar. O backend copia a mesma
+constante para dentro de cada registro; se a tela mostrasse outra coisa, o
+cliente concordaria com um texto e o recibo afirmaria outro.
+
+### Redefinir a senha volta `senhaPortalProvisoria` para `true`
+
+**É deliberado, e é o fluxo de esquecimento.** O cliente perde a senha, a
+advogada cadastra uma nova no formulário do cliente, ele é obrigado a trocá-la
+no próximo acesso. Não existe "recuperar senha por e-mail" no portal, e não
+precisa existir: a advogada é o canal.
+
+Consequências na interface, que a Fase 3.2 escreveu:
+
+- a tela **diz** que gravar uma senha nova volta o acesso para provisória, no
+  lugar onde a advogada vai ler;
+- a senha **nunca** é exibida depois de gravada — é hash. A tela mostra
+  **estado**, não valor. Se alguém pedir "mostrar a senha", a resposta é que
+  não existe;
+- o campo de senha **não entra no payload quando está vazio**. Sem isso,
+  trocar o telefone de um cliente regravaria o acesso e derrubaria a senha que
+  ele já tinha definido — campo em branco significa "não mexer", não "apagar";
+- **revogar** tem rota própria (`DELETE /clients/:id/senha-portal`) e
+  confirmação em dois passos, porque é ação deliberada com consequência
+  imediata, não um campo esvaziado por descuido num formulário grande.
+
+### `select: false` NÃO protege documento recém-escrito
+
+**A armadilha do Mongoose, com ponto único de correção. Não reintroduzir.**
+
+`select: false` no schema protege a **consulta**: o Mongoose não pede o campo
+ao banco, então o documento lido não o traz. **Não protege o documento que
+acabou de ser escrito.** Quem faz `new Client(...)`, atribui o hash e chama
+`save()` tem o campo em memória — nenhuma consulta aconteceu, e não há `select`
+que atue sobre um objeto que nunca voltou do banco.
+
+Foi assim que `senhaPortalHash` saiu no 201 do cadastro de cliente na primeira
+execução da Fase 3.1, com a listagem limpa. O `select: false` estava lá,
+correto, e inútil para aquele caminho.
+
+**O ponto único é `config/mongooseDefaults.js`**, no `toJSON` global, que atua
+sobre a serialização e por isso pega os dois caminhos, para todo model. Regra
+que vale para todo model não se repete em cada schema — o próximo model com
+segredo esqueceria dela.
+
+A Fase 3.2 acrescentou `tests/isolation/escrita.test.js`, que varre as
+respostas de **escrita** (as de leitura já estavam cobertas) procurando o
+prefixo do bcrypt na string crua do corpo. **Medido por mutação:** neutralizar
+a lista de segredos do `toJSON` derruba os testes de `/clients` e **não** o do
+cadastro da advogada — `POST /auth/register` passa por `sanitizeUser`
+(`authService.js:57`), que monta a resposta campo a campo. São duas camadas
+independentes, e agora as duas têm teste.
+
+### Varredura de `catch` silencioso — Fase 3.2
+
+Rodada nos dois repositórios: **88 blocos `catch` no backend, 36 no frontend**.
+
+**Nenhum "engole erro sem sinal nenhum".** Os que não repassam nem logam têm
+consequência clara e comentário:
+
+| Local | Classificação |
+|---|---|
+| `middleware/portalAuthMiddleware.js:47` | engole deliberadamente — responde 401 `sessaoPortalInvalida` |
+| `scripts/resetDev.js:67` | engole deliberadamente — fechar conexão no caminho de erro |
+| `contexts/AuthContext.jsx:18` e `:42` | trata — limpa a sessão local |
+| `pages/documents/DocumentAssemblyPage.jsx:161` | engole deliberadamente — o erro já foi exibido e relançado |
+| `utils/viacep.js:26` | engole deliberadamente — contrato do módulo é "nunca lança" |
+| `utils/formatters.js:5` | trata — devolve "Data inválida" |
+| 7× `handleDuplicateKeyError` (backend) | trata — converte 11000 em 409 com `campo`, relança o resto |
+| ~11 `catch` de tela com `toast.error` | trata — mensagem ao usuário |
+
+**Achado deixado para uma fase futura, não corrigido:** `ClientFormPage.jsx:97`
+(hoje `:117` depois desta fase) faz `if (!endereco) return;` depois da busca de
+CEP. A falha é silenciosa **para o usuário**: quem digita um CEP e vê o
+formulário não preencher não distingue "CEP não existe" de "ViaCEP fora do ar".
+É decisão documentada no módulo (`utils/viacep.js:1-2`), e o caminho **não** é
+tocado por esta fase — entra como achado, não como correção de passagem.
 
 ### Fora do portal por decisão: honorário e financeiro
 
@@ -1079,6 +1259,74 @@ de erro específico nunca saía.
 
 **Não tocado:** frontend (Fase 3.2), `Fee`/`Installment`/`Payment`,
 `documentRenderService.js`, catálogo de variáveis, envelope de `/auth`.
+
+---
+
+### Fase 3.2 — Portal do cliente: interface, confirmação e lado da advogada
+
+**Resumo:** a interface do portal, no mesmo app Vite, sob `/portal/*`, em chunk
+próprio; o lado da advogada (senha de portal, entrega do código, selo por
+participante, histórico de confirmações, contador no dashboard); e a correção
+do aviso de visibilidade na regeração. Backend 170 → 176 testes, frontend
+47 → 65.
+
+**Backend — só verificação e um teste novo.** `tests/isolation/escrita.test.js`
+(6 testes): as varreduras da 2E.2 e da 3.1 cobriram respostas de LEITURA;
+faltava a de ESCRITA, que é onde a falha já aconteceu. Resultado: **não há
+vazamento**, e o motivo não é o que se supunha — ver "`select: false` não
+protege documento recém-escrito", acima. Nenhum arquivo de produção do backend
+foi alterado nesta fase.
+
+**Frontend — arquivos novos:** `api/portalAxios.js`, `api/portalService.js`,
+`contexts/PortalAuthContext.jsx`, `components/portal/PortalLayout.jsx`,
+`components/portal/Portal.css`, `components/portal/PortalProtectedRoute.jsx`,
+`components/portal/PortalDocumentList.jsx`,
+`components/portal/PortalConfirmation.jsx`,
+`components/processes/AccessDelivery.jsx`, `pages/portal/PortalLoginPage.jsx`,
+`pages/portal/PortalPasswordPage.jsx`, `pages/portal/PortalProcessPage.jsx`,
+`utils/portalLabels.js`, `tests/portal/isolamento.test.js`.
+
+**Frontend — alterados:** `routes/AppRoutes.jsx` (ramo `/portal` em `lazy()`),
+`pages/clients/ClientFormPage.jsx` + `ClientPage.css` (bloco de acesso),
+`pages/processes/ProcessDetailPage.jsx` + `ProcessPage.css` (entrega, selo,
+histórico), `components/ui/StatusBadge.jsx` (3 estados de portal no mapa que já
+existia), `pages/dashboard/DashboardHomePage.jsx` + `DashboardPage.css`
+(sétimo cartão), `components/documents/GenerationPanel.jsx` +
+`GenerationPanel.css` (aviso de visibilidade), `api/clientService.js`,
+`api/processService.js`.
+
+**Decisões**, com o porquê nos blocos acima: portal no mesmo app com instância
+de HTTP, contexto e layout próprios; a tela nunca mais rígida que a API; a
+confirmação depois do conteúdo; redefinir volta a provisória; o aviso de
+visibilidade valendo para os dois caminhos de regeração.
+
+**Dois achados que corrigiram premissas do próprio prompt:**
+
+1. **A varredura de CSS pegou um defeito real.** As páginas do portal aplicavam
+   classes cuja regra só chegava pela folha que o *layout* importa. O layout
+   monta as páginas por `<Outlet/>` — dependência que só existe pela árvore de
+   rotas não é alcançável por análise estática, e a varredura estava certa em
+   acusar. Correção: cada página do portal importa `Portal.css`, não uma
+   entrada de allowlist.
+2. **A premissa da regeração não se reproduziu.** Ver a tabela dos dois
+   caminhos, acima. Regerar documento visível e não editado **não** o tira do
+   portal: o anterior continua ativo e visível, e o cliente segue vendo a
+   versão antiga. O texto do aviso foi corrigido depois de medir contra a base
+   do seed, com o servidor de pé.
+
+**Reportado e NÃO implementado, por decisão de escopo:** a indicação de "há
+confirmação nova" **na listagem** de processos. Nenhuma rota da 3.1 devolve
+confirmação não vista por processo — `getSummary` devolve um escalar global
+(`dashboardService.js:31,63`) e `listProcesses` anexa participantes só com
+`{_id, clienteId, papel, principal}` (`processService.js:165-176`). Consultar
+`/processes/:id/confirmacoes` por linha seria N+1. O contrato da 3.1 não se
+muda nesta fase; a adição mínima que destravaria é um contador por processo na
+listagem.
+
+**Não tocado:** contrato das rotas da 3.1, `Fee`/`Installment`/`Payment`,
+`documentRenderService.js`, catálogo de variáveis, envelope de `/auth`,
+`axiosConfig.js`. **Nenhuma dependência nova em nenhum dos dois repositórios** —
+`package.json` e `package-lock.json` idênticos a `main` nos dois.
 
 ---
 
