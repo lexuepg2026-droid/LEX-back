@@ -163,6 +163,10 @@ export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
   const statusFinal = definirStatusInstallment(installment, totalPago);
 
   installment.status = statusFinal;
+  // Soma dos pagamentos ATIVOS, desnormalizada (Fase 4.1). Este é o ÚNICO
+  // ponto de escrita do campo. Arredondada em centavos na gravação para a soma
+  // de floats não deixar 0,30000000000000004 na ficha financeira.
+  installment.valorPago = Math.round(totalPago * 100) / 100;
   installment.dataPagamento =
     statusFinal === "pago" && pagamentos.length > 0
       ? pagamentos[0].dataPagamento
