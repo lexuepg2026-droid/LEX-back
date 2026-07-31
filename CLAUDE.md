@@ -62,7 +62,7 @@ src/
   server.js            Entry point (conecta ao banco e sobe o servidor)
   config/
     db.js                    Conexão com o MongoDB
-    templateVariables.js     Catálogo FECHADO de variáveis (47 chaves)
+    templateVariables.js     Catálogo FECHADO de variáveis (48 chaves)
     variableLabels.js        Rótulos e descrições do catálogo + guarda
   routes/              Define endpoints e aplica authMiddleware
   controllers/         Recebem req/res/next, chamam o service, respondem HTTP
@@ -149,10 +149,15 @@ junção é a fonte da verdade; se divergirem, a junção está certa.
 | Installments     | ✅    | ✅         | ✅      | `Installment`                   | ✅         |
 | Payments         | ✅    | ✅         | ✅      | `Payment`                       | ✅         |
 | Dashboard        | ✅    | ✅         | ✅      | — (agrega)                      | —          |
-| Financeiro       | ✅    | (fee)      | ✅      | — (agrega)                      | —          |
+| Financeiro       | ✅    | (dashboard)| ✅×2    | — (agrega)                      | —          |
 | **Portal** (3.1) | ✅    | ✅×2       | ✅×4    | `ConfirmacaoVisualizacao`       | ✅         |
 
 **11 módulos, 12 models** (`shared/enderecoSchema.js` é sub-schema, não model).
+
+O módulo **Financeiro** ganhou service próprio na Fase 4.1
+(`financeiroService.js`, a ficha do processo, ao lado do resumo que vive em
+`dashboardService.js`), e o de **Payments** ganhou o recibo
+(`receiptService.js`). Nenhum model novo: os dois só leem.
 
 O portal tem **quatro** services, pela mesma razão que o de documentos:
 
@@ -171,6 +176,15 @@ O módulo de documentos tem **quatro** services, por responsabilidade:
 | `documentGenerationService.js` | Modelos, resolução de variáveis, geração, texto    |
 | `documentRenderService.js`     | Timbrado e layout — **fonte da verdade do visual** |
 | `documentDownloadService.js`   | Empacota PDF/DOCX, nome do arquivo, content-type   |
+
+Ao lado deles, dois services de renderização que **não são** do módulo de
+documentos, criados/extraídos na Fase 4.1:
+
+| Service                     | Responsabilidade                                     |
+|-----------------------------|------------------------------------------------------|
+| `letterheadService.js`      | **Timbrado compartilhado** — cabeçalho, rodapé, fontes, medidas, nome de arquivo. Usado pelo documento **e** pelo recibo |
+| `receiptService.js`         | Recibo de pagamento em PDF, sob demanda. **Não** grava `Document` |
+| `financeiroService.js`      | Ficha financeira do processo (consolidação)          |
 
 ---
 
@@ -225,7 +239,7 @@ por hook `pre("validate")` a partir do texto; nunca entrada do usuário.
 
 | Verbo  | Caminho                          | Corpo / query                                     | Resposta                                              |
 |--------|----------------------------------|---------------------------------------------------|-------------------------------------------------------|
-| GET    | `/variaveis`                     | —                                                 | `{ total: 47, grupos: [{ origem, rotulo, descricao, total, variaveis: [{ chave, rotulo, descricao }] }] }` |
+| GET    | `/variaveis`                     | —                                                 | `{ total: 48, grupos: [{ origem, rotulo, descricao, total, variaveis: [{ chave, rotulo, descricao }] }] }` |
 | POST   | `/modelos`                       | `{ nome, tipo, descricao? }`                      | `201` Document (`ehModelo: true`)                     |
 | GET    | `/modelos`                       | `?page&limit&tipo`                                | página de modelos                                     |
 | POST   | `/modelos/:id/gerar`             | `{ processoId*, clienteId?, honorarioId?, confirmarSobrescrita? }` | `201` Document gerado                |
@@ -255,7 +269,36 @@ sem isso a seção ficava "em uso" por um documento inexistente, e a exclusão
 dela era recusada para sempre.
 
 ### `/api/fees`, `/api/installments`, `/api/payments`
-`POST /` · `GET /` · `GET /:id` · `PUT /:id` · `DELETE /:id`
+`POST /` · `GET /` · `GET /:id` · `PATCH /:id` · `PUT /:id` (alias) · `DELETE /:id`
+
+`PATCH` entrou na Fase 4.1 como verbo principal das três; `PUT` fica como alias
+depreciado, no padrão de `/clients`, `/processes` e `/documents`. Os dois
+apontam para o mesmo handler e passam pelo mesmo `save()`, e portanto pelo mesmo
+hook condicional do `Fee`.
+
+| Verbo | Caminho | Nota |
+|-------|---------|------|
+| GET | `/api/payments/:id/recibo` | recibo em PDF; só pagamento **ativo**, desativado ⇒ 404 |
+
+**Campos do `Fee` (Fase 4.1):** `percentual` e `valorBase`, os dois `null` fora
+do tipo percentual. `valor` é derivado no tipo percentual — ver DEC-027.
+**Campo do `Installment` (Fase 4.1):** `valorPago`, nunca escrito por rota.
+
+**Códigos de erro do módulo financeiro**, que a tela da Fase 4.2 precisa tratar:
+
+| Código | Chaves | Quando |
+|--------|--------|--------|
+| `400` | `campo` + `errors.<caminho>` | hook condicional do `Fee` reprovou um campo (só quando UM campo é responsável) |
+| `400` | `campo: "valorPago"` | `valorPago` enviado no corpo de parcela |
+| `409` | `dependencia`, `quantidade` | honorário com parcelas ativas; parcela com pagamentos ativos |
+| `409` | `regra`, `saldoDisponivel`, `valorParcela`, `campo: "valorPago"` | pagamento excede a parcela |
+| `422` | `errors.pendencias[]` | `{{percentualHonorario}}` num honorário sem percentual |
+
+### `/api/financeiro`
+| Verbo | Caminho | Resposta |
+|-------|---------|----------|
+| GET | `/resumo` | resumo global do escritório |
+| GET | `/processos/:processoId` | **ficha financeira do processo** (Fase 4.1) |
 
 ### `/api/portal` (Fase 3.1)
 
@@ -304,8 +347,6 @@ dedicada.
 ### `/api/dashboard`
 `GET /` · `GET /status` · `GET /honorarios-por-mes`
 
-### `/api/financeiro`
-`GET /resumo`
 
 ---
 
@@ -317,8 +358,9 @@ Não reabrir sem motivo novo e escrito.
    autopreenchimento. O que não vem de cadastro, a advogada escreve no editor
    de texto final. **Não existe** sintaxe de variável de preenchimento nem
    formulário na geração.
-2. **O catálogo é FECHADO, em 47 chaves** — `cliente` 20, `usuario` 10,
-   `processo` 9, `honorario` 6, `sistema` 2. A validação acontece no
+2. **O catálogo é FECHADO, em 48 chaves** — `cliente` 20, `usuario` 10,
+   `processo` 9, `honorario` **7**, `sistema` 2. Eram 47 até a Fase 3.2; a
+   Fase 4.1 acrescentou `percentualHonorario`, e só ela. A validação acontece no
    **cadastro da seção**, não na geração: é no cadastro que a advogada ainda
    tem contexto para corrigir um `{{nomeDoCliente}}` que ela quis escrever
    como `{{nomeCliente}}`.
@@ -476,20 +518,19 @@ usar é a ficha financeira da Fase 4. O contrato existe e está acima.
 
 ## Dívidas conhecidas e aceitas
 
-- **`src/utils/texto.js` duplica `semAcento`**, que também existe dentro de
-  `documentRenderService.js`. Registrado na Fase 2D.1. **Não unificar** sem
-  abrir `documentRenderService.js`, que é a fonte da verdade do visual e só se
-  toca em fase que tenha isso no escopo.
-- `percentualHonorario` **fica fora do catálogo de propósito**: o campo
-  `percentual` só nasce na Fase 4, e declarar a variável antes do campo
-  produziria pendência perpétua que a advogada não teria como resolver.
+- **`src/utils/texto.js` duplica `semAcento`**, que agora vive em
+  `letterheadService.js` (era em `documentRenderService.js`). Registrado na
+  Fase 2D.1 e **não unificado na 4.1**: a fase autorizou mexer no renderizador
+  **apenas** para extrair o timbrado, e unificar `semAcento` não é isso. O que
+  a 4.1 fez foi parar de duplicar a regra de NOME DE ARQUIVO — o recibo usa a
+  mesma `nomeArquivoSeguro` do download de documento.
 - `valorParcela` fica `undefined` quando as parcelas são desiguais. É
   honesto: dividir o total pelo número produziria um valor que não
   corresponde a nenhuma cobrança real.
 - Não há `CLAUDE.md` no repositório do frontend. As convenções de interface
   estão no `README.md` e em `docs/validacao-manual.md`.
 
-### Três índices não consultados — MANTIDOS de propósito
+### Índices não consultados — MANTIDOS de propósito (eram três, restam dois)
 
 Registrado na Fase 2E.1. Nenhuma consulta atual os usa. **Não remover**: o
 custo no volume de hoje é desprezível, e tirar agora para readicionar em duas
@@ -498,8 +539,14 @@ fases é churn.
 | Índice                          | Quem vai consultar                                    |
 |---------------------------------|-------------------------------------------------------|
 | `documents.substituidoPorId_1`  | a cadeia de substituição, quando existir reativação de documento |
-| `documents.honorarioId_1`       | a ficha financeira do processo, na Fase 4             |
+| ~~`documents.honorarioId_1`~~   | **CONSULTADO desde a Fase 4.1** — ver abaixo          |
 | `processes.clientePrincipalId_1`| leitura por cliente principal                         |
+
+**`documents.honorarioId_1` saiu da lista.** A ficha financeira do processo
+(Fase 4.1) o consulta: cada honorário traz os documentos que saíram dele —
+`Document.find({ honorarioId: { $in: feeIds }, … })` em
+`services/financeiroService.js`. Era exatamente a pergunta pela qual o índice
+foi criado. **Restam dois** índices não consultados.
 
 ### Resíduo removível — `res.data.data ?? res.data`
 
@@ -858,34 +905,222 @@ tocado por esta fase — entra como achado, não como correção de passagem.
 
 ### Fora do portal por decisão: honorário e financeiro
 
-**Não é esquecimento.** `Fee.status` **não é derivado das parcelas** — a Fase
-2E.2 provou isso e deixou teste travando o comportamento atual —, e a
-DEC-027/028 vai reescrever o vocabulário do módulo na Fase 4.
+**Não é esquecimento**, e a Fase 4.1 **não reabriu** a decisão.
 
-Exibir número financeiro agora seria mostrar, **para a pessoa errada**, um
-valor que ninguém mantém. Quando a Fase 4 fechar o financeiro, a decisão pode
-ser reaberta com base em algo estável.
+O motivo original era que `Fee.status` não era derivado e a DEC-027/028 ia
+reescrever o vocabulário do módulo — exibir número financeiro seria mostrar,
+**para a pessoa errada**, um valor que ninguém mantém. A Fase 4.1 fechou o
+financeiro e a decisão **segue a mesma**: o portal é de acompanhamento do
+processo, e o extrato de honorários da advogada não é informação que o cliente
+precise ver ali. Ele recebe o recibo do que pagou, que é outra coisa.
 
-### DEC-027 — três pré-requisitos que vão no MESMO commit (Fase 4)
+A varredura de `tests/portal/consulta.test.js` passou a incluir os nomes de
+campo novos — `percentual`, `valorBase`, `valorPago`, `saldoDisponivel`,
+`contratado`, `emAberto`, `parcialmente_pago` — em **todas** as rotas de dado do
+portal. Nomes de campo, e não só valores: um campo pode sair zerado hoje e
+preenchido amanhã, e a varredura precisa cair na primeira vez.
 
-Registrado na Fase 2E.2. **Um bloco só, não três itens espalhados** — três
-coisas num commit é onde se esquece uma.
+### DEC-027 — EXECUTADA na Fase 4.1, em commit único
 
-Ao dar ao `Fee` o hook condicional de `percentual` e `valorBase`:
+Registrada na Fase 2E.2 como **um bloco só, não três itens espalhados** — três
+coisas num commit é onde se esquece uma. Saiu assim.
 
-1. **O hook condicional** de `pre("validate")` validando `percentual` e
-   `valorBase` conforme o tipo de honorário.
-2. **Migrar `feeService` de `findOneAndUpdate` para `save()` no mesmo
-   commit.** Hoje não há regra sendo burlada porque o model não tem hook; no
-   instante em que tiver, `findOneAndUpdate` passa por cima dele. Isso **não
-   é limpeza** — é a diferença entre o hook existir e o hook funcionar.
-3. **Emitir `campo` nos 409 do `feeService`.** Hoje ele não emite em nenhum,
-   e o `getApiErrorField` do `FeeFormPage` está **inerte**: a tela chama o
-   helper e não há o que destacar. Os erros de campo do honorário nascem
-   justamente com a validação condicional do item 1.
+**Commit: `dde2289`** — `feat(honorarios): DEC-027 — hook condicional, save() e
+`campo` no mesmo commit`. Os três pedaços, no mesmo diff:
 
-Se qualquer um dos três ficar de fora, os outros dois entregam menos do que
-parecem.
+| Pedaço | Onde |
+|---|---|
+| 1. hook condicional de `percentual`/`valorBase` | `models/Fee.js` |
+| 2. `updateFee` de `findOneAndUpdate` para `save()` | `services/feeService.js` |
+| 3. `campo` nos erros de campo | `services/feeService.js`, `middleware/errorMiddleware.js` |
+
+**1. O hook.** `pre("validate")` no `Fee`: `percentual` obrigatório no tipo
+percentual e **recusado** nos demais; `valorBase` obrigatório sempre que houver
+percentual; faixa maior que zero e no máximo 100. Uma mensagem por campo, em
+português — `invalidate` com string produz `kind: "user defined"`, que o
+`errorHandler` repassa literalmente em vez de traduzir o texto cru do driver.
+
+**2. O `save()`.** Era o único ponto do service fora do `save()`.
+`runValidators: true` roda validador de **caminho**, e não `pre("validate")`: a
+regra do item 1 precisa enxergar `tipo`, `percentual` e `valorBase` juntos, e
+não teria como rodar por ali. O update é justamente onde a advogada troca o tipo
+de cobrança — era o caminho que ficaria sem regra. `createFee` também passou a
+`new` + `save()`, para as duas gravações seguirem o mesmo caminho.
+
+**3. O `campo`.** Sai quando **exatamente um** campo é responsável. Com dois,
+destacar o primeiro esconderia o segundo: a advogada corrigiria um, reenviaria e
+levaria o mesmo 400. O `errorHandler` repassa `campo` no 400 de
+`ValidationError` **só** quando um service o anexou de propósito — nunca
+deduzido de "só um caminho falhou", que mudaria a resposta de todo módulo de
+uma vez.
+
+**Uma correção de premissa.** O roteiro falava em "emitir `campo` nos 409 do
+`feeService`". O `feeService` **não tem** 409 de conflito de campo, e não
+passou a ter: o `Fee` não tem índice único nenhum, e inventar uma regra de
+unicidade para justificar o 409 seria mudança de negócio não pedida. Os erros
+de campo do honorário são **400** — os do hook e os da validação escrita à mão
+—, e é neles que `campo` passou a sair. O `getApiErrorField` do FeeFormPage lê
+`data.campo` **independente do status** (`utils/apiError.js:19`), então o helper
+saiu de inerte do mesmo jeito, que era o objetivo.
+
+O **409 de integridade** do `deleteFee` continua **sem** `campo`, com
+`dependencia` + `quantidade`. Não há input em conflito ali: há parcela gravada.
+`tests/financial/honorario.test.js` trava as duas pontas no mesmo bloco.
+
+### DEC-028 — status do honorário derivado das parcelas (Fase 4.1)
+
+`Fee.status` deixou de ser escrita explícita. **Commit: `d1f876d`.**
+
+| Estado | Quando |
+|---|---|
+| `pendente` | nenhuma parcela ativa com pagamento |
+| `parcialmente_pago` | ao menos uma parcela paga, nem todas |
+| `pago` | todas as parcelas ativas quitadas |
+| `cancelado` | **apenas por escrita explícita** |
+
+**`cancelado` NUNCA é sobrescrito pelo recálculo.** Honorário cancelado não vira
+"pago" porque alguém quitou uma parcela antiga — a cobrança foi desfeita, e o
+dinheiro que entrou depois é outro assunto. Está escrito como **guarda com
+`return` próprio** em `recalcularStatusFee`, e não como efeito da ordem dos
+`if`: ordenação de condição some na primeira vez que alguém a reorganiza "para
+ficar mais legível", e some em silêncio.
+
+Descancelar é escrita explícita, e aí a derivação volta a valer. Sem isso a
+guarda deixaria o honorário preso para sempre.
+
+**Onde se pendura.** Na **mesma cadeia** que já recalculava a parcela:
+`recalcularStatusInstallment` (`paymentService.js`) chama `recalcularStatusFee`
+no fim. Todo caminho que grava ou desativa pagamento já passava por ela. **Não
+há segundo caminho paralelo.**
+
+Dois pontos que a cadeia de pagamento não alcança ganharam chamada explícita,
+porque mudam o **conjunto** de parcelas e não o pago de uma delas:
+
+- `deletarInstallment` — a parcela sai do conjunto, e
+  `recalcularStatusInstallment` devolveria `null` por filtrar `ativo: true`;
+- `atualizarInstallment` quando muda o `feeId` — o honorário de **origem**
+  também precisa recalcular, senão fica `parcialmente_pago` para sempre.
+
+`feeService` reconcilia depois de criar e de atualizar: `status` no corpo vale
+como intenção, e as parcelas decidem.
+
+**Honorário SEM parcela nenhuma é `pendente`.** A Fase 2C decidiu que, para as
+variáveis de template, honorário sem parcela vale como pagamento único — uma
+parcela do valor cheio. A leitura aqui é a mesma, levada até o fim: essa parcela
+existe e **não foi paga**, porque pagamento pendura em parcela e não há nenhuma.
+Chamar de `pago` um honorário que nunca recebeu um centavo seria o pior erro
+possível neste módulo.
+
+A derivação é feita sobre `Installment.status`, que já é derivado, e **não**
+sobre uma segunda soma de pagamentos: `pago` é exatamente `totalPago >= valor` e
+`parcial` é exatamente `0 < totalPago < valor`. Duas fórmulas para a mesma
+pergunta divergem.
+
+**O teste da Fase 2E.2 foi INVERTIDO, não apagado**, no mesmo arquivo
+(`tests/financial/chain.test.js`), com comentário dizendo que é a DEC-028 e em
+que fase ocorreu. O histórico do Git mostra a transição deliberada em vez de um
+teste que sumiu.
+
+### `valor` é o campo único que o resto do sistema lê
+
+No honorário percentual ele é **calculado pelo hook**, a partir de `percentual`
+× `valorBase`, arredondado em centavos. Nos demais é o que a advogada digitou.
+
+**Nenhum consumidor precisa saber o tipo.** Catálogo de variáveis, dashboard,
+gráfico de honorários por mês, ficha financeira e recibo leem `valor` e pronto.
+O que vier em `valor` no corpo de um honorário percentual é **descartado**: ali
+o valor não é opinião, é conta.
+
+Consequência para a Fase 4.2: no formulário de honorário percentual, o campo de
+valor é **exibição**, não entrada.
+
+### `valorPago` da parcela NUNCA é escrito por rota
+
+`Installment.valorPago` é a soma dos pagamentos **ativos** da parcela. Pagamento
+desativado sai da soma, porque a soma é **refeita** a cada recálculo em vez de
+incrementada.
+
+**Um único ponto de escrita:** `recalcularStatusInstallment`, que já computava
+`totalPago` para decidir o status. `installmentService` **recusa com 400** quem
+mandar `valorPago` no corpo, com `campo: "valorPago"` e mensagem apontando
+`POST /payments`. Recusa explícita, e não descarte silencioso: quem mandou o
+campo acreditava estar registrando um recebimento, e o silêncio o deixaria
+achando que registrou.
+
+**O 409 de excedente NÃO lê este campo.** Continua somando os pagamentos por
+consulta, porque o caminho de atualização precisa excluir o próprio pagamento em
+edição do total — coisa que um valor desnormalizado não sabe fazer. As quatro
+chaves e o `saldoDisponivel` seguem idênticos.
+
+### O timbrado é COMPARTILHADO entre documento e recibo
+
+`src/services/letterheadService.js`, extraído de `documentRenderService.js` na
+Fase 4.1 — primeira alteração naquele arquivo desde a Fase 2C, autorizada
+apenas para isto. **Commit: `6bf572c`.**
+
+Cabeçalho, rodapé, fontes, medidas e a normalização de nome de arquivo moram
+lá. O motivo é o recibo, que sai sobre o mesmo papel: duplicar a montagem
+garantiria divergência — em seis meses o cabeçalho do documento e o do recibo
+não seriam mais o mesmo, e ninguém notaria até a advogada colocar os dois lado a
+lado.
+
+| Arquivo | Fonte da verdade de |
+|---|---|
+| `letterheadService.js` | o **papel** — o que documento e recibo têm em comum |
+| `documentRenderService.js` | o visual do **documento** — corpo, parágrafos, justificação |
+
+**A extração se sustentou.** Foi refatoração pura, conferida por comparação do
+texto extraído do PDF antes e depois, com `renderizarPdf` chamado direto sobre
+um usuário literal — sem banco, saída determinística — nos dois caminhos do
+timbrado, com logo e sem. Diff vazio. O canário do documento editado à mão
+continua verde, e ganhou asserção sobre o timbrado dentro do mesmo PDF.
+
+`montarTimbrado` segue exportado de `documentRenderService.js` por
+compatibilidade: é de lá que ele é importado desde a Fase 2C.
+
+### O recibo NÃO é um `Document`
+
+`GET /api/payments/:id/recibo`. **Commit: `307ba01`.**
+
+Não cria registro na coleção de documentos, **não tem `visivelPortal`, não entra
+no portal**, não aparece na lista do processo. É emissão sob demanda: o PDF é
+montado, entregue e esquecido — e há teste provando que emitir duas vezes não
+muda a contagem de `/documents`.
+
+`Document` é peça composta por seções, com texto resolvido, rastreabilidade de
+origem e poder moderador da advogada sobre o texto final. O recibo não tem nada
+disso: é **função do pagamento**, e o pagamento já está gravado. Gravá-lo de
+novo criaria dois lugares dizendo a mesma coisa, livres para divergir quando o
+pagamento fosse corrigido.
+
+Só pagamento **ativo** — desativado responde 404. Recibo de pagamento estornado
+é justamente o papel que não pode existir. A cadeia inteira é conferida sob
+`{ usuarioId, ativo: true }`: parcela, honorário e processo desativados também
+dão 404.
+
+Quem paga é o participante **principal** do processo, lido da junção
+`ProcessoCliente` (a fonte da verdade desde a Fase 2B), com `clientePrincipalId`
+como segunda tentativa. Num litisconsórcio os demais são partes do processo, não
+do contrato de honorários.
+
+### Vocabulário de tipo de honorário — PENDENTE DE RATIFICAÇÃO
+
+```
+TIPOS_HONORARIO    fixo, percentual, custas
+STATUS_HONORARIO   pendente, parcialmente_pago, pago, cancelado
+```
+
+Os dois estão em `src/models/Fee.js`, exportados, e `feeValidation.js` os
+**importa** em vez de reescrever — duas listas escritas à mão divergem na
+primeira fase que acrescentar um valor.
+
+**`TIPOS_HONORARIO` precisa de ratificação da advogada antes de a Fase 5
+documentar.** Os três valores vêm da Fase 1 e nunca foram conferidos com ela: é
+vocabulário jurídico da prática dela, não decisão técnica. "Custas" é despesa
+processual e não honorário, e pode ser que o lugar dela não seja este enum;
+"êxito" e "sucumbência" podem ser tipos que faltam. **Nada disso se decide
+aqui.** `STATUS_HONORARIO`, ao contrário, é vocabulário do sistema e está
+fechado pela DEC-028.
 
 ### Envelope é contrato de LISTAGEM, não de resposta em geral
 
@@ -901,6 +1136,39 @@ falso positivo conhecido.
 A Fase 2E.1 padronizou as **duas listagens** que faltavam
 (`GET /processes/:id/clientes` e `GET /documents/:id/secoes`) e **parou aí,
 corretamente**.
+
+**A ficha financeira do processo (Fase 4.1) NÃO usa o envelope.** É a segunda
+resposta do projeto a ficar de fora, e pelo mesmo motivo do array cru da
+reordenação: ali não há listagem. Há **um** processo, com uma árvore embaixo e
+três totais em cima.
+
+`page` e `limit` não descreveriam nada, e paginar honorário seria pior do que
+inútil — partiria o total ao meio, e a advogada leria "recebido" de meia ficha.
+
+A forma escolhida é um objeto com quatro chaves de primeiro nível:
+
+```
+{
+  processo:   { _id, numeroProcesso, titulo, status, tipoAcao },
+  totais:     { contratado, pago, emAberto, honorarios, honorariosCancelados },
+  honorarios: [ { …, totais: { contratado, pago, emAberto },
+                  parcelas: [ { …, valorPago, emAberto, pagamentos: [ … ] } ],
+                  documentos: [ … ] } ],
+  geradoEm:   Date
+}
+```
+
+Os totais são calculados no **backend**, em três níveis. A tela não faz conta:
+somar no frontend seria somar o que foi baixado, e no dia em que a ficha ganhar
+recorte o total viraria o do recorte sem ninguém notar.
+
+Honorário **cancelado** fica fora de `contratado` — a cobrança foi desfeita, e
+somá-la faria a advogada ler como devido um valor que ela mesma cancelou. Ele
+continua na lista, com o status à vista e com contagem própria em `totais`:
+sumir da ficha levaria junto o histórico.
+
+`tests/financial/ficha.test.js` trava a AUSÊNCIA de `data`, `page`, `limit`,
+`totalPages` e `total`, para que uma uniformização futura caia no teste.
 
 ### Risco conhecido de dependência do frontend — a conta honesta
 
@@ -941,11 +1209,14 @@ código.**
 - **Nunca `npm audit fix --force`** — sobe major de Express/Mongoose e quebra
   a API.
 - **Não alterar `documentRenderService.js`** fora de fase que o tenha no
-  escopo.
+  escopo. O mesmo vale agora para **`letterheadService.js`**, que saiu de
+  dentro dele na Fase 4.1 e é onde o timbrado passou a morar: mexer ali muda o
+  papel do documento **e** o do recibo de uma vez.
 - **Não alterar o catálogo de variáveis.** Divergência encontrada se
   **reporta**, não se corrige de passagem.
 - Não mexer em `Fee` nem no financeiro fora da Fase 4. Não criar portal fora
-  da Fase 3.
+  da Fase 3. A Fase 4.1 fechou o **backend** financeiro; a 4.2 é de tela e
+  **não** reabre model, service nem contrato de rota.
 - **Não reescrever histórico publicado.** Sem `rebase`, `reset --hard` ou
   `push --force` sobre `main`. Correção de coisa mergeada é commit novo, para
   a frente.
@@ -984,12 +1255,20 @@ de acesso de cada vínculo sai no resumo final do seed.
 | `processes`        | 10   |
 | `processo_clientes`| 12   |
 | `fees`             | 12   |
-| `installments`     | 19   |
-| `payments`         | 10   |
-| `documents`        | 17   |
-| `secoes`           | 10   |
-| `documento_secao`  | 33   |
+| `installments`     | 20   |
+| `payments`         | 11   |  ← ativos; há **+1 desativado**, fora da soma |
+| `documents`        | 19   |
+| `secoes`           | 11   |
+| `documento_secao`  | 41   |
 | `confirmacoes_visualizacao` | 2 |
+
+**Estados financeiros do seed (Fase 4.1):** os quatro derivados estão
+presentes — `cancelado` 1, `pago` 2, `parcialmente_pago` 4, `pendente` 5. O
+`cancelado` tem a parcela **integralmente paga**: é o caso que prova a guarda da
+DEC-028, e o resumo do seed imprime os estados justamente para que ele apareça.
+O seed exercita **48 de 48** chaves do catálogo, contadas do banco e não das
+constantes, e confere ativamente o **422** de `{{percentualHonorario}}` num
+honorário fixo.
 
 **Lacunas intencionais do seed — não são bug:**
 - Beatriz Ramos Pereira (PF) **sem `profissao`** → gerar para "Usucapião de
@@ -1327,6 +1606,62 @@ listagem.
 `documentRenderService.js`, catálogo de variáveis, envelope de `/auth`,
 `axiosConfig.js`. **Nenhuma dependência nova em nenhum dos dois repositórios** —
 `package.json` e `package-lock.json` idênticos a `main` nos dois.
+
+---
+
+### Fase 4.1 — Financeiro: DEC-027, DEC-028, ficha do processo e recibo
+
+**Resumo:** o módulo mais antigo do projeto, o único nunca revisto, fecha. Três
+dívidas registradas há fases saem juntas, `Fee.status` passa a ser derivado,
+nasce a ficha financeira do processo e o recibo de pagamento em PDF. Backend
+176 → 234 testes. **Frontend não tocado** — as telas são a Fase 4.2.
+
+**Commits, um por parte, exceto a DEC-027 que é um só de propósito:**
+
+| Commit | Parte |
+|---|---|
+| `dde2289` | DEC-027 — hook condicional + `save()` + `campo`, **commit único** |
+| `d1f876d` | DEC-028 — status derivado das parcelas |
+| `b54084d` | `valorPago` desnormalizado na parcela |
+| `2a4fba3` | `PATCH` em fees, installments e payments |
+| `0b14937` | `percentualHonorario` — catálogo 47 → 48 |
+| `fe0760e` | ficha financeira do processo |
+| `6bf572c` | extração do timbrado para módulo compartilhado |
+| `307ba01` | recibo de pagamento em PDF |
+| `ea6be25` | seed |
+| `dc630d9` | suíte |
+
+**Arquivos novos:** `services/letterheadService.js`, `services/receiptService.js`,
+`services/financeiroService.js`, `tests/financial/honorario.test.js`,
+`tests/financial/derivacao.test.js`, `tests/financial/ficha.test.js`,
+`tests/financial/recibo.test.js`.
+
+**Decisões**, todas com o porquê nos blocos acima: honorário sem parcela é
+`pendente` e nunca `pago`; `percentualHonorario` formatado com vírgula decimal e
+símbolo colado ("12,5%"); a ficha financeira **fora** do envelope de listagem; a
+extração do timbrado **se sustentou** (texto extraído idêntico antes e depois); o
+recibo **não é** `Document`; o portal continua **sem nada financeiro**.
+
+**Duas premissas do roteiro que não se reproduziram**, reportadas e não
+"corrigidas":
+
+1. **O `feeService` não tem 409 de conflito de campo.** O roteiro pedia `campo`
+   nos 409 dele; o `Fee` não tem índice único nenhum, e nenhum foi inventado. Os
+   erros de campo do honorário são 400, e é neles que `campo` passou a sair — o
+   `getApiErrorField` lê `data.campo` independente do status, então o helper
+   saiu de inerte do mesmo jeito.
+2. **`installmentService.js:229` não é um 409.** É o `throw` de 404 de
+   `deletarInstallment`; o 409 de integridade está cinco linhas abaixo. Nada
+   alterado por causa da referência errada.
+
+**Um desvio deliberado do roteiro, com motivo:** o 409 de excedente **não**
+passou a ler `Installment.valorPago`. O caminho de atualização precisa excluir o
+próprio pagamento em edição do total, e um valor desnormalizado não sabe fazer
+isso. O campo sustenta a ficha financeira; o 409 continua somando por consulta.
+
+**Não tocado:** frontend, contrato das rotas do portal, envelope de `/auth`,
+`PATCH /documents/:id/secoes/reordenar`, nenhum alias `PUT` removido.
+**Nenhuma dependência nova** — `package.json` idêntico a `main`.
 
 ---
 
