@@ -13,6 +13,7 @@ import {
   promoverAPrincipal,
   vincularCliente
 } from "../services/processoClienteService.js";
+import confirmacaoService from "../services/confirmacaoService.js";
 
 export const create = async (req, res, next) => {
   try {
@@ -113,6 +114,35 @@ export const removeCliente = async (req, res, next) => {
   try {
     await desvincularCliente(req.user._id, req.params.id, req.params.clienteId);
     return res.status(200).json({ message: "Cliente desvinculado do processo" });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// ── Confirmações de visualização do processo (Fase 3.1) ────────────────────
+
+export const listConfirmacoes = async (req, res, next) => {
+  try {
+    const resultado = await confirmacaoService.listarConfirmacoesDoProcesso(
+      req.user._id,
+      req.params.id
+    );
+    return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Marca TODAS as não vistas do processo de uma vez. A advogada abre a ficha e
+// vê todas juntas; marcar uma a uma exigiria N chamadas para a mesma ação
+// humana. É a única mutação permitida sobre uma confirmação.
+export const marcarConfirmacoesVistas = async (req, res, next) => {
+  try {
+    const resultado = await confirmacaoService.marcarComoVistas(
+      req.user._id,
+      req.params.id
+    );
+    return res.status(200).json(resultado);
   } catch (error) {
     return next(error);
   }

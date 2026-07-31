@@ -60,6 +60,29 @@ const processoClienteSchema = new mongoose.Schema(
       minlength: TAMANHO_CODIGO,
       maxlength: TAMANHO_CODIGO
     },
+    // ── Rastro de uso do portal (Fase 3.1) ──────────────────────────────────
+    // ACESSO é automático e não notifica ninguém: é atividade, não recibo.
+    // Serve para a advogada saber "esta pessoa entrou alguma vez?" antes de
+    // ligar cobrando ciência de uma intimação.
+    //
+    // Não confundir com CONFIRMAÇÃO, que é clique deliberado, é imutável, vive
+    // em coleção própria e é o que notifica. Ver `ConfirmacaoVisualizacao`.
+    primeiroAcessoPortal: {
+      type: Date,
+      default: null
+    },
+    ultimoAcessoPortal: {
+      type: Date,
+      default: null
+    },
+    // Desnormalizado da última confirmação, para a listagem de participantes da
+    // advogada não fazer N+1. A coleção de confirmações continua sendo a
+    // verdade — este campo é atalho de leitura, como `clientePrincipalId`.
+    ultimaConfirmacaoEm: {
+      type: Date,
+      default: null
+    },
+
     ativo: {
       type: Boolean,
       required: true,

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
 import Client from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente } from "./processoClienteService.js";
@@ -147,6 +148,31 @@ const assertIdValido = (clientId) => {
   }
 };
 
+// ── Senha do portal (DEC-029, pontos 2, 3 e 4) ─────────────────────────────
+// Quem define aqui é a ADVOGADA, e por isso o resultado é sempre
+// `senhaPortalProvisoria: true`: a senha que ela conhece serve para a primeira
+// entrada e nada mais. `senhaPortalDefinidaEm` fica nulo — ele marca o momento
+// em que o CLIENTE assumiu a senha, e é essa diferença que dá valor ao recibo
+// de confirmação.
+//
+// Enviar `null` ou "" REVOGA o acesso: zera os três campos. Cliente que não usa
+// o portal simplesmente não tem senha, e isso é estado válido, não pendência.
+const aplicarSenhaPortal = async (client, senhaPortal) => {
+  if (senhaPortal === null || senhaPortal === "") {
+    client.senhaPortalHash = null;
+    client.senhaPortalProvisoria = false;
+    client.senhaPortalDefinidaEm = null;
+    return;
+  }
+
+  // 10 rounds, o mesmo custo da senha da advogada (`authService`). Não é
+  // número mágico: é o que já está em produção, e divergir aqui criaria dois
+  // perfis de custo para justificar.
+  client.senhaPortalHash = await bcrypt.hash(senhaPortal, 10);
+  client.senhaPortalProvisoria = true;
+  client.senhaPortalDefinidaEm = null;
+};
+
 const createClient = async (usuarioId, data) => {
   const validationError = clientValidation.validateCreateClientPayload(data);
   if (validationError) {
@@ -158,7 +184,13 @@ const createClient = async (usuarioId, data) => {
   const normalizedData = normalizeClientData(data);
 
   try {
-    const client = await Client.create({ usuarioId, ...normalizedData });
+    const client = new Client({ usuarioId, ...normalizedData });
+
+    if (Object.prototype.hasOwnProperty.call(data, "senhaPortal")) {
+      await aplicarSenhaPortal(client, data.senhaPortal);
+    }
+
+    await client.save();
     return client;
   } catch (error) {
     handleDuplicateKeyError(error);
@@ -205,7 +237,10 @@ const updateClient = async (usuarioId, clientId, data) => {
   const nextTipoPessoa =
     data.tipoPessoa !== undefined ? data.tipoPessoa : client.tipoPessoa;
 
-  const validationError = clientValidation.validateUpdateClientPayload(data, nextTipoPessoa);
+  const validationError = clientValidation.validateUpdateClientPayload(data, nextTipoPessoa, {
+    cpf: client.cpf,
+    cnpj: client.cnpj
+  });
   if (validationError) {
     const err = new Error(validationError);
     err.statusCode = 400;
@@ -258,11 +293,38 @@ const updateClient = async (usuarioId, clientId, data) => {
   client.observacoes = nextData.observacoes;
   client.ativo = nextData.ativo;
 
+  // Fora do `normalizeClientData` de propósito: a senha não é campo de cadastro
+  // que se copia de um lado para o outro, é operação com efeito colateral
+  // (hash + reset do estado provisório). Só toca quando a chave veio no payload.
+  if (Object.prototype.hasOwnProperty.call(data, "senhaPortal")) {
+    await aplicarSenhaPortal(client, data.senhaPortal);
+  }
+
   try {
     await client.save();
   } catch (error) {
     handleDuplicateKeyError(error);
   }
+
+  return client;
+};
+
+// Revogação do acesso ao portal. Existe como operação PRÓPRIA, e não só como
+// `PATCH { senhaPortal: null }`, porque revogar acesso é ação deliberada com
+// consequência imediata para uma pessoa de fora — merece rota que diga o que
+// faz, e log de intenção legível quando alguém for auditar o histórico.
+//
+// NÃO apaga confirmações de visualização já registradas: elas são prova de que
+// a informação foi entregue, e prova que some não serve. Ver o comentário de
+// imutabilidade em `models/ConfirmacaoVisualizacao.js`.
+const revogarAcessoPortal = async (usuarioId, clientId) => {
+  assertIdValido(clientId);
+
+  const client = await Client.findOne({ _id: clientId, usuarioId, ativo: true });
+  if (!client) return null;
+
+  await aplicarSenhaPortal(client, null);
+  await client.save();
 
   return client;
 };
@@ -299,6 +361,7 @@ const deleteClient = async (usuarioId, clientId) => {
 };
 
 export default {
+  revogarAcessoPortal,
   createClient,
   getAllClients,
   getClientById,

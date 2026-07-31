@@ -132,6 +132,11 @@ const afrouxarRateLimit = () => {
   process.env.RATE_LIMIT_CADASTRO = "100000";
   process.env.RATE_LIMIT_LOGIN = "100000";
   process.env.RATE_LIMIT_SENHA = "100000";
+  // O balde do portal é o quarto, criado na Fase 3.1, e precisa do mesmo
+  // afrouxamento: a suíte do portal faz dezenas de logins contra 127.0.0.1,
+  // que partilha o balde. O teste que verifica o limite de VERDADE sobe um app
+  // próprio com o teto baixo, em vez de depender deste valor.
+  process.env.RATE_LIMIT_PORTAL_LOGIN = "100000";
   process.env.RATE_LIMIT_JANELA_MINUTOS = "1";
 };
 
@@ -150,6 +155,22 @@ export const NOME_DO_BANCO = assertBancoDeTeste(URI_TESTE);
 process.env.MONGO_URI = URI_TESTE;
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || "segredo-de-teste-nao-usar-em-producao";
+
+// Segredo do portal, obrigatoriamente distinto do da advogada:
+// `src/app.js` chama `assertSegredoDoPortal()` na carga e derruba o processo
+// se faltar ou se for igual. O fallback aqui carrega o sufixo `-portal` para
+// que os dois nunca colidam por acidente quando só um dos dois é definido no
+// `.env.test`.
+process.env.JWT_PORTAL_SECRET =
+  process.env.JWT_PORTAL_SECRET || "segredo-de-teste-do-portal-nao-usar-em-producao";
+
+if (process.env.JWT_PORTAL_SECRET === process.env.JWT_SECRET) {
+  abortar(
+    "`JWT_PORTAL_SECRET` e `JWT_SECRET` estão iguais no `.env.test`.\n" +
+    "Os testes de isolamento do portal dependem de que token de um domínio\n" +
+    "NÃO valha no outro — com segredos iguais eles passariam por engano."
+  );
+}
 
 afrouxarRateLimit();
 
