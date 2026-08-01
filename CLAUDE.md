@@ -297,8 +297,71 @@ do tipo percentual. `valor` é derivado no tipo percentual — ver DEC-027.
 ### `/api/financeiro`
 | Verbo | Caminho | Resposta |
 |-------|---------|----------|
-| GET | `/resumo` | resumo global do escritório |
+| GET | `/resumo` | resumo global do escritório — contrato completo abaixo |
 | GET | `/processos/:processoId` | **ficha financeira do processo** (Fase 4.1) |
+
+#### Contrato de `GET /financeiro/resumo` — fechado na Fase 4.3 (DEC-028d)
+
+Nove chaves de primeiro nível. As quatro primeiras existiam desde a Fase 1; as
+cinco últimas cumprem a promessa da DEC-028(d), que a Fase 4.2 registrou como
+não cumprida e exibiu com rótulos honestos.
+
+| Campo | Tipo | Semântica |
+|---|---|---|
+| `valorContratado` | number | Σ `Fee.valor` dos honorários **vigentes** |
+| `recebido` | number | Σ `Installment.valorPago` das parcelas desses honorários |
+| `pendente` | number | `valorContratado − recebido` |
+| `vencidas` | number | **contagem** de parcelas com status `vencido` |
+| `mesReferencia` | string | `"2026-08"` — mês do **servidor**, em UTC |
+| `aReceberNoMes` | number | Σ `emAberto` das parcelas que vencem no mês corrente |
+| `recebidoNoMes` | number | Σ `Payment.valorPago` com `dataPagamento` no mês |
+| `valorVencido` | number | Σ `emAberto` das parcelas com status `vencido` |
+| `proximosVencimentos` | array | ≤ 5 parcelas não quitadas, `dataVencimento` ≥ hoje |
+
+Cada item de `proximosVencimentos`: `{ _id, descricaoHonorario, numeroParcela,
+valor, valorPago, emAberto, dataVencimento, status, processoId,
+numeroProcesso }`.
+
+**A cadeia é filtrada como a da ficha, e esse é o ponto:**
+
+```
+Process  ativo: true
+  └ Fee  ativo: true  E  status ≠ cancelado
+     └ Installment  ativo: true
+        └ Payment   ativo: true
+```
+
+**Antes da 4.3 os dois números não fechavam.** Medido contra o seed: o resumo
+dizia `valorContratado: 72000` e `recebido: 26600`, enquanto a soma das dez
+fichas dava `71200` e `25800`. A diferença eram os R$ 800 do honorário
+**cancelado** — que a ficha exclui desde a 4.1 — mais a parcela dele, quitada.
+A advogada podia abrir as dez fichas, somar na calculadora e não chegar ao
+número do painel. **Quem se ajustou foi o resumo: a ficha é o contrato
+publicado e não muda.** `tests/financial/resumo.test.js` trava a igualdade
+somando as fichas de verdade, processo a processo.
+
+**`pendente` é `contratado − recebido`, e não a soma dos saldos das parcelas.**
+A ficha calcula o em aberto de cada honorário como `fee.valor − pago`. A
+diferença aparece no honorário ainda não parcelado por inteiro: 3.000
+contratados com uma parcela de 1.000 emitida têm 3.000 em aberto na ficha e
+teriam 1.000 pela outra fórmula. Duas fórmulas para a mesma pergunta divergem.
+
+**`recebidoNoMes` sai de `Payment`, nunca de `Installment`.**
+`Installment.dataPagamento` é a data em que a parcela FECHOU. Um pagamento de
+julho numa parcela vencida em maio precisa contar em **julho**, que é quando o
+dinheiro entrou — é essa a pergunta que o cartão do mês responde.
+
+**As fronteiras do mês são em UTC.** `dataVencimento` e `dataPagamento` são
+datas sem hora: chegam como `"2026-08-31"` e são gravadas em meia-noite UTC, e
+o frontend as renderiza com `timeZone: "UTC"`. Recortar o mês no fuso local do
+servidor jogaria a parcela de 01/09 para dentro de agosto num servidor a oeste
+de Greenwich — e o cartão "A receber em agosto" listaria uma linha datada de
+setembro.
+
+**`getSummary` (`GET /dashboard`) NÃO foi tocado** e continua recortando o mês
+em fuso local em `pagamentosRecebidosMes`. É divergência conhecida e inócua: a
+Fase 4.3 tirou aquele cartão da tela, e o campo ficou sem consumidor. Removê-lo
+é mudança de contrato de outra rota, para outra fase.
 
 ### `/api/portal` (Fase 3.1)
 
@@ -1662,6 +1725,41 @@ isso. O campo sustenta a ficha financeira; o 409 continua somando por consulta.
 **Não tocado:** frontend, contrato das rotas do portal, envelope de `/auth`,
 `PATCH /documents/:id/secoes/reordenar`, nenhum alias `PUT` removido.
 **Nenhuma dependência nova** — `package.json` idêntico a `main`.
+
+---
+
+### Fase 4.3 — Indicadores do dashboard (DEC-028d) e a consistência com a ficha
+
+**Resumo:** o resumo financeiro global ganha o recorte do mês, o valor do
+vencido e os próximos vencimentos — e passa a **fechar com a soma das fichas**,
+o que não acontecia. Backend 234 → 248 testes. Nenhum model, nenhuma rota nova,
+nenhuma dependência.
+
+**Arquivos alterados:** `services/dashboardService.js` (só
+`getFinanceiroResumo`), `tests/isolation/tenant.test.js` (1 teste novo).
+**Arquivo novo:** `tests/financial/resumo.test.js` (13 testes).
+
+**Decisões**, com o porquê no contrato acima: a cadeia do resumo filtrada como
+a da ficha; `pendente` como `contratado − recebido`; `recebidoNoMes` saindo de
+`Payment`; fronteiras de mês em UTC; `getSummary` deixado intacto.
+
+**Um achado que a fase mediu em vez de supor.** O roteiro pedia "se hoje não
+bater, o resumo se ajusta à ficha". Não batia, e a divergência foi medida
+contra o seed antes de qualquer alteração: 72.000/26.600 no resumo contra
+71.200/25.800 nas fichas. `pendente` batia **por coincidência** — os dois erros
+se cancelavam, o que é o pior formato possível para um defeito de soma.
+
+**`proximosVencimentos` mudou o perfil de risco da rota.** Até a 4.2 o resumo
+devolvia quatro escalares: um vazamento ali seria um total inflado, feio e
+mudo. Agora a rota devolve **identidade** — id de parcela, id de processo,
+número do processo e descrição do honorário. Por isso a varredura de isolamento
+ganhou um teste dedicado a esse array, com contraprova positiva (uma parcela
+futura de B, criada no próprio teste, porque as do arranjo comum vencem em
+datas fixas de 2026 e já passaram).
+
+**Não tocado:** frontend, models, `getSummary`, `getFeesByMonth`,
+`financeiroService.js`, contrato da ficha, rotas do portal.
+**`package.json` idêntico a `main`.**
 
 ---
 
