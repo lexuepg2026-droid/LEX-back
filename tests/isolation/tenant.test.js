@@ -453,6 +453,56 @@ describe("isolamento por usuarioId", () => {
       );
     });
 
+    // ── Os indicadores da Fase 4.3 ─────────────────────────────────────────
+    // Até a 4.2 o resumo devolvia quatro escalares: um vazamento ali seria um
+    // total inflado, feio mas mudo. `proximosVencimentos` mudou isso — a rota
+    // passou a devolver IDENTIDADE (id de parcela, id de processo, número do
+    // processo e a descrição do honorário), que é o tipo de campo que
+    // atravessa e se lê na tela.
+    test("os próximos vencimentos de B não citam parcela nem processo de A", async () => {
+      // Uma parcela de B com vencimento no futuro: as do arranjo comum vencem
+      // em datas fixas de 2026 e já passaram, e sem esta a contraprova positiva
+      // do fim ficaria vazia — provando nada.
+      const futura = await criarParcela(B, b.honorario._id, 9, {
+        valor: 500, dataVencimento: "2099-11-30"
+      });
+
+      const financeiro = esperado(
+        await B.get("/financeiro/resumo"), 200, "resumo financeiro de B"
+      );
+
+      assert.ok(
+        Array.isArray(financeiro.proximosVencimentos),
+        "o resumo deixou de devolver `proximosVencimentos`"
+      );
+
+      const bruto = JSON.stringify(financeiro.proximosVencimentos);
+
+      for (const [rotulo, valor] of Object.entries({
+        parcela: a.parcela._id,
+        honorario: a.honorario._id,
+        processo: a.processo._id,
+        "número do processo": a.processo.numeroProcesso
+      })) {
+        placar.tentativas += 1;
+        if (bruto.includes(String(valor))) {
+          placar.vazamentos.push(`proximosVencimentos de B cita ${rotulo} de A`);
+        }
+        assert.ok(
+          !bruto.includes(String(valor)),
+          `VAZAMENTO — os próximos vencimentos de B citam o ${rotulo} de A`
+        );
+      }
+
+      // Contraprova: uma lista sempre vazia passaria acima sem provar nada. B
+      // tem parcela em aberto, e ela precisa aparecer para B.
+      const idsDeB = financeiro.proximosVencimentos.map((p) => String(p._id));
+      assert.ok(
+        idsDeB.includes(String(futura._id)),
+        "o resumo de B deixou de enxergar a própria parcela em aberto"
+      );
+    });
+
     test("a ficha financeira de B não cita nenhum recurso de A", async () => {
       // Contraprova do 404 do bloco 3.1: aqui B pergunta pelo PRÓPRIO processo
       // e a resposta é varrida inteira. Um `$in` sem `usuarioId` numa das
