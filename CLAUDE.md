@@ -410,6 +410,18 @@ dedicada.
 ### `/api/dashboard`
 `GET /` · `GET /status` · `GET /honorarios-por-mes`
 
+**`GET /honorarios-por-mes` soma `Fee.valor` agrupando por `createdAt`** — é o
+valor **contratado**, pelo mês em que a cobrança foi cadastrada, e não
+recebimento. Quem responde recebimento é `recebidoNoMes`, no resumo financeiro.
+
+**Honorário `cancelado` fica de fora desde a Fase 4.4.** Era achado reportado e
+não corrigido na 4.3: o gráfico somava o cancelado enquanto o `valorContratado`
+do resumo passou a excluí-lo na mesma fase. Os dois números aparecem na **mesma
+tela**, e a advogada podia ler no cartão um contratado menor do que a soma das
+barras logo abaixo. Mesma regra da DEC-028 e da ficha da 4.1 — a cobrança foi
+desfeita. `tests/financial/graficoMensal.test.js` trava as duas pontas,
+inclusive a igualdade entre a soma das barras e o `valorContratado`.
+
 
 ---
 
@@ -1760,6 +1772,38 @@ datas fixas de 2026 e já passaram).
 **Não tocado:** frontend, models, `getSummary`, `getFeesByMonth`,
 `financeiroService.js`, contrato da ficha, rotas do portal.
 **`package.json` idêntico a `main`.**
+
+---
+
+### Fase 4.4 — Módulo de documentos: o gráfico sem cancelado (e nada mais)
+
+**Resumo:** a fase foi de frontend. O backend entrou com **uma** alteração de
+produção — `getFeesByMonth` deixa de somar honorário cancelado — e um arquivo
+de teste. Backend 248 → 255.
+
+**Por que o diff é mínimo, e isso é o resultado:** a fase começou com uma
+auditoria do bug da folha de montagem e do contrato de edição pós-geração. Nos
+dois casos o backend estava **correto e já testado**:
+
+1. **A folha.** A sequência inteira da tela foi reproduzida por HTTP contra o
+   servidor real — POST sem `ordem`, POST com `ordem`, PATCH reordenar, DELETE.
+   Todos os passos responderam certo, com `secaoId` populado e `ordem` na
+   sequência esperada. O defeito era o ciclo de vida de um efeito do React.
+   **Nenhuma correção de contrato foi necessária.**
+2. **O editor pós-geração.** O contrato da 2C já estava inteiro e coberto por
+   `tests/documents/generation.test.js`: `PATCH /:id/texto` liga
+   `editadoManualmente`; regerar sem `confirmarSobrescrita` responde 409; com
+   ela responde 201, o anterior sai por soft delete com `substituidoPorId`, e o
+   documento novo nasce `editadoManualmente: false`. O download de documento
+   editado à mão traz o texto **editado**, em PDF e em DOCX, com o texto
+   extraído do arquivo dentro do teste. **Faltava interface, não contrato.**
+
+**Arquivos alterados:** `services/dashboardService.js` (só `getFeesByMonth`).
+**Arquivo novo:** `tests/financial/graficoMensal.test.js` (7 testes).
+
+**Não tocado:** `documentService.js`, `documentGenerationService.js`,
+`documentRenderService.js`, `letterheadService.js`, models, contrato de rota
+nenhum. **`package.json` idêntico a `main`.**
 
 ---
 

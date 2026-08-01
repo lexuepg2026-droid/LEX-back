@@ -262,12 +262,36 @@ export const getFinanceiroResumo = async (usuarioId) => {
   };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// HONORÁRIOS CONTRATADOS POR MÊS — `GET /api/dashboard/honorarios-por-mes`
+//
+// Soma `Fee.valor` agrupando por `createdAt`: é o valor CONTRATADO, pelo mês em
+// que a cobrança foi cadastrada. Não é recebimento — quem responde isso é
+// `recebidoNoMes`, no resumo financeiro.
+//
+// **Honorário `cancelado` fica de fora (Fase 4.4).** Era um achado reportado e
+// não corrigido na 4.3: o gráfico somava o cancelado enquanto o
+// `valorContratado` do resumo passou a excluí-lo, e o título da barra dizia
+// "Honorários contratados". Os dois números falavam do mesmo assunto, na mesma
+// tela, e não fechavam — a advogada podia ler no cartão um contratado menor do
+// que a soma das barras logo abaixo.
+//
+// A regra é a mesma da DEC-028 e da ficha da 4.1: a cobrança foi desfeita, e
+// somá-la faria ela ler como contratado um valor que ela mesma cancelou.
+// ═══════════════════════════════════════════════════════════════════════════
 export const getFeesByMonth = async (usuarioId) => {
   const now = new Date();
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
   const results = await Fee.aggregate([
-    { $match: { usuarioId, ativo: true, createdAt: { $gte: sixMonthsAgo } } },
+    {
+      $match: {
+        usuarioId,
+        ativo: true,
+        status: { $ne: STATUS_CANCELADO },
+        createdAt: { $gte: sixMonthsAgo }
+      }
+    },
     {
       $group: {
         _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
