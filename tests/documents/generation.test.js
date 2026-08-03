@@ -99,8 +99,14 @@ describe("geração de documento", () => {
       assert.notEqual(profissao.rotulo, "profissaoCliente", "a lista veio com a chave crua");
 
       // Acionável quer dizer que diz ONDE resolver.
+      //
+      // Fase 4.6: a orientação passou a nomear a TELA e o CAMPO
+      // ("Cadastro do cliente → Profissão") em vez de só a tela
+      // ("no cadastro do cliente"). Dizer a tela deixava a advogada procurando
+      // entre os campos do formulário; o caminho acaba a procura.
       assert.equal(profissao.origem, "cliente");
-      assert.match(profissao.orientacao, /no cadastro do cliente/);
+      assert.equal(profissao.motivo, "campoVazio", "é campo vazio, não incompatibilidade de tipo");
+      assert.match(profissao.orientacao, /Cadastro do cliente/);
       assert.match(profissao.orientacao, /Profissão/);
 
       // E o documento NÃO foi criado: recusar é o comportamento, não avisar e
@@ -263,7 +269,15 @@ describe("geração de documento", () => {
       // chave crua.
       assert.equal(pendencia.origem, "honorario");
       assert.equal(pendencia.rotulo, CATALOGO_VARIAVEIS.percentualHonorario.rotulo);
-      assert.match(pendencia.orientacao, /honorário vinculado ao processo/i);
+      // Fase 4.6: a orientação antiga ("Preencha ... no honorário vinculado ao
+      // processo") era um BECO SEM SAÍDA — seguir aquilo devolve 400, porque o
+      // hook do Fee recusa percentual fora do tipo percentual. Agora ela diz a
+      // saída real: trocar o TIPO da cobrança.
+      assert.equal(pendencia.motivo, "tipoHonorarioIncompativel");
+      assert.equal(pendencia.tipoHonorario, "fixo");
+      assert.match(pendencia.orientacao, /tipo fixo/i);
+      assert.match(pendencia.orientacao, /percentual/i);
+      assert.match(pendencia.orientacao, /Honorários|remova a variável/i);
       assert.notEqual(pendencia.rotulo, "percentualHonorario", "a lista veio com a chave crua");
     });
 

@@ -1327,6 +1327,80 @@ faria a advogada planejar o mês com o dado do mês passado.
 Também fora do cache: qualquer método que não seja `GET`, e qualquer origem que
 não seja a do app.
 
+
+### Classificação PF/PJ do catálogo e o vocabulário de `motivo` (Fase 4.6)
+
+Cada chave de origem `cliente` carrega `tipoCliente`: `pf`, `pj` ou `comum`
+(8 / 6 / 6). **A lista não foi escolhida a olho:** é exatamente o que o hook
+`pre("validate")` de `models/Client.js` apaga em cada tipo.
+
+**O caso que abriu a fase.** Um usuário real montou modelo com variáveis de PJ e
+gerou para cliente PF. A pendência dizia *"Preencha 'CNPJ' no cadastro do
+cliente"* — e seguir aquilo é **impossível**: o cadastro de um cliente PF não
+tem CNPJ, e se tivesse o hook o apagaria na gravação. A orientação mandava a
+pessoa a uma tela onde o campo não está.
+
+`errors.pendencias[]` ganhou **`motivo`**, de vocabulário fechado
+(`MOTIVO_PENDENCIA`), pelo mesmo motivo de `DEPENDENCIA` nos 409: sem lista, em
+duas fases existiriam `tipoIncompativel`, `tipo_incompativel` e `incompativel`.
+
+| `motivo` | Quando | Chaves que acompanham |
+|---|---|---|
+| `campoVazio` | o dado não foi preenchido | — |
+| `tipoIncompativel` | variável de PF com cliente PJ (ou o contrário) | `tipoVariavel`, `tipoCliente`, `causa` |
+| `tipoHonorarioIncompativel` | `{{percentualHonorario}}` em honorário fixo/custas | `tipoHonorario`, `causa` |
+| `parcelasDesiguais` | `{{valorParcela}}` com parcelas de valores diferentes | `causa` |
+
+**A tela separa os motivos**, e isso não é estética: incompatibilidade **não se
+resolve preenchendo cadastro**. Listá-la junto de "faltam 3 dados" convidaria a
+advogada a procurar um campo que não existe — que é o beco original com outra
+roupa.
+
+### O princípio: orientação EXECUTÁVEL, testada
+
+Toda pendência responde três perguntas — o que falta, por quê, e onde/como
+resolver — e **a ação sugerida é seguida até o 201 por um teste**
+(`tests/documents/mensagens.test.js`, os blocos "ANTI-BECO").
+
+Uma asserção de texto prova que a frase existe; não prova que segui-la leva a
+algum lugar. As três mensagens antigas estavam gramaticalmente corretas e
+mandavam a advogada a ações impossíveis:
+
+| Antes | Por que era beco | Agora |
+|---|---|---|
+| *"Preencha 'CNPJ' no cadastro do cliente"* | cliente PF não tem CNPJ | diz a causa e manda vincular um cliente PJ **ou** usar outro modelo |
+| *"Preencha 'Percentual do honorário' no honorário…"* | o hook do `Fee` responde **400** a isso | manda trocar o **tipo** para percentual, com `percentual` e `valorBase` |
+| *"Preencha 'Valor da parcela' no honorário…"* | **esse campo não existe** | diz que as parcelas divergem e manda igualá-las |
+
+Há teste que executa a orientação antiga do percentual e **exige o 400** — se
+ela passar a funcionar, o beco deixou de existir e o teste avisa.
+
+**`GET /api/documents/modelos/:id/compatibilidade?clienteId=`** (Fase 4.6):
+leitura, responde 200 mesmo quando o resultado é "não serve", e devolve as
+**seções** culpadas junto das variáveis — a advogada pensa em seções, não em
+chaves. **Não bloqueia a geração**: o 422 é a rede, este é o alerta, e bloquear
+impediria gerar um documento cujo trecho incompatível ela pretenda apagar no
+texto final.
+
+### Dois contratos alterados na Fase 4.6
+
+1. **`422` de modelo sem seções ganhou `errors.pendencias[]`**, como todos os
+   demais 422 do módulo. Era o único fora do formato, e obrigava o frontend a
+   tratar dois formatos.
+2. **`POST /api/fees` não exige mais `status`.** O schema já tem
+   `default: "pendente"` e a DEC-028 deriva o valor das parcelas — exigi-lo era
+   pedir ao cliente HTTP o único valor possível num honorário recém-criado.
+   Enviado, continua **validado** contra o enum: mudou a obrigatoriedade, não a
+   validação. Nenhuma requisição que funcionava antes deixou de funcionar.
+
+**A sugestão de variável** (`{{nomeAdvogado}}` → *"você quis dizer
+{{nomeAdvogada}}?"*) é distância de edição escrita à mão em `templateParser.js`,
+com teto de 1/3 do nome. Sem teto, `{{xpto}}` sugeriria `{{sexoCliente}}` — e
+sugestão errada com cara de certeza é pior que nenhuma. Sem candidata, a
+mensagem aponta o **grupo** provável pelo sufixo. `{{nomeAdvogado}}` foi o nome
+real da chave até a Fase 2D.2, que renomeou **sem alias**: quem cola texto de
+anotação antiga cai exatamente nisto.
+
 ### Vocabulário de tipo de honorário — PENDENTE DE RATIFICAÇÃO
 
 ```
@@ -2018,6 +2092,45 @@ passou a ser `8.75% de 987654.32`, em que a ordem realmente aparece.
 variáveis, contrato das rotas do portal, envelope de `/auth`.
 **Nenhuma dependência nova** — `package.json` idêntico a `main` nos dois repos.
 Os ícones do PWA foram gerados por script descartável com o PIL do ambiente.
+
+---
+
+
+### Fase 4.6 — Mensagens que orientam
+
+**Resumo:** o conflito PF/PJ passa a dizer a verdade, e os sete becos sem saída
+da lista 5.2 do Raio-X são fechados um a um — cada orientação nova com um teste
+que a SEGUE até o 201. Backend 311 → **327**. Frontend 240 → **250**.
+
+**Arquivos novos (backend):** `tests/documents/mensagens.test.js`.
+**Arquivos novos (frontend):** `components/documents/PendenciaList.jsx` + `.css`,
+`tests/documents/mensagens.test.js`.
+
+**Alterados (backend):** `config/templateVariables.js` (classificação `pf`/`pj`/
+`comum`, `MOTIVO_PENDENCIA`, `caminhoDoCampo`, orientação reescrita),
+`services/documentGenerationService.js` (`detalharPendencia`,
+`compatibilidadeService`, `parcelasDesiguais` na origem do honorário),
+`utils/templateParser.js` (distância de edição), `validations/secaoValidation.js`,
+`validations/feeValidation.js`, `controllers/documentController.js`,
+`routes/documentRoutes.js`, `tests/documents/generation.test.js` (duas asserções
+de texto atualizadas — a mudança de mensagem é o produto da fase).
+
+**Decisões**, com o porquê nos blocos acima: a classificação sai do hook do
+`Client` e não de julgamento; `motivo` em vocabulário fechado; a tela separa
+incompatibilidade de campo vazio; o aviso preventivo avisa e **não** bloqueia; a
+lista de pendências vira componente único para as duas telas.
+
+**O pior beco não estava na mensagem, e sim no descarte dela.**
+`DocumentFinalTextPage` tratava o 422 com `toast.error(message)` — e o `message`
+do backend é "há informações faltando no cadastro", que **não nomeia nada**. O
+comentário no código afirmava que "a mensagem do backend já nomeia o que falta".
+Não nomeia: os nomes vivem em `errors.pendencias[]`, que aquela tela jogava
+fora. A advogada clicava em Regerar e não tinha como descobrir o que faltava.
+
+**Não tocado:** o motor de resolução (nenhuma mudança de semântica —
+`substituir`, `montarValores` e a ordem das pendências continuam idênticos),
+`documentRenderService.js`, `letterheadService.js`, rotas do portal.
+**Nenhuma dependência nova.**
 
 ---
 

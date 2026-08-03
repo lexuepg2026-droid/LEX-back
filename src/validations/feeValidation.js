@@ -86,10 +86,22 @@ export const validateCreateFee = (data) => {
     campos.push("tipo");
   }
 
-  if (!data.status) {
-    errors.push("status é obrigatório");
-    campos.push("status");
-  } else if (!STATUS_VALIDOS.includes(data.status)) {
+  // ── `status` deixou de ser obrigatório na criação (Fase 4.6, item 2.6) ──
+  //
+  // O schema já tem `default: "pendente"` (`models/Fee.js`), e desde a DEC-028
+  // o status é DERIVADO das parcelas — o que vier no corpo é reconciliado logo
+  // depois. Exigi-lo era pedir que o cliente HTTP informasse o único valor
+  // possível para um honorário recém-criado: "pendente", porque não há parcela
+  // e portanto não há pagamento.
+  //
+  // O Raio-X do módulo registrou isto como atrito real: `POST /api/fees` sem
+  // `status` respondia 400 "status é obrigatório", e a mensagem não dizia que o
+  // único valor aceitável ali era o default que o schema já aplicaria sozinho.
+  //
+  // Enviado, continua sendo VALIDADO contra o enum — mudou a obrigatoriedade,
+  // não a validação. Mudança de contrato consciente: nenhuma requisição que
+  // funcionava antes deixa de funcionar.
+  if (data.status !== undefined && !STATUS_VALIDOS.includes(data.status)) {
     errors.push(`status inválido. Use: ${STATUS_VALIDOS.join(", ")}`);
     campos.push("status");
   }
