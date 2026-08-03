@@ -3,6 +3,9 @@ import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import { REGRA_CONFLITO } from "../config/integrityConflicts.js";
+import { validateUpdatePayment } from "../validations/paymentValidation.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
 
 const criarErro = (statusCode, message, extra = {}) => {
   const error = new Error(message);
@@ -140,14 +143,39 @@ export const recalcularStatusFee = async (feeId, usuarioId) => {
   return fee;
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// O HONORÁRIO MENTIROSO (achado 2.5b — corrigido na Fase 4.5)
+//
+// A busca da parcela exigia `ativo: true`. Desativada a parcela, esta função
+// devolvia `null` na primeira linha e a cadeia MORRIA ali: `recalcularStatusFee`
+// no fim nunca era alcançado, e o honorário ficava com o status derivado de um
+// mundo que não existe mais — tipicamente `pago`, com o pagamento removido.
+//
+// A correção é na CAUSA: para fins de RECÁLCULO a parcela é carregada sem o
+// filtro de `ativo`. Recalcular é leitura de fato consumado; o filtro ali não
+// protegia nada, só escondia a parcela de si mesma.
+//
+// As GUARDAS DE ESCRITA continuam: só parcela ATIVA tem os campos derivados
+// regravados. Regravar status e `valorPago` de uma parcela desativada seria
+// ressuscitá-la pela metade, e `derivarStatusFee` já a exclui do conjunto do
+// honorário (ele filtra `ativo: true`, corretamente).
+//
+// O honorário é recalculado nos DOIS casos — é esse o ponto do achado.
+// ═══════════════════════════════════════════════════════════════════════════
 export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
   const installment = await Installment.findOne({
     _id: installmentId,
-    usuarioId,
-    ativo: true
+    usuarioId
   });
 
   if (!installment) return null;
+
+  // Parcela desativada: nada a regravar nela, mas o honorário acima precisa
+  // saber que o conjunto mudou.
+  if (installment.ativo !== true) {
+    await recalcularStatusFee(installment.feeId, usuarioId);
+    return null;
+  }
 
   const pagamentos = await Payment.find({
     installmentId,
@@ -223,7 +251,9 @@ export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, 
     return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
   }
 
-  if (installmentId) filter.installmentId = installmentId;
+  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
+  const installmentFiltro = filtroObjectId(installmentId);
+  if (installmentFiltro) filter.installmentId = installmentFiltro;
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
     Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 }).skip(skip).limit(limit),
@@ -247,7 +277,27 @@ export const findById = async (id, usuarioId) => {
 };
 
 export const update = async (id, data, usuarioId) => {
+  // Allowlist da Fase 4.5. `payments` era o unico modulo em que `ativo` no
+  // corpo NAO era descuido: estava em `CAMPOS_PERMITIDOS_UPDATE` e era
+  // aplicado por uma linha explicita. Mudanca de contrato consciente.
+  const recusado = checarUpdate("payments", data);
+  if (recusado) {
+    throw criarErro(400, recusado.mensagem, recusado.campo ? { campo: recusado.campo } : {});
+  }
+
   validarObjectId(id, "paymentId");
+
+  // A validação de payload veio do controller nesta fase. Estava lá desde a
+  // Fase 1 e era o único módulo financeiro fora da convenção do projeto
+  // ("validação sempre no service, nunca no controller" — sessão de 09/05).
+  // Rodando antes do service, ela engolia a recusa da allowlist: `ativo` deixou
+  // de ser campo conhecido, `camposValidosEnviados` ficava vazio, e a resposta
+  // era "Informe ao menos um campo válido" — sem `campo` e sem dizer o que
+  // estava errado.
+  const errosDePayload = validateUpdatePayment(data);
+  if (errosDePayload.length > 0) {
+    throw criarErro(400, errosDePayload[0], { errors: errosDePayload });
+  }
 
   const payment = await Payment.findOne({ _id: id, usuarioId, ativo: true });
 
@@ -266,7 +316,8 @@ export const update = async (id, data, usuarioId) => {
   if (data.dataPagamento !== undefined) payment.dataPagamento = new Date(data.dataPagamento);
   if (data.formaPagamento !== undefined) payment.formaPagamento = data.formaPagamento;
   if (data.observacoes !== undefined) payment.observacoes = data.observacoes?.trim() || "";
-  if (data.ativo !== undefined) payment.ativo = data.ativo;
+  // `data.ativo` era aplicado aqui até a Fase 4.5. Removido junto com a entrada
+  // na allowlist: desativar é o DELETE, reativar é `PATCH /:id/reativar`.
 
   if (!targetInstallment) {
     targetInstallment = await Installment.findOne({
@@ -291,6 +342,58 @@ export const update = async (id, data, usuarioId) => {
   return Payment.findById(payment._id).populate("installmentId");
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REATIVAÇÃO DE PAGAMENTO (achado 2.2c — Fase 4.5)
+//
+// Rota deliberada, e não `PATCH { ativo: true }`: reativar tem guarda de
+// integridade PRÓPRIA, e um campo no corpo de um update genérico não tem onde
+// pendurá-la. Foi exatamente por não existir este caminho que o `ativo` no
+// corpo parecia necessário.
+//
+// A guarda: um pagamento só volta se a PARCELA dele estiver ativa. Sem isso o
+// pagamento reapareceria pendurado numa parcela que não existe mais para o
+// sistema, e `recalcularStatusInstallment` o ignoraria para sempre — dinheiro
+// registrado que não conta em lugar nenhum.
+//
+// O excedente é reconferido: enquanto o pagamento estava fora, outros podem ter
+// ocupado o saldo. Reativar sem checar estouraria o valor da parcela por um
+// caminho que o 409 de `create`/`update` nunca vê.
+// ═══════════════════════════════════════════════════════════════════════════
+export const reativar = async (id, usuarioId) => {
+  validarObjectId(id, "paymentId");
+
+  const payment = await Payment.findOne({ _id: id, usuarioId });
+  if (!payment) throw criarErro(404, "Pagamento não encontrado");
+
+  if (payment.ativo === true) {
+    return Payment.findById(payment._id).populate("installmentId");
+  }
+
+  const installment = await Installment.findOne({
+    _id: payment.installmentId,
+    usuarioId,
+    ativo: true
+  });
+
+  if (!installment) {
+    throw criarErro(
+      409,
+      "Não é possível reativar este pagamento: a parcela dele está desativada. " +
+      "Reative a parcela antes.",
+      { dependencia: "parcela" }
+    );
+  }
+
+  await validarOverpayment(installment, Number(payment.valorPago), usuarioId, payment._id);
+
+  payment.ativo = true;
+  await payment.save();
+
+  await recalcularStatusInstallment(payment.installmentId.toString(), usuarioId);
+
+  return Payment.findById(payment._id).populate("installmentId");
+};
+
 export const remove = async (id, usuarioId) => {
   validarObjectId(id, "paymentId");
 
@@ -306,4 +409,4 @@ export const remove = async (id, usuarioId) => {
   return { message: "Pagamento removido com sucesso" };
 };
 
-export default { create, findAll, findById, update, remove };
+export default { create, findAll, findById, update, reativar, remove };

@@ -4,6 +4,7 @@ import Client from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -223,6 +224,15 @@ const getClientById = async (usuarioId, clientId) => {
 };
 
 const updateClient = async (usuarioId, clientId, data) => {
+  // Allowlist da Fase 4.5 — `ativo` fora do corpo (achados #1/#2/#11).
+  const recusado = checarUpdate("clients", data);
+  if (recusado) {
+    const err = new Error(recusado.mensagem);
+    err.statusCode = 400;
+    if (recusado.campo) err.campo = recusado.campo;
+    throw err;
+  }
+
   assertIdValido(clientId);
 
   // Carrega o cliente ANTES de validar: o tipo efetivo (payload ou armazenado)

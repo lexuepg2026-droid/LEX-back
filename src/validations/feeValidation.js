@@ -158,10 +158,9 @@ export const validateUpdateFee = (data) => {
     }
   }
 
-  if (hasOwn("ativo") && typeof data.ativo !== "boolean") {
-    errors.push("ativo deve ser boolean");
-    campos.push("ativo");
-  }
+  // O validador de `ativo` saiu na Fase 4.5: o campo é recusado antes, pela
+  // allowlist de `validations/shared/camposPermitidos.js`, e validar o tipo de
+  // um campo que nunca chega é código que só engana quem lê.
 
   validarNumeroOpcional(data, "percentual", "percentual", errors, campos);
   validarNumeroOpcional(data, "valorBase", "valor base", errors, campos);
