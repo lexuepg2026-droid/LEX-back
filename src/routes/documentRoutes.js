@@ -17,7 +17,8 @@ import {
   atualizarTexto,
   baixarDocumento,
   alternarVisibilidadePortal,
-  listarVariaveis
+  listarVariaveis,
+  compatibilidadeModelo
 } from "../controllers/documentController.js";
 
 const router = Router();
@@ -33,6 +34,10 @@ router.get("/variaveis", listarVariaveis);
 // id de documento e toda chamada cairia em getDocumentById.
 router.post("/modelos", createModelo);
 router.get("/modelos", listModelos);
+// Compatibilidade modelo × cliente (Fase 4.6). Antes das genéricas de
+// `/:id`, no padrão do arquivo. É leitura e não bloqueia geração.
+router.get("/modelos/:id/compatibilidade", compatibilidadeModelo);
+
 router.post("/modelos/:id/gerar", gerarDocumento);
 
 // ── CRUD ───────────────────────────────────────────────────────────────────

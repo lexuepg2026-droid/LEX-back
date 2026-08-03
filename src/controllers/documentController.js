@@ -14,6 +14,7 @@ import {
   listarModelosService,
   gerarDocumentoService,
   previewDocumentoService,
+  compatibilidadeService,
   atualizarTextoService,
   alternarVisibilidadePortalService
 } from "../services/documentGenerationService.js";
@@ -272,6 +273,21 @@ export const alternarVisibilidadePortal = async (req, res, next) => {
       req.body?.visivelPortal
     );
     return res.status(200).json(documento);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// GET /api/documents/modelos/:id/compatibilidade?clienteId=...
+//
+// Aviso preventivo da Fase 4.6: diz se o modelo tem variáveis que não se
+// aplicam ao tipo do cliente, ANTES de gerar. Não bloqueia nada.
+export const compatibilidadeModelo = async (req, res, next) => {
+  try {
+    const resultado = await compatibilidadeService(req.params.id, req.user._id, {
+      clienteId: req.query.clienteId
+    });
+    return res.status(200).json(resultado);
   } catch (error) {
     return next(error);
   }

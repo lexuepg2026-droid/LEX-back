@@ -9,7 +9,9 @@ import Installment from "../models/Installment.js";
 import {
   CATALOGO_VARIAVEIS,
   orientacaoPendencia,
-  VARIAVEIS_DE_HONORARIO
+  VARIAVEIS_DE_HONORARIO,
+  MOTIVO_PENDENCIA,
+  variaveisIncompativeis
 } from "../config/templateVariables.js";
 import { substituir } from "../utils/templateParser.js";
 import formatadores from "../utils/templateFormatters.js";
@@ -128,7 +130,15 @@ const montarOrigemHonorario = async (fee, usuarioId) => {
     // Parcelas desiguais não têm "valor da parcela" — deixar undefined vira
     // pendência, que é honesto. Dividir o total pelo número produziria um
     // número que não corresponde a nenhuma cobrança real.
-    valorParcela: uniformes ? valores[0] : undefined
+    valorParcela: uniformes ? valores[0] : undefined,
+    // Fase 4.6: a pendência precisa saber POR QUE o valor não existe. Sem esta
+    // marca, "faltou preencher" e "as parcelas divergem" produziriam a mesma
+    // frase — e a primeira manda procurar um campo que não existe.
+    //
+    // Não é campo do Fee e não é lido por mais ninguém: vive só na origem
+    // montada para o template, ao lado de `numeroParcelas` e `valorParcela`,
+    // que também são derivados.
+    parcelasDesiguais: !uniformes
   };
 };
 
@@ -273,12 +283,88 @@ const carregarContexto = async (processoId, usuarioId, clienteId) => {
   return { processo, cliente, usuario };
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PENDÊNCIA DETALHADA — os becos sem saída do módulo (Fase 4.6)
+//
+// `orientacaoPendencia` resolve o que o CATÁLOGO sabe: campo vazio e
+// incompatibilidade de tipo de pessoa. Os dois casos abaixo dependem do que só
+// o resolvedor sabe — o tipo do honorário e a forma das parcelas —, e eram
+// justamente as duas orientações que mandavam a advogada a lugar nenhum.
+// ═══════════════════════════════════════════════════════════════════════════
+const detalharPendencia = (nome, contexto = {}) => {
+  const base = orientacaoPendencia(nome, contexto);
+
+  // ── 2.2 — `percentualHonorario` num honorário que não admite percentual ──
+  //
+  // Antes: "Preencha 'Percentual do honorário' no honorário vinculado ao
+  // processo". Seguir isso ao pé da letra devolve **400**: o hook do Fee recusa
+  // percentual fora do tipo percentual ("Honorário do tipo fixo não admite
+  // percentual"). A advogada ia ao honorário, digitava, era recusada, e não
+  // tinha como saber que o caminho era trocar o TIPO da cobrança.
+  if (nome === "percentualHonorario" && contexto.tipoHonorario &&
+      contexto.tipoHonorario !== "percentual") {
+    const rotulo = contexto.tipoHonorario === "custas" ? "custas processuais" : contexto.tipoHonorario;
+    return {
+      ...base,
+      motivo: MOTIVO_PENDENCIA.TIPO_HONORARIO_INCOMPATIVEL,
+      tipoHonorario: contexto.tipoHonorario,
+      causa: `O honorário deste processo é do tipo ${rotulo}, que não tem percentual.`,
+      orientacao:
+        `O honorário deste processo é do tipo ${rotulo}. ` +
+        "Mude o tipo para percentual (informando percentual e valor base) em " +
+        "Honorários, ou remova a variável da seção."
+    };
+  }
+
+  // ── 2.3 — `valorParcela` com parcelas de valores diferentes ─────────────
+  //
+  // Antes: "Preencha 'Valor da parcela' no honorário vinculado ao processo".
+  // **Não existe campo "Valor da parcela" no honorário** — o valor mora em cada
+  // parcela, e a pendência aparece justamente porque elas DIVERGEM. A frase
+  // mandava procurar um campo inexistente para resolver um problema que não é
+  // de preenchimento.
+  if (nome === "valorParcela" && contexto.parcelasDesiguais) {
+    return {
+      ...base,
+      motivo: MOTIVO_PENDENCIA.PARCELAS_DESIGUAIS,
+      causa: "As parcelas deste honorário têm valores diferentes entre si.",
+      orientacao:
+        "As parcelas deste honorário têm valores diferentes, então não existe " +
+        "um \"valor da parcela\" único para escrever no documento. Deixe as parcelas " +
+        "com o mesmo valor em Parcelas, ou remova a variável da seção."
+    };
+  }
+
+  return base;
+};
+
 // Resolve o texto do modelo para um processo, SEM persistir nada.
 const resolver = async (modelo, processoId, usuarioId, { clienteId, honorarioId } = {}) => {
   const vinculos = await carregarVinculosOrdenados(modelo._id, usuarioId);
 
   if (vinculos.length === 0) {
-    throw createError("O modelo não possui seções vinculadas", 422);
+    // Fase 4.6 (item 2.5): ganha corpo `errors`, como os demais 422 do módulo.
+    // A tela de montagem já previne (o botão fica desabilitado e há aviso), mas
+    // quem chama a API crua recebia um 422 sem `errors` — o único do módulo
+    // fora do formato, e o frontend tem de tratar dois formatos por causa dele.
+    throw createError(
+      "O modelo não possui seções vinculadas",
+      422,
+      {
+        errors: {
+          pendencias: [{
+            variavel: "secoes",
+            rotulo: "Seções do modelo",
+            origem: null,
+            motivo: MOTIVO_PENDENCIA.CAMPO_VAZIO,
+            causa: "O modelo não tem nenhuma seção vinculada.",
+            orientacao:
+              "Acrescente ao menos uma seção ao modelo, na tela de montagem, antes de gerar."
+          }]
+        }
+      }
+    );
   }
 
   const { processo, cliente, usuario } = await carregarContexto(
@@ -306,7 +392,20 @@ const resolver = async (modelo, processoId, usuarioId, { clienteId, honorarioId 
   const valores = montarValores({ usuario, cliente, processo, honorario });
   const { texto, pendencias } = substituir(textoModelo, valores);
 
-  const orientadas = pendencias.map(orientacaoPendencia);
+  // ── Contexto das pendências (Fase 4.6) ─────────────────────────────────
+  //
+  // O catálogo sozinho só sabe dizer "preencha". Quem sabe que o cliente é PF,
+  // que o honorário é fixo ou que as parcelas são desiguais é este resolvedor —
+  // e sem passar isso adiante, três das sete mensagens do módulo continuariam
+  // apontando ações impossíveis.
+  const contexto = {
+    tipoPessoaCliente: cliente?.tipoPessoa ?? null,
+    nomeCliente: cliente?.nomeCompleto || cliente?.razaoSocial || null,
+    tipoHonorario: honorario?.tipo ?? null,
+    parcelasDesiguais: honorario?.parcelasDesiguais === true
+  };
+
+  const orientadas = pendencias.map((nome) => detalharPendencia(nome, contexto));
 
   // A escolha do honorário entra ANTES das demais: sem ela, todas as variáveis
   // de honorário também estão pendentes, e a lista começaria pelo sintoma em
@@ -505,6 +604,66 @@ export const gerarDocumentoService = async (
   return gerado;
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AVISO PREVENTIVO DE COMPATIBILIDADE (Fase 4.6, item 1.3)
+//
+// Responde "este modelo serve para este cliente?" ANTES de gerar, para a tela
+// avisar no momento em que a advogada escolhe o cliente — e não depois, num 422
+// que ela recebe achando que só faltava preencher alguma coisa.
+//
+// Devolve as seções culpadas junto com as variáveis: saber QUE há incompatível
+// não basta para agir; é preciso saber ONDE, e a advogada pensa em seções, não
+// em chaves de template.
+//
+// Não gera nada e não persiste nada — é leitura, e responde 200 mesmo quando o
+// resultado é "não serve". Recusar aqui seria transformar um aviso em bloqueio,
+// e gerar continua permitido: o 422 é a rede, este é o alerta.
+// ═══════════════════════════════════════════════════════════════════════════
+export const compatibilidadeService = async (modeloId, usuarioId, { clienteId } = {}) => {
+  const modelo = await carregarModelo(modeloId, usuarioId);
+
+  assertIdValido(clienteId, "cliente");
+  const cliente = await Client.findOne({ _id: clienteId, usuarioId, ativo: true });
+  if (!cliente) {
+    throw createError("Cliente não encontrado para este usuário", 404);
+  }
+
+  const vinculos = await carregarVinculosOrdenados(modelo._id, usuarioId);
+
+  const secoes = [];
+  const todas = new Set();
+
+  for (const vinculo of vinculos) {
+    const secao = vinculo.secaoId;
+    if (!secao) continue;
+
+    const incompativeis = variaveisIncompativeis(secao.variaveis ?? [], cliente.tipoPessoa);
+    if (incompativeis.length === 0) continue;
+
+    for (const nome of incompativeis) todas.add(nome);
+    secoes.push({
+      secaoId: secao._id,
+      titulo: secao.titulo,
+      variaveis: incompativeis.map((nome) => ({
+        variavel: nome,
+        rotulo: CATALOGO_VARIAVEIS[nome]?.rotulo ?? nome,
+        tipoVariavel: CATALOGO_VARIAVEIS[nome]?.tipoCliente ?? null
+      }))
+    });
+  }
+
+  return {
+    modeloId: modelo._id,
+    clienteId: cliente._id,
+    tipoPessoaCliente: cliente.tipoPessoa,
+    nomeCliente: cliente.nomeCompleto || cliente.razaoSocial || null,
+    compativel: todas.size === 0,
+    totalVariaveis: todas.size,
+    secoes
+  };
+};
+
 export const previewDocumentoService = async (
   documentoId,
   usuarioId,
@@ -647,6 +806,7 @@ export const alternarVisibilidadePortalService = async (documentoId, usuarioId, 
 
 export default {
   resolverClienteDoProcesso,
+  compatibilidadeService,
   montarValores,
   montarTextoDoModelo,
   criarModeloService,
