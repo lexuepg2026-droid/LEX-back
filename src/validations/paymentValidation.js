@@ -23,6 +23,11 @@ const CAMPOS_PERMITIDOS_UPDATE = [
   "observacoes"
 ];
 
+// Exportada só para o teste conferir que esta lista e a allowlist canônica de
+// `shared/camposPermitidos.js` não divergiram. Duas listas paralelas para a
+// mesma pergunta divergem — foi assim que `ativo` sobreviveu aqui até a 4.5.
+export const CAMPOS_PERMITIDOS_UPDATE_TESTE = Object.freeze([...CAMPOS_PERMITIDOS_UPDATE]);
+
 const isObjectIdValido = (valor) => mongoose.Types.ObjectId.isValid(valor);
 
 const isNumeroValido = (valor) => {

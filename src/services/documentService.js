@@ -4,6 +4,7 @@ import Process from "../models/Process.js";
 import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
 import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 
 const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -117,6 +118,11 @@ const CAMPOS_EDITAVEIS = [
 ];
 
 export const updateDocumentService = async (documentId, usuarioId, payload) => {
+  const recusado = checarUpdate("documents", payload);
+  if (recusado) {
+    throw createError(recusado.mensagem, 400, recusado.campo ? { campo: recusado.campo } : {});
+  }
+
   // Carrega o documento e aplica o merge EM MEMÓRIA, salvando com save().
   //
   // findOneAndUpdate não dispara o hook pre("validate"), então toda a validação
@@ -142,15 +148,13 @@ export const updateDocumentService = async (documentId, usuarioId, payload) => {
   }
 
   // `ativo` sai pelo DELETE, que cascateia nos vínculos. Aceitá-lo aqui criaria
-  // um segundo caminho de exclusão, sem cascata — exatamente o tipo de
-  // inconsistência que a Parte 2 corrige.
-  if (payload.ativo === false) {
-    throw createError(
-      "Use DELETE /api/documents/:id para desativar o documento",
-      400,
-      { campo: "ativo" }
-    );
-  }
+  // um segundo caminho de exclusão, sem cascata.
+  //
+  // Fase 4.5: a guarda antiga testava `payload.ativo === false` e deixava
+  // `{ ativo: true }` passar com 200, ignorado em silêncio — o teste da
+  // allowlist pegou. Documento era a única das sete entidades que ainda
+  // respondia diferente conforme o VALOR do campo. Agora a recusa é do campo,
+  // pela allowlist compartilhada, como nas outras seis.
 
   for (const campo of CAMPOS_EDITAVEIS) {
     if (Object.prototype.hasOwnProperty.call(payload, campo)) {

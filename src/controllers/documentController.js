@@ -83,12 +83,16 @@ export const updateDocument = async (req, res, next) => {
       return next(err);
     }
 
-    const { isValid, errors, data } = validateUpdateDocument(req.body);
+    const { isValid, errors, data, campo } = validateUpdateDocument(req.body);
 
     if (!isValid) {
-      const err = new Error("Dados inválidos");
+      // `campo` só vem quando a allowlist recusou um campo nomeado; nesse caso
+      // a mensagem dele é a redação final e vale mais que o "Dados inválidos"
+      // genérico, que a tela não sabe onde destacar.
+      const err = new Error(campo ? errors[0] : "Dados inválidos");
       err.statusCode = 400;
       err.errors = errors;
+      if (campo) err.campo = campo;
       return next(err);
     }
 

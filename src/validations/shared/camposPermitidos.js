@@ -111,7 +111,15 @@ export const CAMPOS_UPDATE = Object.freeze({
     "installmentId", "valorPago", "dataPagamento", "formaPagamento",
     "observacoes"
   ]),
-  secoes: Object.freeze(["titulo", "tipo", "texto"])
+  secoes: Object.freeze(["titulo", "tipo", "texto"]),
+  // `ehModelo` fica na lista de propósito, como `clientePrincipalId` em
+  // `processes`: é recusado logo depois com mensagem própria, que manda criar
+  // modelo por `POST /documents/modelos`. Tirá-lo daqui trocaria aquela
+  // orientação pela genérica de campo desconhecido.
+  documents: Object.freeze([
+    "processoId", "nome", "tipo", "descricao", "origem", "visivelPortal",
+    "urlArquivo", "tamanho", "dataUpload", "ehModelo"
+  ])
 });
 
 // Caminho do DELETE de cada recurso, para a mensagem do `ativo` mandar a
@@ -122,7 +130,8 @@ export const ROTA_DELETE = Object.freeze({
   fees: "/api/fees/:id",
   installments: "/api/installments/:id",
   payments: "/api/payments/:id",
-  secoes: "/api/secoes/:id"
+  secoes: "/api/secoes/:id",
+  documents: "/api/documents/:id"
 });
 
 // Açúcar para os services: devolve { campo, mensagem } ou null, já com a rota

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { TIPOS_DOCUMENTO, ORIGENS_DOCUMENTO } from "../models/Document.js";
+import { checarUpdate } from "./shared/camposPermitidos.js";
 
 const TIPOS_DOCUMENTO_VALIDOS = TIPOS_DOCUMENTO;
 
@@ -126,6 +127,18 @@ export const validateCreateDocument = (body) => {
 
 export const validateUpdateDocument = (body) => {
   const errors = [];
+
+  // Allowlist compartilhada (Fase 4.5), sobre o corpo CRU.
+  //
+  // Não dá para deixar isto só no service: o `data` montado abaixo já é um
+  // filtro — só campos conhecidos são copiados para dentro dele —, então o
+  // campo desconhecido nunca chegaria lá para ser recusado. O documento
+  // respondia 400 "nenhum campo válido informado", sem `campo`, e era a única
+  // das sete entidades fora do formato uniforme da 5.3.
+  const recusado = checarUpdate("documents", body);
+  if (recusado) {
+    return { isValid: false, errors: [recusado.mensagem], campo: recusado.campo, data: {} };
+  }
 
   const data = {};
 
