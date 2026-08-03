@@ -30,6 +30,46 @@ assertSegredoDoPortal();
 
 const app = express();
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PREPARO DE PRODUÇÃO (achado 1.4 — Fase 4.5). Sem helmet, à mão.
+//
+// `trust proxy: 1` — UM salto, não `true`. Com `true` o Express acredita no
+// `X-Forwarded-For` inteiro, inclusive no trecho que o cliente escreveu: quem
+// quisesse furar o rate limit mandaria um IP falso na frente da cadeia e
+// ganharia um balde novo por requisição. Com `1`, só o proxy imediatamente à
+// frente (o do hospedeiro) é considerado confiável — que é a topologia real de
+// um deploy em PaaS. É disso que `express-rate-limit` depende para agrupar por
+// IP de verdade.
+app.set("trust proxy", 1);
+
+// O `X-Powered-By` anuncia "Express" em toda resposta. Não é vulnerabilidade,
+// é reconhecimento gratuito: poupa ao atacante a pergunta "que stack é esta?".
+app.disable("x-powered-by");
+
+// Os quatro cabeçalhos, escritos à mão porque a fase proíbe dependência nova e
+// porque são quatro linhas — helmet traria quinze defaults que ninguém leu.
+app.use((req, res, next) => {
+  // Impede o navegador de "adivinhar" o tipo do conteúdo. Sem isso, um PDF ou
+  // DOCX servido pelo download poderia ser reinterpretado como HTML.
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  // A API não é para ser embutida em frame nenhum. `DENY` e não `SAMEORIGIN`:
+  // não existe tela do LEX que abra a própria API dentro de um frame.
+  res.setHeader("X-Frame-Options", "DENY");
+  // Não vaza caminho nem query string para terceiros; mantém a origem em
+  // navegação cross-site e o path completo só dentro do próprio site.
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
+  // HSTS **só em produção**. Em desenvolvimento o app roda em `http://localhost`
+  // e mandar o navegador exigir HTTPS daquele host por um ano deixaria a
+  // máquina do Daniel sem conseguir abrir o próprio `localhost` — e o efeito
+  // sobrevive a desinstalar o servidor, porque quem guarda é o navegador.
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+
+  return next();
+});
+
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim());
 app.use(cors({
   origin: allowedOrigins,
