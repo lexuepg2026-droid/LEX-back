@@ -51,6 +51,18 @@ O `.env` **não vem no repositório** (está no `.gitignore`). Copie o modelo e 
 cp .env.example .env
 ```
 
+Os dois segredos você **gera na sua máquina** — não peça a ninguém e não
+reaproveite de outro ambiente:
+
+```bash
+openssl rand -hex 32   # cole em JWT_SECRET
+openssl rand -hex 32   # rode DE NOVO e cole em JWT_PORTAL_SECRET
+```
+
+Os valores precisam ser **diferentes entre si**. O `.env.example` já vem com
+placeholders (`<gere-com-openssl-rand-hex-32>`) no lugar de campos vazios,
+para ficar claro o que falta preencher.
+
 Preencha o `.env`:
 
 | Variável      | Descrição                                                                 |
@@ -165,6 +177,37 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 
 > Fluxo para recriar a base do zero: `npm run seed:fresh` (equivale a `npm run reset:dev && npm run seed:demo`).
 
+### 3.7. Rodar a suíte de testes (`.env.test`)
+
+A suíte usa **MongoDB de verdade**, num banco **separado** da base de
+demonstração: transação na criação de processo, índice único parcial,
+`populate` e `$set` não têm substituto em memória sem instalar dependência —
+e o projeto não instala nenhuma.
+
+```bash
+cp .env.test.example .env.test
+```
+
+| Variável | O que é |
+|---|---|
+| `MONGO_URI_TEST` | Banco **exclusivo da suíte**. O nome precisa conter `test` e **não** pode ser `lex`. |
+| `JWT_SECRET` / `JWT_PORTAL_SECRET` | Valores quaisquer, só para a suíte assinar tokens. Continuam precisando ser **diferentes entre si**. |
+
+> ⚠️ **A suíte APAGA coleções** em todo `before` e `after`. Duas guardas em
+> `tests/helpers/env.js` abortam a execução antes de qualquer conexão se o
+> banco se chamar `lex` (a base da banca) ou se o nome não contiver `test`.
+> Apontar `MONGO_URI_TEST` para a base de demonstração destrói o seed.
+
+```bash
+npm test
+```
+
+Esperado: **tudo verde**, em ~3 minutos (a suíte é serial, contra Atlas real).
+Se a saída trouxer `bad auth : authentication failed`, o usuário/senha do
+`MONGO_URI_TEST` está errado — não é problema do código.
+
+---
+
 ## 4. Frontend (repositório separado)
 
 Clone o repositório do frontend **em outra pasta**, ao lado deste (não precisa estar dentro de `LEX/`):
@@ -173,8 +216,11 @@ Clone o repositório do frontend **em outra pasta**, ao lado deste (não precisa
 git clone https://github.com/lexuepg2026-droid/LEX-front.git
 cd LEX-front
 npm install
+npm test      # suíte do frontend: sem DOM, sem banco, roda em segundos
 npm run dev
 ```
+
+O frontend **não tem `.env`**: a URL da API é fixa em `src/api/axiosConfig.js`.
 
 App em `http://localhost:5173`. Requer o backend deste repositório já rodando em `http://localhost:3001` (passo 3.5).
 

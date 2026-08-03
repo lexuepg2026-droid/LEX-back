@@ -130,8 +130,21 @@ export const criarInstallment = async (usuarioId, dados) => {
   return atualizado || installment;
 };
 
-export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status } = {}) => {
-  const filter = { usuarioId, ativo: true };
+export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status, inativos } = {}) => {
+  // ── `?inativos=true` — a listagem do desativado (Fase 4.5) ────────────────
+  //
+  // Existe para a tela poder oferecer "Reativar". Sem ela, o registro
+  // desativado é invisível na interface e a rota de reativação só seria
+  // alcançável por curl — a funcionalidade existiria sem porta de entrada.
+  //
+  // É um MODO, não um "incluir": `?inativos=true` lista SÓ os desativados. Um
+  // parâmetro que misturasse os dois conjuntos mudaria o significado da
+  // listagem padrão conforme uma caixa de seleção, e as somas da tela passariam
+  // a incluir o que foi removido sem nada dizendo isso na linha.
+  //
+  // O default não muda: sem o parâmetro, `ativo: true`, como sempre.
+  const somenteInativos = inativos === true || inativos === "true";
+  const filter = { usuarioId, ativo: !somenteInativos };
   if (status && typeof status === 'string') filter.status = status;
 
   if (processoId) {
