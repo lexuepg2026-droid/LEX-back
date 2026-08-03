@@ -3,7 +3,9 @@ import DocumentoSecao from "../models/DocumentoSecao.js";
 import Document from "../models/Document.js";
 import secaoValidation from "../validations/secaoValidation.js";
 import { regexBuscaTexto } from "../utils/texto.js";
+import { filtroTexto } from "../utils/filtrosDeConsulta.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 
 const erro = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -43,7 +45,10 @@ export const createSecao = async (usuarioId, data) => {
 export const listSecoes = async (usuarioId, { page = 1, limit = 20, tipo, busca } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  if (tipo) filter.tipo = tipo;
+  // Guarda de tipo (Fase 4.5): só string entra na query. Ver
+  // `utils/filtrosDeConsulta.js` para a medição que motivou a guarda.
+  const tipoFiltro = filtroTexto(tipo);
+  if (tipoFiltro) filter.tipo = tipoFiltro;
 
   // Busca por título, ignorando caixa E acento. Os títulos das seções são
   // acentuados ("Qualificação do outorgante"), e obrigar a advogada a acertar
@@ -71,6 +76,15 @@ export const getSecaoById = async (usuarioId, secaoId) => {
 };
 
 export const updateSecao = async (usuarioId, secaoId, payload) => {
+  // Allowlist da Fase 4.5. A Seção já era a única fechada, mas o fechamento
+  // vinha de "nenhum campo válido informado" — que só dispara quando NADA é
+  // reconhecido. `{ titulo: "x", ativo: false }` passava pelo teste e o `ativo`
+  // era ignorado em silêncio. Agora é recusa explícita.
+  const recusado = checarUpdate("secoes", payload);
+  if (recusado) {
+    throw erro(recusado.mensagem, 400, { campo: recusado.campo });
+  }
+
   assertIdValido(secaoId);
 
   const validationError = secaoValidation.validateUpdateSecaoPayload(payload);

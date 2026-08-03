@@ -1,0 +1,25 @@
+{
+  "_leiaMe": "Vetores canônicos da fórmula do honorário percentual (DEC-027). Este arquivo existe IDÊNTICO nos dois repositórios: tests/fixtures/percentualVetores.json no LEX-back e tests/fixtures/percentualVetores.json no LEX-front. O backend o exercita contra o hook de models/Fee.js; o frontend, contra derivarValorHonorario de utils/feeCalc.js. Os dois testes conferem o hash SHA-256 do conteúdo canonicalizado: se alguém editar um lado e não o outro, a suíte dos DOIS repos cai, e cai dizendo por quê. Editar aqui exige editar lá, e vice-versa.",
+  "_formula": "Math.round(valorBase * percentual) / 100. O arredondamento acontece em CENTAVOS, antes da divisão: valorBase e valor estão em reais e percentual em pontos percentuais, então base*percentual já é o valor em centavos. Dividir primeiro traria o erro de ponto flutuante para dentro do número que a advogada assina.",
+  "validos": [
+    { "nome": "inteiro simples", "percentual": 10, "valorBase": 1000, "valor": 100 },
+    { "nome": "o caso do seed — 6% sobre o monte-mor", "percentual": 6, "valorBase": 200000, "valor": 12000 },
+    { "nome": "meio ponto percentual", "percentual": 12.5, "valorBase": 1000, "valor": 125 },
+    { "nome": "dízima que só fecha arredondando em centavos", "percentual": 33.33, "valorBase": 1000, "valor": 333.3 },
+    { "nome": "o clássico 0.1+0.2 — precisa dar 3, não 3.0000000000000004", "percentual": 30, "valorBase": 10, "valor": 3 },
+    { "nome": "arredonda para cima no meio centavo", "percentual": 33.335, "valorBase": 1000, "valor": 333.35 },
+    { "nome": "percentual máximo", "percentual": 100, "valorBase": 4321.55, "valor": 4321.55 },
+    { "nome": "percentual mínimo representável", "percentual": 0.01, "valorBase": 10000, "valor": 1 },
+    { "nome": "base zero é conta válida e dá zero", "percentual": 20, "valorBase": 0, "valor": 0 },
+    { "nome": "centavos na base", "percentual": 15, "valorBase": 1234.56, "valor": 185.18 },
+    { "nome": "base grande", "percentual": 8.75, "valorBase": 987654.32, "valor": 86419.75 }
+  ],
+  "invalidos": [
+    { "nome": "percentual zero", "percentual": 0, "valorBase": 1000 },
+    { "nome": "percentual negativo", "percentual": -5, "valorBase": 1000 },
+    { "nome": "percentual acima de 100", "percentual": 100.01, "valorBase": 1000 },
+    { "nome": "base negativa", "percentual": 10, "valorBase": -1 },
+    { "nome": "percentual ausente", "percentual": null, "valorBase": 1000 },
+    { "nome": "base ausente", "percentual": 10, "valorBase": null }
+  ]
+}

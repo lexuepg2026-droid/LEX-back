@@ -10,14 +10,23 @@ const FORMAS_PAGAMENTO_VALIDAS = [
   "transferencia"
 ];
 
+// `ativo` saiu na Fase 4.5. Era o único módulo em que o campo estava aqui de
+// propósito — e por isso o único em que fechá-lo é mudança de contrato, não
+// correção de descuido. A allowlist canônica agora vive em
+// `validations/shared/camposPermitidos.js`; esta lista continua governando as
+// validações de valor abaixo e é conferida contra aquela em teste.
 const CAMPOS_PERMITIDOS_UPDATE = [
   "installmentId",
   "valorPago",
   "dataPagamento",
   "formaPagamento",
-  "observacoes",
-  "ativo"
+  "observacoes"
 ];
+
+// Exportada só para o teste conferir que esta lista e a allowlist canônica de
+// `shared/camposPermitidos.js` não divergiram. Duas listas paralelas para a
+// mesma pergunta divergem — foi assim que `ativo` sobreviveu aqui até a 4.5.
+export const CAMPOS_PERMITIDOS_UPDATE_TESTE = Object.freeze([...CAMPOS_PERMITIDOS_UPDATE]);
 
 const isObjectIdValido = (valor) => mongoose.Types.ObjectId.isValid(valor);
 
@@ -63,10 +72,6 @@ export const validateCreatePayment = (data) => {
     typeof data.observacoes !== "string"
   ) {
     erros.push("observacoes deve ser texto");
-  }
-
-  if (data.ativo !== undefined && typeof data.ativo !== "boolean") {
-    erros.push("ativo deve ser boolean");
   }
 
   return erros;

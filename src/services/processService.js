@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Process from "../models/Process.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
   normalizarClientesDoPayload,
@@ -242,6 +243,15 @@ export const getProcessById = async (usuarioId, processId) => {
 };
 
 export const updateProcess = async (usuarioId, processId, data) => {
+  // Allowlist da Fase 4.5. Aqui o contorno era o PIOR dos seis: o
+  // `normalizePayload` faz `{ ...data }`, então `ativo: false` chegava ao
+  // `findOneAndUpdate`, a escrita acontecia, e a releitura por
+  // `getProcessById` (que filtra `ativo: true`) devolvia 404. A rota
+  // respondia "Processo nao encontrado" DEPOIS de desativar o processo.
+  const recusado = checarUpdate("processes", data);
+  if (recusado) {
+    throw createError(recusado.mensagem, 400, recusado.campo ? { campo: recusado.campo } : {});
+  }
   const idErrors = validateProcessId(processId);
   const bodyErrors = validateUpdateProcess(data);
   const errors = [...idErrors, ...bodyErrors];

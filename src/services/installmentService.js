@@ -8,6 +8,7 @@ import {
 } from "../validations/installmentValidation.js";
 import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -38,17 +39,18 @@ const buscarFeeDoUsuario = async (feeId, usuarioId) => {
   return fee;
 };
 
-const normalizarStatus = ({ status, dataVencimento, dataPagamento }) => {
-  if (status === "pago") {
-    return "pago";
-  }
-
-  if (!dataPagamento && new Date(dataVencimento) < new Date()) {
-    return "vencido";
-  }
-
-  return "pendente";
-};
+// `normalizarStatus` vivia aqui e foi REMOVIDA na Fase 4.5 (DEC-020 revogada).
+//
+// Ela nasceu no Bloco 11 como derivação de status da parcela e foi declarada
+// intencional na época. Depois, a DEC-028 (Fase 4.1) passou a derivar status
+// pela cadeia de pagamento, e `definirStatusInstallment` (`paymentService.js`)
+// virou a única fonte — com três estados a mais e a conta feita sobre os
+// pagamentos ativos, não sobre a data. Esta função ficou sem nenhum call site
+// e a Auditoria Geral nº 2 confirmou a ausência de referências.
+//
+// Mantê-la seria pior que ruído: quem lesse o arquivo encontraria duas
+// derivações de status da parcela, uma delas errada (não conhece `parcial`,
+// não olha pagamento), sem nada dizendo qual vale.
 
 // ── `valorPago` NÃO é escrito por rota (Fase 4.1) ──────────────────────────
 //
@@ -128,8 +130,21 @@ export const criarInstallment = async (usuarioId, dados) => {
   return atualizado || installment;
 };
 
-export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status } = {}) => {
-  const filter = { usuarioId, ativo: true };
+export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status, inativos } = {}) => {
+  // ── `?inativos=true` — a listagem do desativado (Fase 4.5) ────────────────
+  //
+  // Existe para a tela poder oferecer "Reativar". Sem ela, o registro
+  // desativado é invisível na interface e a rota de reativação só seria
+  // alcançável por curl — a funcionalidade existiria sem porta de entrada.
+  //
+  // É um MODO, não um "incluir": `?inativos=true` lista SÓ os desativados. Um
+  // parâmetro que misturasse os dois conjuntos mudaria o significado da
+  // listagem padrão conforme uma caixa de seleção, e as somas da tela passariam
+  // a incluir o que foi removido sem nada dizendo isso na linha.
+  //
+  // O default não muda: sem o parâmetro, `ativo: true`, como sempre.
+  const somenteInativos = inativos === true || inativos === "true";
+  const filter = { usuarioId, ativo: !somenteInativos };
   if (status && typeof status === 'string') filter.status = status;
 
   if (processoId) {
@@ -176,6 +191,11 @@ export const atualizarInstallment = async (
   installmentId,
   dados
 ) => {
+  // Allowlist da Fase 4.5 — `ativo` fora do corpo (achados #1/#2/#11).
+  const recusado = checarUpdate("installments", dados);
+  if (recusado) {
+    throw erro(400, recusado.mensagem, recusado.campo ? { campo: recusado.campo } : {});
+  }
   validarObjectId(installmentId, "installmentId");
 
   recusarValorPagoNoCorpo(dados);
@@ -287,4 +307,64 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
   await recalcularStatusFee(installment.feeId, usuarioId);
 
   return installment;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REATIVAÇÃO DE PARCELA (achado 2.2c — Fase 4.5)
+//
+// Rota própria pelo mesmo motivo do pagamento: a guarda de integridade não cabe
+// num campo de update genérico.
+//
+// A guarda: a parcela só volta se o HONORÁRIO dela estiver ativo. Parcela
+// pendurada em honorário desativado não entra em `derivarStatusFee` (que filtra
+// o honorário por `ativo: true`) nem na ficha financeira — seria cobrança viva
+// dentro de contrato morto.
+//
+// ── Sobre a colisão de `numeroParcela` ────────────────────────────────────
+// O roteiro da fase pedia tratar colisão do índice único na reativação. Ela NÃO
+// é alcançável, e a razão está no índice: `{ feeId, numeroParcela }` é único
+// SEM `partialFilterExpression` (`models/Installment.js:70`), diferente dos
+// índices de `documento_secao`, que são parciais em `ativo: true`. Sem filtro
+// parcial, a parcela desativada NUNCA solta o número — ele continua reservado, e
+// por isso não existe segunda parcela com o mesmo número para colidir na volta.
+// A checagem abaixo fica como rede, com o custo de uma consulta, e o teste que
+// tentaria produzir a colisão está registrado como impossível no relatório.
+// ═══════════════════════════════════════════════════════════════════════════
+export const reativarInstallment = async (usuarioId, installmentId) => {
+  validarObjectId(installmentId, "installmentId");
+
+  const installment = await Installment.findOne({ _id: installmentId, usuarioId });
+  if (!installment) {
+    throw erro(404, "Parcela não encontrada");
+  }
+
+  if (installment.ativo === true) {
+    return installment;
+  }
+
+  const fee = await Fee.findOne({ _id: installment.feeId, usuarioId, ativo: true });
+  if (!fee) {
+    throw erro(
+      409,
+      "Não é possível reativar esta parcela: o honorário dela está desativado. " +
+      "Reative o honorário antes.",
+      { dependencia: "honorario" }
+    );
+  }
+
+  await verificarNumeroParcelaDuplicado({
+    feeId: installment.feeId,
+    numeroParcela: installment.numeroParcela,
+    installmentId: installment._id
+  });
+
+  installment.ativo = true;
+  await installment.save();
+
+  // A parcela volta ao conjunto: os dois níveis são recalculados. O primeiro
+  // regrava `status` e `valorPago` a partir dos pagamentos que continuam
+  // ativos; o segundo é chamado por ele, no fim da cadeia.
+  await recalcularStatusInstallment(String(installment._id), usuarioId);
+
+  return Installment.findById(installment._id);
 };

@@ -1178,6 +1178,155 @@ Quem paga é o participante **principal** do processo, lido da junção
 como segunda tentativa. Num litisconsórcio os demais são partes do processo, não
 do contrato de honorários.
 
+
+
+### DEC-020 — REVOGADA na Fase 4.5
+
+`normalizarStatus`, em `installmentService.js`, derivava o status da parcela a
+partir da data de vencimento. Foi declarada **intencional** no Bloco 11.
+
+A linha do tempo, honesta:
+
+| Quando | O quê |
+|---|---|
+| Bloco 11 | nasce e é declarada intencional |
+| Fase 4.1 (DEC-028) | `definirStatusInstallment` (`paymentService.js`) passa a ser a única derivação, com `parcial` a mais e a conta feita sobre os **pagamentos ativos**, não sobre a data |
+| Auditoria nº 2 | confirmada **sem nenhuma referência** |
+| Fase 4.5 | **removida**; `git grep normalizarStatus` volta zero |
+
+Não foi apagada por limpeza estética. Mantê-la deixaria duas derivações de
+status da parcela no mesmo módulo, uma delas **errada** — não conhece `parcial`
+e não olha pagamento nenhum — sem nada dizendo qual vale. É o formato de dívida
+que a próxima pessoa resolve chamando a função errada.
+
+### DEC-031 — cadastro aberto com 409 enumerável de e-mail. DECISÃO CONSCIENTE
+
+Registrada na Fase 4.5. **Não é achado em aberto; é escolha, e fica escrita
+para não ser "corrigida" por reflexo numa auditoria futura.**
+
+`POST /auth/register` é público e responde **409 `E-mail já cadastrado`** com
+`campo: "email"`. Isso permite enumerar quais e-mails têm conta no LEX.
+
+**Por que fica como está:**
+
+1. **O sistema é multi-tenant por design.** Qualquer pessoa pode criar a própria
+   conta — é assim que os colegas do Daniel entram para testar, e é assim que a
+   banca vai entrar na defesa. Não existe convite, não existe lista fechada:
+   "este e-mail tem conta" não é segredo num sistema em que qualquer um pode
+   criar a sua em dez segundos.
+2. **A alternativa custa usabilidade real.** A anti-enumeração honesta é
+   responder 201 genérico e mandar e-mail de confirmação — que exigiria provedor
+   de e-mail, fila e uma tela de "confira sua caixa", tudo fora do escopo do TCC
+   e sem nenhum ganho para a advogada. A alternativa preguiçosa (mensagem
+   genérica "não foi possível cadastrar") deixa quem já tem conta sem entender
+   por que o cadastro falhou.
+3. **A escala não justifica.** O ganho teórico de anti-enumeração é proteger uma
+   lista de usuários. A lista aqui tem UMA advogada real e algumas contas de
+   teste.
+
+**O que NÃO se aceita, e continua valendo:** o **login** não enumera. Os seis
+casos de falha do portal devolvem corpo e status byte-idênticos (DEC-029, ponto
+11), e o login da advogada não distingue "e-mail inexistente" de "senha errada".
+Enumerar no cadastro é aceitável; enumerar no login diria quem tem conta E
+serviria de oráculo para força bruta.
+
+**Reabrir só se** o LEX deixar de ter cadastro aberto — aí a enumeração passa a
+revelar uma lista que alguém escolheu fechar, e o cálculo muda.
+
+
+### Allowlist de PATCH — contrato de TODAS as entidades (Fase 4.5)
+
+`src/validations/shared/camposPermitidos.js` é a fonte única. Sete entidades:
+`clients`, `processes`, `fees`, `installments`, `payments`, `secoes`,
+`documents`.
+
+**Duas regras, e as duas são mudança de contrato deliberada:**
+
+1. **Campo desconhecido no corpo do PATCH → 400 com `campo`.** Antes era
+   ignorado em silêncio em `clients`, `fees` e `processes`. Quem mandava um
+   campo com nome errado recebia 200 e nenhuma alteração.
+2. **`ativo` não pertence a allowlist nenhuma.** Desativar é papel do DELETE —
+   que é onde vivem os 409 de integridade com `dependencia`/`quantidade`, e é
+   justamente essa checagem que o corpo do PATCH pulava. Reativar é papel das
+   rotas de reativação.
+
+**O que a fase mediu antes de corrigir**, contra o seed, com o servidor de pé:
+
+| Entidade | `PATCH {ativo:false}` antes | Efeito real |
+|---|---|---|
+| `clients` | 200 | desativado |
+| `processes` | **404** | **desativado** |
+| `fees` | 200 | desativado |
+| `installments` | 200 | desativado |
+| `payments` | 200 | desativado (`ativo` estava na allowlist **de propósito**) |
+| `secoes` | 400 | bloqueado |
+| `documents` | 400 | bloqueado |
+
+**O caso do processo não estava no relatório da auditoria e é o pior dos sete.**
+`updateProcess` grava por `findOneAndUpdate({ativo:true})` e relê por
+`getProcessById`, que também filtra `ativo:true`. A escrita ACONTECIA e a
+releitura não encontrava mais nada: a rota respondia **"Processo não
+encontrado"** para uma requisição que acabara de desativar o processo.
+Destruição relatada como erro de busca.
+
+**Dois defeitos que só apareceram quando os testes foram escritos:**
+
+- `PATCH /documents/:id {ativo:true}` respondia **200**. A guarda da Fase 2A
+  testava `payload.ativo === false`; `true` era ignorado em silêncio. Documento
+  era a única das sete que respondia conforme o VALOR do campo.
+- Campo desconhecido em `/documents` dava 400 **sem `campo`**, porque
+  `validateUpdateDocument` monta um `data` filtrado e o desconhecido era
+  descartado antes de chegar ao service. A allowlist passou a rodar sobre o
+  corpo **cru**, dentro da validação.
+
+**`validateUpdatePayment` mudou de lugar**: do controller para o service.
+Rodando antes do service, engolia a recusa da allowlist e devolvia "Informe ao
+menos um campo válido", sem `campo`. Era também o único módulo financeiro fora
+da convenção "validação sempre no service".
+
+### Rotas de reativação (Fase 4.5)
+
+| Rota | Guarda | Erro |
+|---|---|---|
+| `PATCH /api/payments/:id/reativar` | a **parcela** precisa estar ativa | 409 `dependencia: "parcela"` |
+| `PATCH /api/installments/:id/reativar` | o **honorário** precisa estar ativo | 409 `dependencia: "honorario"` |
+
+Sem corpo. As duas disparam a cadeia de recálculo até o honorário. Reativar
+pagamento **reconfere o excedente**: enquanto ele estava fora, outros podem ter
+ocupado o saldo da parcela.
+
+**Cliente, processo, honorário e documento NÃO ganham reativação nesta fase** —
+decisão de escopo. Os quatro têm cascata ou dependentes cujo comportamento na
+volta precisa ser decidido, e inventar isso de passagem seria pior que a
+ausência.
+
+**A colisão de `numeroParcela` na reativação NÃO é alcançável.** O índice
+`{feeId, numeroParcela}` é único **sem** `partialFilterExpression`
+(`models/Installment.js:70`), diferente dos de `documento_secao`, que são
+parciais em `ativo: true`. Sem filtro parcial, a parcela desativada nunca solta
+o número — não existe segunda parcela para colidir na volta. A checagem fica
+como rede, e há teste travando a premissa: se alguém tornar o índice parcial,
+ele cai.
+
+**`GET /payments?inativos=true` e `GET /installments?inativos=true`** listam
+**só** os desativados. É um MODO, não um "incluir": misturar os conjuntos faria
+a coluna de valor somar o que foi estornado sem nada dizendo isso na linha. O
+default não muda. Existe para a tela poder oferecer "Reativar" — sem ele a
+funcionalidade não teria porta de entrada.
+
+### O que o service worker NUNCA cacheia (Fase 4.5)
+
+O PWA é escrito à mão (`public/sw.js` no frontend), sem workbox e sem plugin.
+
+**`/api/*` nunca entra em cache.** Toda resposta da API é autenticada e pertence
+a UMA advogada: um cache dela é vazamento esperando o segundo usuário no mesmo
+navegador — e o isolamento por `usuarioId` é a regra central do projeto. Além
+disso, servir número financeiro velho de cache, sem nada dizendo que é velho,
+faria a advogada planejar o mês com o dado do mês passado.
+
+Também fora do cache: qualquer método que não seja `GET`, e qualquer origem que
+não seja a do app.
+
 ### Vocabulário de tipo de honorário — PENDENTE DE RATIFICAÇÃO
 
 ```
@@ -1804,6 +1953,71 @@ dois casos o backend estava **correto e já testado**:
 **Não tocado:** `documentService.js`, `documentGenerationService.js`,
 `documentRenderService.js`, `letterheadService.js`, models, contrato de rota
 nenhum. **`package.json` idêntico a `main`.**
+
+---
+
+
+### Fase 4.5 — Correções da Auditoria Geral nº 2
+
+**Resumo:** o contorno do `ativo` fechado nas sete entidades, reativação
+explícita, guardas de tipo nos filtros, preparo de produção, PWA à mão e a
+cobertura que faltava. Backend 255 → **311**. Frontend 213 → **240**.
+
+**A fase saiu em DUAS sessões, e a divisão está no histórico:** a primeira
+implementou as Partes 1, 2, 5.3, 5.4 e 6 e **parou corretamente** ao descobrir
+que a suíte do backend não rodava (`lex_test` com bad auth no Atlas) — escrever
+trinta testes sobre cinco services financeiros sem poder executá-los, e mergear
+isso, seria o oposto do que este projeto faz. A segunda sessão retomou com a
+senha corrigida, escreveu os testes e completou o resto.
+
+**Arquivos novos (backend):** `validations/shared/camposPermitidos.js`,
+`utils/filtrosDeConsulta.js`, `tests/integrity/allowlist.test.js`,
+`tests/integrity/reativacao.test.js`, `tests/infra/filtros.test.js`,
+`tests/infra/producao.test.js`, `tests/financial/invariantes.test.js`,
+`tests/financial/percentualVetores.test.js`, `tests/auth/perfil.test.js`,
+`tests/fixtures/percentualVetores.json`.
+
+**Arquivos novos (frontend):** `public/manifest.webmanifest`, `public/sw.js`,
+`public/icone-192.png`, `public/icone-512.png`, `src/registrarSW.js`,
+`tests/css/foco.test.js`, `tests/pwa/pwa.test.js`,
+`tests/financial/percentualVetores.test.js`, `tests/fixtures/percentualVetores.json`.
+
+**Decisões**, com o porquê nos blocos acima: allowlist como contrato único;
+`ativo` fora de todo corpo de PATCH; reativação em rota própria com guarda; o
+recálculo do honorário deixando de exigir parcela ativa; guardas de tipo que
+não dependem do default do `query parser`; `trust proxy: 1` e não `true`; HSTS
+só em produção; o SW sem `/api/*`; DEC-031 registrada; DEC-020 revogada.
+
+**Quatro premissas do roteiro que NÃO se reproduziram**, reportadas e não
+forçadas:
+
+1. **Não havia injeção de operador ativa.** Medido: `?tipo[$ne]=clausula`
+   devolvia o total INTEIRO, não o filtrado — o Express 5 usa o query parser
+   `simple`, que entrega `tipo[$ne]` como chave literal. A guarda entrou porque
+   a proteção era do framework, não do código: uma linha de configuração
+   transformaria os quatro filtros em injeção de uma vez, sem nenhum teste cair.
+2. **A colisão de `numeroParcela` na reativação é inalcançável** — índice único
+   sem `partialFilterExpression`. Ver o bloco das rotas de reativação.
+3. **O item 5.5 (datas dos testes em fuso local) não existe.**
+   `resumo.test.js` e `graficoMensal.test.js` já derivavam o mês com
+   `getUTCFullYear`/`getUTCMonth`. Varredura por getters locais nos dois
+   arquivos: nenhum. **Descartado, nada implementado.**
+4. **O 2.5b não é mais alcançável pela API** depois da Parte 1.1: `PATCH
+   {ativo:false}` morreu, `deletarInstallment` já recusava com 409 havendo
+   pagamento ativo, e reativar pagamento exige parcela ativa. A correção
+   permanece como defesa em profundidade e como reparo de base já corrompida —
+   e o teste monta o estado por escrita direta, com o motivo escrito.
+
+**Um erro meu, pego pela asserção de guarda do próprio teste:** o teste da ordem
+do arredondamento usava `33.33% de 1000`, e `1000 * 33.33` dá exatamente 33330
+em ponto flutuante — as duas ordens coincidiam e o teste não provava nada. O
+`assert.notEqual` que existia justamente para isso reprovou o par, e o caso
+passou a ser `8.75% de 987654.32`, em que a ordem realmente aparece.
+
+**Não tocado:** `documentRenderService.js`, `letterheadService.js`, catálogo de
+variáveis, contrato das rotas do portal, envelope de `/auth`.
+**Nenhuma dependência nova** — `package.json` idêntico a `main` nos dois repos.
+Os ícones do PWA foram gerados por script descartável com o PIL do ambiente.
 
 ---
 

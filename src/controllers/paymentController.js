@@ -2,7 +2,6 @@ import paymentService from "../services/paymentService.js";
 import { emitirRecibo } from "../services/receiptService.js";
 import {
   validateCreatePayment,
-  validateUpdatePayment,
   validatePaymentId
 } from "../validations/paymentValidation.js";
 
@@ -28,8 +27,8 @@ const findAll = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { installmentId, processoId, formaPagamento } = req.query;
-    const result = await paymentService.findAll(req.user._id, { page, limit, installmentId, processoId, formaPagamento });
+    const { installmentId, processoId, formaPagamento, inativos } = req.query;
+    const result = await paymentService.findAll(req.user._id, { page, limit, installmentId, processoId, formaPagamento, inativos });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
@@ -56,7 +55,9 @@ const findById = async (req, res, next) => {
 
 const update = async (req, res, next) => {
   try {
-    const erros = [...validatePaymentId(req.params.id), ...validateUpdatePayment(req.body)];
+    // `validateUpdatePayment` saiu daqui na Fase 4.5 e passou ao service, junto
+    // com a allowlist: rodando antes dele, engolia a recusa de campo desconhecido.
+    const erros = validatePaymentId(req.params.id);
 
     if (erros.length > 0) {
       const err = new Error(erros[0]);
@@ -111,11 +112,21 @@ const baixarRecibo = async (req, res, next) => {
   }
 };
 
+const reativar = async (req, res, next) => {
+  try {
+    const payment = await paymentService.reativar(req.params.id, req.user._id);
+    return res.status(200).json(payment);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export default {
   create,
   findAll,
   findById,
   update,
+  reativar,
   remove,
   baixarRecibo
 };

@@ -7,7 +7,9 @@ import {
   validateFeeId
 } from "../validations/feeValidation.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { recalcularStatusFee } from "./paymentService.js";
+import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEC-027 (Fase 4.1) — as três peças que saíram no MESMO commit
@@ -165,7 +167,9 @@ const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const listFees = async (usuarioId, { page = 1, limit = 20, processoId, busca, tipo, status } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  if (processoId) filter.processoId = processoId;
+  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
+  const processoFiltro = filtroObjectId(processoId);
+  if (processoFiltro) filter.processoId = processoFiltro;
   if (busca && typeof busca === 'string') {
     const termo = busca.slice(0, 80).trim();
     if (termo) filter.descricao = new RegExp(escapeRegex(termo), 'i');
@@ -202,6 +206,11 @@ const getFeeById = async (feeId, usuarioId) => {
 };
 
 const updateFee = async (feeId, usuarioId, updateData) => {
+  // Allowlist da Fase 4.5 — `ativo` fora do corpo (achados #1/#2/#11).
+  const recusado = checarUpdate("fees", updateData);
+  if (recusado) {
+    throw erroDeCampo(recusado.mensagem, 400, recusado.campo ? [recusado.campo] : null);
+  }
   const idValidation = validateFeeId(feeId);
 
   if (!idValidation.isValid) {

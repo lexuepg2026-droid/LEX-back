@@ -3,6 +3,7 @@ import {
   listarInstallments,
   buscarInstallmentPorId,
   atualizarInstallment,
+  reativarInstallment,
   deletarInstallment
 } from "../services/installmentService.js";
 
@@ -19,8 +20,8 @@ export const getAllInstallments = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { processoId, status } = req.query;
-    const result = await listarInstallments(req.user._id, { page, limit, processoId, status });
+    const { processoId, status, inativos } = req.query;
+    const result = await listarInstallments(req.user._id, { page, limit, processoId, status, inativos });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
@@ -48,6 +49,15 @@ export const updateInstallment = async (req, res, next) => {
 export const deleteInstallment = async (req, res, next) => {
   try {
     const resultado = await deletarInstallment(req.user._id, req.params.id);
+    return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const reactivateInstallment = async (req, res, next) => {
+  try {
+    const resultado = await reativarInstallment(req.user._id, req.params.id);
     return res.status(200).json(resultado);
   } catch (error) {
     return next(error);

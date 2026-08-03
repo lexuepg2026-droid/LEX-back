@@ -43,10 +43,6 @@ export const validarCriacaoInstallment = (dados) => {
     erros.push("status inválido");
   }
 
-  if (dados.ativo !== undefined && typeof dados.ativo !== "boolean") {
-    erros.push("ativo deve ser booleano");
-  }
-
   return erros;
 };
 
