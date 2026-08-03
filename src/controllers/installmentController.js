@@ -3,6 +3,7 @@ import {
   listarInstallments,
   buscarInstallmentPorId,
   atualizarInstallment,
+  reativarInstallment,
   deletarInstallment
 } from "../services/installmentService.js";
 
@@ -48,6 +49,15 @@ export const updateInstallment = async (req, res, next) => {
 export const deleteInstallment = async (req, res, next) => {
   try {
     const resultado = await deletarInstallment(req.user._id, req.params.id);
+    return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const reactivateInstallment = async (req, res, next) => {
+  try {
+    const resultado = await reativarInstallment(req.user._id, req.params.id);
     return res.status(200).json(resultado);
   } catch (error) {
     return next(error);

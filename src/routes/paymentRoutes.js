@@ -16,6 +16,11 @@ router.get("/", paymentController.findAll);
 // sob demanda — ver `receiptService.js`.
 router.get("/:id/recibo", paymentController.baixarRecibo);
 
+// Reativação (Fase 4.5). Rota PRÓPRIA e não `PATCH { ativo: true }`: tem
+// guarda de integridade própria — pagamento só volta com a parcela ativa.
+// Declarada antes das genéricas de `/:id`, no padrão do arquivo.
+router.patch("/:id/reativar", paymentController.reativar);
+
 router.get("/:id", paymentController.findById);
 // PATCH é o verbo de update do projeto; PUT fica como alias depreciado, no
 // mesmo padrão de `/clients`, `/processes` e `/documents`.
