@@ -3,6 +3,7 @@ import Document from "../models/Document.js";
 import Process from "../models/Process.js";
 import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
+import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
 
 const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -72,7 +73,9 @@ export const createDocumentService = async (usuarioId, payload) => {
 export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  if (processoId) filter.processoId = processoId;
+  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
+  const processoFiltro = filtroObjectId(processoId);
+  if (processoFiltro) filter.processoId = processoFiltro;
   const [data, total] = await Promise.all([
     Document.find(filter)
       .populate("processoId", "titulo numeroProcesso status")
