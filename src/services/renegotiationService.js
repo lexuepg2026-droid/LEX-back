@@ -7,6 +7,7 @@ import Payment from "../models/Payment.js";
 import { autoAlocarSaldo, emCentavos, totalAlocadoDoFee } from "./allocationService.js";
 import { recalcularParcelas } from "./paymentService.js";
 import { ORIGEM_STATUS } from "./statusHistory.js";
+import { moeda } from "../utils/templateFormatters.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REPARCELAMENTO — DEC-037 (Fase F-1a)
@@ -51,7 +52,11 @@ const validarObjectId = (id, campo) => {
   }
 };
 
-const reais = (n) => `R$ ${Number(n).toFixed(2).replace(".", ",")}`;
+// Moeda para a PROSA da mensagem. Reaproveita `moeda` de
+// `utils/templateFormatters.js`, que é o formatador do projeto desde a Fase 2C
+// — `toFixed(2).replace(".", ",")` escrevia "R$ 6000,00", sem separador de
+// milhar, e é esta frase que a advogada lê no 422.
+const reais = (n) => moeda(Number(n));
 
 // O em aberto do honorário AGORA — a mesma fórmula da ficha financeira
 // (`contratado − pagoLiquidoAlocado − saldoAdiantado`), e de propósito: duas

@@ -3,6 +3,7 @@ import Reversal from "../models/Reversal.js";
 import Payment from "../models/Payment.js";
 import Fee from "../models/Fee.js";
 import Allocation from "../models/Allocation.js";
+import { moeda } from "../utils/templateFormatters.js";
 import {
   desalocarPorEstorno,
   planejarAlocacao,
@@ -118,7 +119,7 @@ export const criarEstorno = async (pagamentoId, dados, usuarioId) => {
   if (emCentavos(valor) > liquido) {
     throw erro(
       422,
-      `Este pagamento admite estorno de no máximo R$ ${liquido.toFixed(2).replace(".", ",")}. ` +
+      `Este pagamento admite estorno de no máximo ${moeda(liquido)}. ` +
         "Informe um valor até esse limite, ou estorne o restante em outro lançamento.",
       { errors: { estornavel: liquido }, regra: "estornoAcimaDoLiquido" }
     );

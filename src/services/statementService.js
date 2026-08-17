@@ -6,6 +6,7 @@ import Reversal from "../models/Reversal.js";
 import Allocation from "../models/Allocation.js";
 import Renegotiation from "../models/Renegotiation.js";
 import { emCentavos } from "./allocationService.js";
+import { moeda } from "../utils/templateFormatters.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXTRATO DO HONORÁRIO — `GET /api/fees/:id/statement` (Fase F-1a)
@@ -269,9 +270,9 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
   };
 };
 
-// Formatação de moeda para a PROSA da linha, não para o número — o número sai
-// cru em `valor`, e é ele que a tela formata. A frase existe porque o extrato
-// é lido, e "1500" no meio de uma sentença não se lê.
-const moeda = (n) => `R$ ${Number(n).toFixed(2).replace(".", ",")}`;
+// A formatação de moeda da PROSA vem de `utils/templateFormatters.js`, que é o
+// formatador do projeto desde a Fase 2C. O número sai cru em `valor`, e é ele
+// que a tela formata; a frase existe porque o extrato é lido, e "1500" no meio
+// de uma sentença não se lê.
 
 export default { montarExtrato, TIPO_EVENTO };
