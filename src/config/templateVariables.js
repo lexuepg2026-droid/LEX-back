@@ -243,6 +243,54 @@ export const MOTIVO_PENDENCIA = Object.freeze({
   ESCOLHA_PENDENTE: "escolhaPendente"
 });
 
+// ── A frase do topo do 422, por motivo dominante (Fase F-0) ────────────────
+//
+// O `message` do 422 era SEMPRE "há informações faltando no cadastro", mesmo
+// quando nenhuma pendência era campo vazio. Medido na auditoria de retomada:
+// gerar um modelo de pessoa jurídica para um cliente pessoa física devolvia 6
+// pendências, todas `tipoIncompativel`, sob um título dizendo que faltava
+// preencher cadastro. Não faltava nada no cadastro — o cadastro estava certo e
+// o modelo é que não servia.
+//
+// A Fase 4.6 resolveu isso NA TELA, separando os blocos por motivo. Mas o
+// `message` continua sendo o que qualquer outro consumidor lê: um `curl`, um
+// log, uma tela que ainda não exista. Uma frase que orienta para a ação errada
+// é o defeito que a 4.6 nomeou, e ele sobreviveu no topo da própria resposta.
+//
+// **Misto mantém a genérica**, de propósito: com pendências de motivos
+// diferentes, qualquer frase específica estaria certa sobre parte e errada
+// sobre o resto — e a lista abaixo dela conta a história completa.
+const FRASE_POR_MOTIVO = Object.freeze({
+  [MOTIVO_PENDENCIA.CAMPO_VAZIO]:
+    "Não é possível gerar o documento: há informações faltando no cadastro",
+  [MOTIVO_PENDENCIA.TIPO_INCOMPATIVEL]:
+    "Não é possível gerar o documento: este modelo não serve para o tipo de pessoa deste cliente",
+  [MOTIVO_PENDENCIA.TIPO_HONORARIO_INCOMPATIVEL]:
+    "Não é possível gerar o documento: o texto usa valores que o tipo deste honorário não tem",
+  [MOTIVO_PENDENCIA.PARCELAS_DESIGUAIS]:
+    "Não é possível gerar o documento: as parcelas deste honorário têm valores diferentes",
+  [MOTIVO_PENDENCIA.ESCOLHA_PENDENTE]:
+    "Não é possível gerar o documento: falta escolher qual honorário alimenta o texto"
+});
+
+const FRASE_GENERICA =
+  "Não é possível gerar o documento: há informações faltando no cadastro";
+
+// Devolve a frase do motivo quando TODAS as pendências compartilham o mesmo;
+// a genérica quando são de motivos diferentes, quando a lista está vazia ou
+// quando alguma pendência veio sem `motivo` (compatibilidade — nenhuma delas
+// vem assim hoje, mas adivinhar a partir de uma lista incompleta seria
+// exatamente o erro que este bloco existe para corrigir).
+export const mensagemDePendencias = (pendencias = []) => {
+  if (!Array.isArray(pendencias) || pendencias.length === 0) return FRASE_GENERICA;
+
+  const motivos = new Set(pendencias.map((p) => p?.motivo));
+  if (motivos.size !== 1) return FRASE_GENERICA;
+
+  const [unico] = motivos;
+  return FRASE_POR_MOTIVO[unico] ?? FRASE_GENERICA;
+};
+
 
 export const NOMES_VARIAVEIS = Object.keys(CATALOGO_VARIAVEIS);
 

@@ -116,9 +116,30 @@ export const CAMPOS_UPDATE = Object.freeze({
   // `processes`: é recusado logo depois com mensagem própria, que manda criar
   // modelo por `POST /documents/modelos`. Tirá-lo daqui trocaria aquela
   // orientação pela genérica de campo desconhecido.
+  //
+  // ── `urlArquivo`, `tamanho` e `dataUpload` SAÍRAM na Fase F-0 ────────────
+  //
+  // A decisão 16 do módulo de documentos diz que o caminho de upload fica
+  // DORMENTE: o campo `origem` existe, o anteprojeto assinado exclui upload do
+  // escopo, e a interface não o oferece. A allowlist, porém, mantinha os três
+  // campos abertos, e a auditoria de retomada mediu a consequência:
+  //
+  //     PATCH /documents/<gerado> { urlArquivo, tamanho, dataUpload } → 200
+  //     GET   /documents/<gerado> → origem: "gerado", urlArquivo: "https://…"
+  //
+  // Um documento GERADO passava a declarar que veio de um arquivo enviado.
+  // Não é vulnerabilidade — é o dono dos próprios dados —, mas é estado
+  // incoerente aceito em silêncio num módulo cuja tese inteira é que documento
+  // gerado é congelado e rastreável até a origem.
+  //
+  // Dormente passa a significar fechado para ESCRITA também. `origem` fica,
+  // porque a validação já o recusa com mensagem própria ("urlArquivo é
+  // obrigatório quando origem é upload") — e essa frase diz mais do que a
+  // genérica de campo desconhecido. Quando o upload sair da dormência, os três
+  // voltam junto com a tela que os preenche.
   documents: Object.freeze([
     "processoId", "nome", "tipo", "descricao", "origem", "visivelPortal",
-    "urlArquivo", "tamanho", "dataUpload", "ehModelo"
+    "ehModelo"
   ])
 });
 

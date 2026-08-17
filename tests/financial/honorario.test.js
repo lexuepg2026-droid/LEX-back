@@ -376,4 +376,74 @@ describe("honorário — DEC-027", () => {
       ["pendente", "parcialmente_pago", "pago", "cancelado"]
     );
   });
+// ═════════════════════════════════════════════════════════════════════════
+  // 12 — O SEPARADOR entre erros de validação (Fase F-0)
+  //
+  // `erroDeValidacao` juntava os erros com ", ". Vários deles CONTÊM vírgula:
+  // `tipo inválido. Use: fixo, percentual, custas` e `status inválido. Use:
+  // pendente, parcialmente_pago, pago, cancelado`. Com dois erros, a frase
+  // saía assim:
+  //
+  //   "status inválido. Use: pendente, parcialmente_pago, pago, cancelado,
+  //    dataVencimento é obrigatória"
+  //
+  // que se lê como se `dataVencimento é obrigatória` fosse mais um valor
+  // válido de status. Gramaticalmente correta, apontando para o lugar errado —
+  // o defeito que a Fase 4.6 nomeou, sobrevivendo no separador.
+  // ═════════════════════════════════════════════════════════════════════════
+  describe("12. a lista do enum não se funde com o erro seguinte", () => {
+    test("dois erros, sendo um com enum: a fronteira entre eles é inequívoca", async () => {
+      // `status` inválido (mensagem com vírgulas) + `dataVencimento` ausente.
+      const r = await api.post("/fees", {
+        processoId: processo._id,
+        descricao: "Honorário com dois erros",
+        valor: 100,
+        tipo: "fixo",
+        status: "inventado"
+      });
+
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+
+      const ultimoValor = "cancelado";
+      assert.doesNotMatch(
+        r.body.message,
+        new RegExp(`${ultimoValor},\\s*dataVencimento`),
+        "o último valor do enum não pode ser seguido de vírgula e do erro seguinte — " +
+        `a lista se funde e vira "…, ${ultimoValor}, dataVencimento é obrigatória". Veio: "${r.body.message}"`
+      );
+
+      assert.match(
+        r.body.message, /;/,
+        `os erros precisam de um separador que não apareça DENTRO deles. Veio: "${r.body.message}"`
+      );
+
+      // A prova que não depende de redação: o array vem junto, e cada erro é
+      // um item — a tela que quiser listar um por linha não desfaz concatenação.
+      assert.ok(Array.isArray(r.body.errors), `errors deveria ser array — ${JSON.stringify(r.body.errors)}`);
+      assert.equal(r.body.errors.length, 2, JSON.stringify(r.body.errors));
+      assert.ok(
+        r.body.errors.some((e) => /^status inválido/.test(e)),
+        JSON.stringify(r.body.errors)
+      );
+      assert.ok(
+        r.body.errors.some((e) => /dataVencimento/.test(e)),
+        JSON.stringify(r.body.errors)
+      );
+    });
+
+    test("erro único continua sendo uma frase limpa, sem separador sobrando", async () => {
+      const r = await api.post("/fees", {
+        processoId: processo._id,
+        descricao: "Só um erro",
+        valor: 100,
+        tipo: "fixo",
+        dataVencimento: "2026-12-31",
+        status: "inventado"
+      });
+
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+      assert.equal(r.body.errors.length, 1, JSON.stringify(r.body.errors));
+      assert.doesNotMatch(r.body.message, /;/, `sem separador com um erro só — veio: "${r.body.message}"`);
+    });
+  });
 });

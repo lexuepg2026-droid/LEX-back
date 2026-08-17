@@ -22,6 +22,8 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 
+import { logError } from "../../src/utils/logError.js";
+
 // Precisa vir antes de qualquer import que carregue `src/app.js`.
 import "../helpers/env.js";
 
@@ -163,5 +165,94 @@ describe("preparo de produção — cabeçalhos, x-powered-by e proxy", () => {
       outro.status, 429,
       "IP encaminhado diferente precisa ter balde próprio — senão um cliente derruba o login de todos"
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOG DE 5xx EM PRODUÇÃO (Fase F-0)
+//
+// `errorMiddleware` imprimia o erro completo, com stack, mas guardado atrás de
+// `if (NODE_ENV !== "production")`. Em produção, portanto, um 500 não deixava
+// rastro NENHUM: a advogada relataria "deu erro ao salvar" e não haveria onde
+// olhar.
+//
+// O teste exercita a função direto, capturando `console.error`, e não por HTTP:
+// pôr a suíte em produção para provocar um 500 real mudaria cookie (`Secure`),
+// HSTS e rate limit no meio do arquivo. O que precisa ser provado aqui é o que
+// a linha CONTÉM e o que ela NÃO contém.
+// ═══════════════════════════════════════════════════════════════════════════
+describe("log de erro de produção", () => {
+  const capturar = (fn) => {
+    const original = console.error;
+    const linhas = [];
+    console.error = (...args) => linhas.push(args.join(" "));
+    try { fn(); } finally { console.error = original; }
+    return linhas;
+  };
+
+  const reqFalso = {
+    method: "PATCH",
+    baseUrl: "/api/clients",
+    route: { path: "/:id" },
+    // Tudo abaixo é o que NÃO pode vazar para o log.
+    body: { cpf: "52998224725", nomeCompleto: "Fulana de Tal", telefone: "42999990000" },
+    query: { busca: "fulana" },
+    headers: { cookie: "lex-token=abc.def.ghi" },
+    user: { _id: "6a824d59a9e97ba4c9d0bc83", email: "demo@lex.dev" }
+  };
+
+  test("4xx não é logado — conversa normal da API não é incidente", () => {
+    const linhas = capturar(() => logError(new Error("Cliente não encontrado"), reqFalso, 404));
+    assert.deepEqual(linhas, [], "logar todo 4xx afogaria o 500 de verdade no meio do esperado");
+  });
+
+  test("5xx é logado com quando, onde e o quê", () => {
+    const linhas = capturar(() => logError(new Error("falha no driver"), reqFalso, 500));
+
+    assert.ok(linhas.length >= 1, "um 500 precisa deixar rastro");
+    const resumo = linhas[0];
+
+    assert.match(resumo, /status=500/);
+    assert.match(resumo, /metodo=PATCH/);
+    assert.match(resumo, /falha no driver/);
+    // Carimbo de tempo ISO no começo da linha.
+    assert.match(resumo, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+
+  test("a rota é o PADRÃO, não a URL com id real dentro", () => {
+    const linhas = capturar(() => logError(new Error("x"), reqFalso, 500));
+    assert.match(
+      linhas[0], /rota=\/api\/clients\/:id/,
+      "o id identifica um cliente real; a pergunta que o log responde é qual endpoint quebrou"
+    );
+  });
+
+  test("NADA de corpo, query, cookie ou usuário entra na linha", () => {
+    const linhas = capturar(() => logError(new Error("x"), reqFalso, 500)).join("\n");
+
+    const proibidos = [
+      ["52998224725", "CPF do corpo"],
+      ["Fulana de Tal", "nome do corpo"],
+      ["42999990000", "telefone do corpo"],
+      ["fulana", "termo da query"],
+      ["lex-token", "cookie de sessão"],
+      ["demo@lex.dev", "e-mail do usuário"],
+      ["6a824d59a9e97ba4c9d0bc83", "id do usuário"]
+    ];
+
+    for (const [valor, oQueE] of proibidos) {
+      assert.ok(
+        !linhas.includes(valor),
+        `${oQueE} vazou para o log. Log sobrevive ao incidente, é copiado para triagem e ` +
+        "raramente é apagado — dado pessoal ali vaza por um caminho que ninguém audita."
+      );
+    }
+  });
+
+  test("erro sem stack e requisição ausente não derrubam o logger", () => {
+    // O logger roda DENTRO do handler de erro. Se ele lançar, o 500 vira uma
+    // exceção não tratada e o cliente não recebe resposta nenhuma.
+    assert.doesNotThrow(() => capturar(() => logError({ message: "sem stack" }, undefined, 500)));
+    assert.doesNotThrow(() => capturar(() => logError(undefined, undefined, 500)));
   });
 });

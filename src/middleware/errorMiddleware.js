@@ -5,6 +5,8 @@
 // path `endereco.estado`"): erro de cliente reportado como falha de servidor,
 // vazando nomes de path e tipos internos do schema na resposta.
 
+import { logError } from "../utils/logError.js";
+
 const CAMPOS_LEGIVEIS = {
   email: "e-mail",
   cpf: "CPF",
@@ -136,6 +138,15 @@ const errorHandler = (err, req, res, next) => {
   const status = err.statusCode || 500;
   // Um 500 que não foi atribuído por nós pode carregar detalhe interno.
   const message = err.statusCode ? err.message : "Erro interno do servidor";
+
+  // Em produção, o único rastro do incidente (Fase F-0). O bloco de
+  // desenvolvimento lá em cima continua imprimindo o erro inteiro; este só
+  // dispara em 5xx e não carrega corpo, query nem dado de usuário — ver
+  // `utils/logError.js`. Fica ANTES do `res.json` de propósito: se a
+  // serialização da resposta falhar, o log já saiu.
+  if (process.env.NODE_ENV === "production") {
+    logError(err, req, status);
+  }
 
   const body = { message: message || "Erro interno do servidor" };
   if (err.errors) body.errors = err.errors;

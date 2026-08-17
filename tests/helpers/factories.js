@@ -216,14 +216,16 @@ export const dadosModelo = (extra = {}) => ({
   ...extra
 });
 
-// `origem` cai em "upload" quando omitida, e aí `urlArquivo` é obrigatório
-// (`documentValidation.js:100`). O caminho de upload está dormente na
-// interface (decisão 16), mas a API continua aceitando — é por ele que a
-// suíte cria documento avulso sem passar pela geração.
-export const dadosDocumento = (processoId, extra = {}) => ({
-  nome: `Documento de Teste ${randomUUID().slice(0, 8)}`,
-  tipo: "outro",
-  processoId,
-  urlArquivo: "https://arquivos.lex.test/documento.pdf",
-  ...extra
-});
+// `dadosDocumento` foi REMOVIDA na Fase F-0.
+//
+// Montava o payload de um documento pelo caminho de upload, e não tinha
+// chamador: os três testes que criam documento avulso
+// (`portal/consulta.test.js`, e duas vezes `isolation/tenant.test.js`) escrevem
+// o corpo inline — e escrevem de propósito, porque o `nome` de cada um é a
+// descrição do caso ("Upload da advogada", "Documento próprio de B",
+// "Documento de B sobre processo de A"). Um nome aleatório de fábrica apagaria
+// essa informação da saída do teste.
+//
+// Somado à Parte 4 desta fase, que fechou os campos de upload para PATCH: o
+// caminho está mais dormente do que antes, e criar indireção compartilhada
+// sobre ele agora seria antecipar uma tela que o anteprojeto exclui do escopo.

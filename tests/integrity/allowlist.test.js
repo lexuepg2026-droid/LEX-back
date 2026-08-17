@@ -204,6 +204,100 @@ describe("allowlist de PATCH — `ativo` fora do corpo em todas as entidades", (
   });
 
   // ═════════════════════════════════════════════════════════════════════════
+  // 5b — O caminho de upload está DORMENTE também para escrita (Fase F-0)
+  //
+  // A decisão 16 diz que upload está fora do escopo e a interface não o
+  // oferece. A allowlist, porém, deixava `urlArquivo`, `tamanho` e `dataUpload`
+  // abertos no PATCH, e a auditoria de retomada mediu o resultado contra o
+  // seed:
+  //
+  //     PATCH /documents/<gerado> { urlArquivo, tamanho, dataUpload } → 200
+  //     GET   /documents/<gerado> → origem "gerado", urlArquivo "https://…"
+  //
+  // Um documento GERADO passava a declarar que veio de arquivo enviado — estado
+  // incoerente aceito em silêncio, num módulo cuja tese é que documento gerado
+  // é congelado e rastreável até a origem.
+  // ═════════════════════════════════════════════════════════════════════════
+  const docId = () => alvos.find((a) => a.rota === "documents").id;
+
+  test("os três campos de upload são recusados no PATCH de documento", async () => {
+    const casos = [
+      ["urlArquivo", { urlArquivo: "https://arquivos.lex.test/injetado.pdf" }],
+      ["tamanho", { tamanho: 123 }],
+      ["dataUpload", { dataUpload: "2026-01-01" }]
+    ];
+
+    for (const [campo, corpo] of casos) {
+      const r = await api.patch(`/documents/${docId()}`, corpo);
+
+      assert.equal(
+        r.status, 400,
+        `PATCH /documents { ${campo} }: o caminho de upload está dormente e não se escreve por aqui`
+      );
+      assert.equal(r.body.campo, campo, `o 400 precisa nomear "${campo}"`);
+    }
+
+    // Os três juntos, que é a forma medida na auditoria.
+    const juntos = await api.patch(`/documents/${docId()}`, {
+      urlArquivo: "https://arquivos.lex.test/injetado.pdf",
+      tamanho: 123,
+      dataUpload: "2026-01-01"
+    });
+    assert.equal(juntos.status, 400, "os três juntos também são recusados");
+  });
+
+  test("o documento não foi contaminado pela tentativa", async () => {
+    // A recusa precisa ser recusa, e não 400 depois de gravar.
+    //
+    // A comparação é ANTES × DEPOIS, e não contra `undefined`: `dataUpload` tem
+    // `default: Date.now` no model (`Document.js:88`), então todo documento
+    // nasce com ela preenchida. Afirmar "é undefined" passaria a descrever o
+    // default, não a recusa — e continuaria passando se o PATCH voltasse a
+    // gravar, desde que gravasse a mesma data.
+    const antes = esperado(
+      await api.get(`/documents/${docId()}`),
+      200, "documento antes da tentativa"
+    );
+
+    const injetado = {
+      urlArquivo: "https://arquivos.lex.test/contaminado.pdf",
+      tamanho: 999,
+      dataUpload: "2020-01-01"
+    };
+    assert.equal((await api.patch(`/documents/${docId()}`, injetado)).status, 400);
+
+    const depois = esperado(
+      await api.get(`/documents/${docId()}`),
+      200, "documento depois da tentativa"
+    );
+
+    assert.equal(depois.urlArquivo, antes.urlArquivo, "`urlArquivo` não pode ter mudado");
+    assert.equal(depois.tamanho, antes.tamanho, "`tamanho` não pode ter mudado");
+    assert.equal(depois.dataUpload, antes.dataUpload, "`dataUpload` não pode ter mudado");
+
+    // E, especificamente, nada do que foi enviado entrou.
+    assert.notEqual(depois.urlArquivo, injetado.urlArquivo);
+    assert.notEqual(depois.tamanho, injetado.tamanho);
+  });
+
+  test("nenhuma allowlist declara campo de upload", () => {
+    for (const campo of ["urlArquivo", "tamanho", "dataUpload"]) {
+      assert.ok(
+        !CAMPOS_UPDATE.documents.includes(campo),
+        `"${campo}" voltou à allowlist de documents — o upload continua dormente (decisão 16)`
+      );
+    }
+
+    // `origem` FICA, de propósito: a validação já o recusa com mensagem
+    // própria ("urlArquivo é obrigatório quando origem é upload"), que diz mais
+    // do que a genérica de campo desconhecido.
+    assert.ok(
+      CAMPOS_UPDATE.documents.includes("origem"),
+      "`origem` sai da allowlist só junto com a tela de upload — ver o comentário em camposPermitidos.js"
+    );
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
   // 6 — `validateUpdatePayment` mora no SERVICE (achado de passagem da 4.5)
   //
   // Rodando no controller, ela corria ANTES da allowlist e a engolia: com
