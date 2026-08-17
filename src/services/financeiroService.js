@@ -5,6 +5,7 @@ import Installment from "../models/Installment.js";
 import Allocation from "../models/Allocation.js";
 import Payment from "../models/Payment.js";
 import Reversal from "../models/Reversal.js";
+import Renegotiation from "../models/Renegotiation.js";
 import Document from "../models/Document.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -98,6 +99,17 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
     .populate("pagamentoId", "valor data formaPagamento tipo observacoes")
     .sort({ data: 1, createdAt: 1 });
 
+  // A DATA de cada reparcelamento, para a parcela substituída poder dizer por
+  // qual operação ela saiu. Uma consulta para o processo inteiro — a ficha não
+  // pode custar uma ida ao banco por parcela cancelada.
+  const reparcelamentos = await Renegotiation.find({
+    honorarioId: { $in: feeIds },
+    usuarioId
+  }).select("data");
+  const dataDoReparcelamento = new Map(
+    reparcelamentos.map((r) => [String(r._id), r.data])
+  );
+
   const alocacoesPorParcela = new Map();
   for (const alocacao of alocacoes) {
     const chave = String(alocacao.parcelaId);
@@ -128,10 +140,37 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
       valorPago: parcela.valorPago,
       // Quanto falta nesta parcela. Sai calculado pelo mesmo motivo dos
       // totais: é a coluna que a tela mais quer e a que ela mais erraria.
-      emAberto: emCentavos(Number(parcela.valor) - Number(parcela.valorPago || 0)),
+      //
+      // ── PISO EM ZERO (DEC-040, F-1a.1) ───────────────────────────────────
+      // O motor nunca aloca mais do que a parcela comporta, então este número
+      // não deveria poder ser negativo. Mas o caminho existe: `PATCH
+      // /installments/:id { valor }` aceita reduzir o valor da parcela DEPOIS
+      // de ela ter recebido alocação, e aí `valorPago` fica maior que `valor`.
+      // Sem o piso, a parcela exibiria "em aberto −R$ 500,00" e o número
+      // entraria em `aReceberNoMes` e `valorVencido` abatendo outras parcelas.
+      //
+      // O excedente não some por causa do piso: ele continua visível em
+      // `valorPago`, que é maior que `valor` — e é ali que a advogada vê que
+      // recebeu mais do que cobrou.
+      emAberto: Math.max(0, emCentavos(Number(parcela.valor) - Number(parcela.valorPago || 0))),
       dataVencimento: parcela.dataVencimento,
       dataPagamento: parcela.dataPagamento,
       status: parcela.status,
+      // ── O vínculo do reparcelamento (F-1a.1) ─────────────────────────────
+      //
+      // Sem este campo a ficha não distingue "cancelada por reparcelamento" de
+      // "cancelada avulsa" — e exibia "em aberto R$ 2.250,00" numa parcela que
+      // foi substituída, mostrando dívida que não existe. Não entrava em soma
+      // nenhuma; o problema era só de leitura, e leitura é o que a ficha é.
+      //
+      // `null` quando não houve reparcelamento, nunca omitido: campo ausente e
+      // campo vazio são coisas diferentes para quem monta a tela.
+      reparcelamentoId: parcela.reparcelamentoId ?? null,
+      // A data da operação que a substituiu, para a tela escrever a frase sem
+      // buscar o reparcelamento. `null` quando não houve.
+      reparceladaEm: parcela.reparcelamentoId
+        ? dataDoReparcelamento.get(String(parcela.reparcelamentoId)) ?? null
+        : null,
       // `alocacoes` substitui `pagamentos` (F-1a). O nome mudou porque a coisa
       // mudou: não são os pagamentos da parcela, são os pedaços de pagamento
       // que encostaram nela — e um mesmo pagamento pode aparecer em duas.
@@ -154,28 +193,36 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
   const linhas = honorarios.map((fee) => {
     const parcelasDoFee = parcelasPorHonorario.get(String(fee._id)) ?? [];
 
-    // ── A INVARIANTE DA FICHA (F-1a) ──────────────────────────────────────
+    // ── EM ABERTO TEM PISO ZERO; CRÉDITO É CAMPO PRÓPRIO (DEC-040) ────────
     //
-    //     contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto
+    //     emAberto = max(0, contratado − pagoLiquidoAlocado)
     //
-    // `pagoLiquidoAlocado` é a soma das alocações ATIVAS — o dinheiro que
-    // encontrou parcela e não voltou por estorno. `saldoAdiantado` é o que
-    // entrou e ainda não achou destino. Os dois são dinheiro no caixa da
-    // advogada; o que os separa é só ter ou não uma parcela apontada.
+    // **O `saldoAdiantado` NÃO entra nesta conta.** Ele é o crédito, e sai
+    // nomeado ao lado — nunca somado dentro de recebido, nunca subtraído do
+    // em aberto.
     //
-    // Por isso os DOIS abatem o em aberto. Contar só o alocado faria um
-    // honorário integralmente adiantado aparecer como devendo tudo, no dia
-    // seguinte ao cliente ter pago — que é o erro que a advogada notaria
-    // primeiro e confiaria menos depois.
+    // ── A fórmula anterior estava errada, e o erro tinha direção ──────────
+    // A F-1a calculava `contratado − pagoLiquidoAlocado − saldoAdiantado` e
+    // aceitava resultado negativo, com o argumento de que zerar no piso
+    // "esconderia dinheiro da cliente". A preocupação era certa; a execução,
+    // não — o negativo PROPAGAVA para a soma do processo, e ali um crédito de
+    // um honorário abatia a dívida de outro.
     //
-    // `emAberto` sai da FÓRMULA, e não de uma segunda soma sobre as parcelas.
-    // Duas fórmulas para a mesma pergunta divergem, e esta é a mesma razão
-    // pela qual `pendente` do resumo é `contratado − recebido` (Fase 4.3).
+    // Medido no smoke test de 17/08/2026: processo com contratado 10.500 e
+    // recebido 7.500 exibindo em aberto 2.500, quando a cliente devia 3.000.
+    // Um honorário com −500 de crédito comia 500 da dívida do vizinho. O
+    // dinheiro fechava (nada sumia), mas a leitura mentia — e mentia **a favor
+    // do cliente**, num módulo que imprime recibo assinado.
     //
-    // Pode dar NEGATIVO, e é honesto: um honorário que recebeu mais do que foi
-    // contratado tem crédito, e zerar no piso esconderia dinheiro da cliente.
+    // Crédito é do honorário onde foi gerado. Ele aparece em
+    // `saldoAdiantado`, com nome, e não como desconto silencioso em outro
+    // lugar da árvore.
     const pagoLiquidoAlocado = somar(parcelasDoFee, "valorPago");
     const saldoAdiantado = emCentavos(fee.saldoAdiantado || 0);
+    const emAbertoDoFee = Math.max(
+      0,
+      emCentavos(Number(fee.valor) - pagoLiquidoAlocado)
+    );
 
     return {
       _id: fee._id,
@@ -202,7 +249,7 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
         pago: pagoLiquidoAlocado,
         pagoLiquidoAlocado,
         saldoAdiantado,
-        emAberto: emCentavos(Number(fee.valor) - pagoLiquidoAlocado - saldoAdiantado)
+        emAberto: emAbertoDoFee
       },
       parcelas: parcelasDoFee,
       documentos: documentosPorHonorario.get(String(fee._id)) ?? []
@@ -219,6 +266,17 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
   const contratado = somar(vigentes.map((l) => l.totais), "contratado");
   const pago = somar(vigentes.map((l) => l.totais), "pagoLiquidoAlocado");
   const saldoAdiantado = somar(vigentes.map((l) => l.totais), "saldoAdiantado");
+  // ── A soma do processo é Σ DAS LINHAS, não uma fórmula própria (DEC-040) ─
+  //
+  // Cada `emAberto` de honorário já vem com piso zero, então somá-los é o que
+  // impede o crédito de um de abater a dívida de outro. Recalcular aqui por
+  // `contratado − pago` reintroduziria exatamente o defeito, porque a
+  // subtração global não conhece a fronteira entre os honorários.
+  //
+  // É a inversão da nota que estava aqui até a F-1a ("sair da fórmula garante
+  // que continue dando"): a fórmula global e a soma das linhas NÃO dão o mesmo
+  // número quando há crédito, e a que descreve a dívida é a soma das linhas.
+  const emAbertoDoProcesso = somar(vigentes.map((l) => l.totais), "emAberto");
 
   return {
     processo: {
@@ -233,10 +291,7 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
       pago,
       pagoLiquidoAlocado: pago,
       saldoAdiantado,
-      // A mesma invariante, um nível acima. Somar os `emAberto` das linhas
-      // daria o mesmo número; sair da fórmula garante que continue dando,
-      // mesmo se um dia a lista de linhas ganhar recorte.
-      emAberto: emCentavos(contratado - pago - saldoAdiantado),
+      emAberto: emAbertoDoProcesso,
       // Contagens: a tela mostra "3 honorários, 1 cancelado" sem recontar o
       // array — e sem errar a conta quando um dia houver recorte.
       honorarios: linhas.length,

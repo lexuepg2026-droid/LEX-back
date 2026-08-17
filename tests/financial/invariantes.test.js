@@ -7,10 +7,14 @@
 //
 // As três invariantes, na forma da F-1a:
 //
-//   1. `contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto`, na ficha
-//      do processo, nos dois níveis em que ela soma. O terceiro termo é novo:
-//      dinheiro que entrou e ainda não achou parcela abate o em aberto tanto
-//      quanto o alocado — os dois estão no caixa da advogada.
+//   1. `emAberto = max(0, contratado − pagoLiquidoAlocado)` (DEC-040), na
+//      ficha do processo, nos dois níveis em que ela soma — e o total do
+//      processo é a SOMA das linhas, não uma subtração global. O
+//      `saldoAdiantado` NÃO participa: é crédito, sai nomeado.
+//
+//      A forma anterior (`contratado − pago − saldo`, aceitando negativo) era
+//      da F-1a e foi revogada na F-1a.1: o negativo propagava, e o crédito de
+//      um honorário abatia a dívida de outro na soma do processo.
 //   2. `Installment.valorPago = Σ ALOCAÇÕES ativas da parcela`. O campo é
 //      desnormalizado (Fase 4.1) e tem um único ponto de escrita; a soma é
 //      REFEITA a cada recálculo, nunca incrementada — é isso que faz o estorno
@@ -77,22 +81,28 @@ describe("invariantes do financeiro", () => {
   const conferirInvariantes = async (rotulo) => {
     const f = await ficha();
 
-    // 1. contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto
+    // 1. emAberto = max(0, contratado − pago), com piso, e o total do
+    //    processo é a SOMA das linhas vigentes (DEC-040).
+    const vigentes = f.honorarios.filter((h) => h.status !== "cancelado");
     assert.equal(
-      centavos(f.totais.contratado)
-        - centavos(f.totais.pagoLiquidoAlocado)
-        - centavos(f.totais.saldoAdiantado),
+      vigentes.reduce((acc, h) => acc + centavos(h.totais.emAberto), 0),
       centavos(f.totais.emAberto),
-      `${rotulo}: totais da ficha não fecham`
+      `${rotulo}: o total do processo não é a soma dos honorários vigentes`
+    );
+    assert.ok(
+      f.totais.emAberto >= 0,
+      `${rotulo}: em aberto do processo ficou negativo (${f.totais.emAberto})`
     );
 
     for (const h of f.honorarios) {
       assert.equal(
-        centavos(h.totais.contratado)
-          - centavos(h.totais.pagoLiquidoAlocado)
-          - centavos(h.totais.saldoAdiantado),
+        Math.max(0, centavos(h.totais.contratado) - centavos(h.totais.pagoLiquidoAlocado)),
         centavos(h.totais.emAberto),
         `${rotulo}: honorário "${h.descricao}" não fecha`
+      );
+      assert.ok(
+        h.totais.emAberto >= 0,
+        `${rotulo}: honorário "${h.descricao}" com em aberto negativo`
       );
 
       // 2. valorPago = Σ ALOCAÇÕES ativas, parcela a parcela.
@@ -222,8 +232,8 @@ describe("invariantes do financeiro", () => {
   });
 
   test("invariantes sobrevivem a saldo adiantado que ainda não achou parcela", async () => {
-    // O caso que a fórmula antiga (`contratado − pago`) erraria: o dinheiro
-    // entrou, não há parcela nenhuma, e o honorário não deve mais nada.
+    // O crédito existe, tem nome, e NÃO abate a cobrança até encontrar
+    // parcela. É o caso que a fórmula da F-1a acertava por acidente.
     const honorario = await criarHonorario(api, processo._id, { valor: 500, tipo: "fixo" });
     await criarPagamento(api, honorario._id, { valor: 500, tipo: "adiantamento" });
 
@@ -232,7 +242,13 @@ describe("invariantes do financeiro", () => {
 
     assert.equal(centavos(h.totais.saldoAdiantado), centavos(500));
     assert.equal(centavos(h.totais.pagoLiquidoAlocado), 0, "não há parcela para alocar");
-    assert.equal(centavos(h.totais.emAberto), 0, "quem adiantou tudo não deve nada");
+    // ── DEC-040 ────────────────────────────────────────────────────────────
+    // Era `emAberto: 0`, com o argumento "quem adiantou tudo não deve nada".
+    // O número saía certo pelo caminho errado — o crédito era SUBTRAÍDO —, e o
+    // mesmo caminho produzia negativo no honorário seguinte. Sem parcela
+    // emitida, a cobrança está inteira em aberto; o crédito é o que vai
+    // quitá-la quando a parcela nascer, e por isso sai nomeado ao lado.
+    assert.equal(centavos(h.totais.emAberto), centavos(500), "a cobrança segue em aberto");
 
     // E quando a parcela nasce, o saldo migra para ela sem alterar o em aberto.
     await criarParcela(api, honorario._id, 1, { valor: 500, dataVencimento: "2026-05-10" });

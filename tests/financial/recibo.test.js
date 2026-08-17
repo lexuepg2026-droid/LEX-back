@@ -223,8 +223,14 @@ describe("recibo de pagamento", () => {
     const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 900 });
 
     const texto = extrairTextoDoPdf((await api.get(`/payments/${pg._id}/recibo`)).bytes);
+    // ── FORMATO ATUALIZADO pela DEC-041 (F-1a.1) ─────────────────────────
+    //
+    // Era "parcelas 1 e 2 de 2". Passou a enumerar o VALOR que foi para cada
+    // uma — sem isso, o total do recibo não descreve o que cada parcela
+    // recebeu, que é o defeito que a DEC-041 fechou. A propriedade sob teste
+    // é a mesma: um pagamento que cobre duas parcelas nomeia as duas.
     assert.ok(
-      texto.includes("parcelas 1 e 2 de 2"),
+      texto.includes("na parcela 1 de 2") && texto.includes("na parcela 2 de 2"),
       "o recibo precisa dizer as duas parcelas — a frase antiga só sabia falar de uma"
     );
   });
@@ -252,5 +258,153 @@ describe("recibo de pagamento", () => {
 
     const bruto = JSON.stringify(depois.data);
     assert.ok(!/recibo/i.test(bruto), "apareceu algo chamado recibo na lista de documentos");
+  });
+  // ═════════════════════════════════════════════════════════════════════════
+  // DEC-041 — O RECIBO DESCREVE A ALOCAÇÃO (F-1a.1)
+  //
+  // Os cinco casos, com o texto extraído do PDF de verdade. O defeito que os
+  // originou está no cabeçalho de `descreverDestino`: um recibo de R$ 7.000,00
+  // dizia "parcela 2 de 2" e dava plena e geral quitação, quando só R$ 1.500,00
+  // tinham ido para aquela parcela.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("DEC-041 — o recibo descreve a alocação", () => {
+    // ── As asserções miram o trecho MINÚSCULO da frase, e há motivo ───────
+    //
+    // `extrairTextoDoPdf` (`tests/helpers/pdfText.js`) é o extrator escrito à
+    // mão na Fase 2E.2 sobre `node:zlib` e o ToUnicode CMap, sem instalar
+    // nada. Ele lê bem minúsculas, dígitos e pontuação, e EMBARALHA
+    // maiúsculas em fonte com subconjunto: "PARCIAL" sai "PLRCILG" no texto
+    // extraído.
+    //
+    // O PDF está certo — quem lê o arquivo vê "PARCIAL". A limitação é da
+    // ferramenta de teste, e por isso a asserção usa o trecho que ela lê com
+    // fidelidade. Mirar a palavra em caixa alta daria um teste que reprova
+    // sozinho e empurraria a "correção" para dentro do documento jurídico.
+    const QUITACAO_PLENA = /plena e geral/i;
+    const QUITACAO_PARCIAL = /efetivamente recebido/i;
+
+    const textoDoRecibo = async (pagamentoId) => {
+      const r = await api.get(`/payments/${pagamentoId}/recibo`);
+      assert.equal(r.status, 200, `recibo — ${JSON.stringify(r.body)}`);
+      return extrairTextoDoPdf(r.bytes);
+    };
+
+    test("1. uma alocação que QUITA a parcela: texto preservado e quitação plena", async () => {
+      // O caso comum, e o que a fase não podia mexer. A frase continua sendo
+      // "parcela N de M", sem enumerar valor — um destino só não precisa.
+      const fee = await criarHonorario(api, processo._id, { valor: 2000, descricao: "Duas parcelas iguais" });
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: AMANHA });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(texto.includes("parcela 1 de 2"), "a referência simples se perdeu");
+      assert.ok(!/na parcela 1 de 2/.test(texto), "não enumera valor quando há um destino só");
+      assert.match(texto, QUITACAO_PLENA, "quitou a parcela inteira e não sobrou nada");
+    });
+
+    test("2. múltiplas alocações: enumera valor por parcela", async () => {
+      const fee = await criarHonorario(api, processo._id, { valor: 3000, descricao: "Cobre duas de uma vez" });
+      await criarParcela(api, fee._id, 1, { valor: 1500, dataVencimento: AMANHA });
+      await criarParcela(api, fee._id, 2, { valor: 1500, dataVencimento: AMANHA });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 3000 });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(
+        texto.includes("na parcela 1 de 2") && texto.includes("na parcela 2 de 2"),
+        "as duas parcelas precisam ser nomeadas com o respectivo valor"
+      );
+      assert.ok(
+        (texto.match(/1\.500,00/g) || []).length >= 2,
+        "cada parcela precisa trazer o valor que foi para ela"
+      );
+      assert.match(texto, QUITACAO_PLENA, "as duas ficaram quitadas e não sobrou crédito");
+    });
+
+    test("3. O CASO OBSERVADO: sobra em crédito → valor por parcela + crédito + quitação PARCIAL", async () => {
+      // 7.000 numa cobrança de 3.000 em duas parcelas, com a primeira já
+      // quitada por outro pagamento: 1.500 vão para a parcela 2 e 5.500 viram
+      // crédito. Era este recibo que dava plena e geral quitação.
+      const fee = await criarHonorario(api, processo._id, { valor: 3000, descricao: "O caso do smoke test" });
+      await criarParcela(api, fee._id, 1, { valor: 1500, dataVencimento: AMANHA });
+      await criarParcela(api, fee._id, 2, { valor: 1500, dataVencimento: AMANHA });
+      await criarPagamento(api, fee._id, { valor: 1500 }); // quita a parcela 1
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 7000 });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(texto.includes("na parcela 2 de 2"), "precisa dizer QUANTO foi para a parcela");
+      assert.ok(texto.includes("1.500,00"), "o valor que encostou na parcela");
+      assert.ok(texto.includes("5.500,00"), "e o valor mantido como crédito");
+      assert.match(texto, /cr\u00e9dito|crédito/, "a palavra crédito precisa aparecer");
+      assert.match(
+        texto, QUITACAO_PARCIAL,
+        "dar plena e geral quitação aqui quitaria mais do que a obrigação alcançada"
+      );
+      assert.ok(!QUITACAO_PLENA.test(texto), "a frase de quitação plena não pode sobreviver");
+    });
+
+    test("4. adiantamento sem parcelas: sem número de parcela, texto de crédito", async () => {
+      const fee = await criarHonorario(api, processo._id, { valor: 4000, descricao: "Adiantado sem parcelar" });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, {
+        valor: 2000, tipo: "adiantamento"
+      });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(texto.includes("adiantamento"), "o recibo precisa dizer que é adiantamento");
+      assert.ok(!/parcela \d/.test(texto), "não há parcela para nomear — e não se inventa uma");
+      assert.match(texto, QUITACAO_PARCIAL, "nada foi quitado: não há quitação plena a dar");
+    });
+
+    test("5. honorário NÃO parcelado: sem `parcela 1 de 1` (regressão da F-1a)", async () => {
+      const fee = await criarHonorario(api, processo._id, { valor: 700, descricao: "Cobrança única" });
+      await criarParcela(api, fee._id, 1, { valor: 700, dataVencimento: AMANHA });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 700 });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(texto.includes("pagamento único"), "o texto de pagamento único se perdeu");
+      assert.ok(!/parcela 1 de 1/.test(texto), "\"parcela 1 de 1\" é ruído — corrigido na F-1a");
+      assert.match(texto, QUITACAO_PLENA);
+    });
+
+    test("parcela que continua PARCIAL não recebe quitação plena", async () => {
+      // Sem crédito sobrando, mas com a obrigação em aberto: a quitação
+      // continua sendo do valor recebido, não da obrigação.
+      const fee = await criarHonorario(api, processo._id, { valor: 5000, descricao: "Pagamento parcial" });
+      await criarParcela(api, fee._id, 1, { valor: 5000, dataVencimento: AMANHA });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 2000 });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.match(
+        texto, QUITACAO_PARCIAL,
+        "a parcela segue devendo 3.000 — quitação plena aqui seria falsa"
+      );
+      assert.ok(!QUITACAO_PLENA.test(texto));
+    });
+
+    test("o crédito do recibo é do PAGAMENTO, e sobrevive a estorno", async () => {
+      // A sobra sai da diferença entre o líquido e o alocado, e não de
+      // `Fee.saldoAdiantado` — aquele campo é do honorário e pode ter
+      // contribuição de outros pagamentos.
+      const fee = await criarHonorario(api, processo._id, { valor: 1000, descricao: "Com estorno depois" });
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 3000 });
+
+      // Líquido 3000, alocado 1000, crédito 2000. Estorna 500: a desalocação
+      // come o crédito primeiro, então o alocado não se move.
+      await criarEstorno(api, pg._id, { valor: 500, motivo: "Devolução parcial" });
+
+      const texto = await textoDoRecibo(pg._id);
+
+      assert.ok(texto.includes("2.500,00"), "o recibo é do líquido: 3.000 − 500");
+      assert.ok(texto.includes("1.500,00"), "o crédito caiu de 2.000 para 1.500");
+      assert.ok(texto.includes("na parcela 1"), "e a parcela continua com os 1.000");
+    });
   });
 });

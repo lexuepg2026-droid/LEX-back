@@ -102,6 +102,99 @@ const resolverPagador = async (processo, usuarioId) => {
   return Client.findOne({ _id: clienteId, usuarioId, ativo: true });
 };
 
+// Centavos, como em todo o módulo financeiro: somar float acumula resíduo, e
+// resíduo aqui é um recibo assinado com um centavo a mais.
+const emCentavosRecibo = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// O QUE O RECIBO DESCREVE — DEC-041 (Fase F-1a.1). **PROVISÓRIA.**
+//
+// ── O defeito que originou ────────────────────────────────────────────────
+// Smoke test de 17/08/2026: recibo de um pagamento de R$ 7.000,00 dizia
+// "referente a Honorários advocatícios — parcela 2 de 2" e dava "plena e geral
+// quitação" — quando só R$ 1.500,00 foram para aquela parcela (que vale 3.000)
+// e R$ 5.500,00 viraram crédito.
+//
+// O documento é assinado pela advogada e entregue ao cliente. Ele quitava mais
+// do que a obrigação a que se referia, e é o papel que o cliente guardaria
+// para provar isso.
+//
+// ── As duas regras ────────────────────────────────────────────────────────
+// 1. O recibo é DO PAGAMENTO. Uma alocação não gera recibo próprio — um PIX é
+//    um recibo, mesmo cobrindo três parcelas.
+// 2. Ele DESCREVE a alocação. Onde o dinheiro foi parar sai por extenso, e a
+//    frase de quitação acompanha o que de fato foi quitado.
+//
+// **A redação é PROVISÓRIA e aguarda ratificação da Laís**, como
+// TIPOS_HONORARIO (DEC-039): é texto jurídico entregue a terceiro, e a escolha
+// entre "quitação plena" e "quitação do valor recebido" tem efeito que não se
+// decide por critério técnico.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// A frase de REFERÊNCIA — "referente a …".
+//
+// O caso comum (uma parcela, sem sobra) mantém o texto que existia desde a
+// 4.1: enumerar valor onde há um destino só seria ruído. Os valores aparecem
+// assim que houver mais de um destino OU sobra em crédito — porque aí o valor
+// total do recibo deixa de descrever o que foi para a parcela citada, que é
+// exatamente o defeito observado.
+export const descreverDestino = ({ destinos = [], creditoMantido = 0, totalDeParcelas = 0 }) => {
+  const enumerar = destinos.length > 1 || (destinos.length > 0 && creditoMantido > 0);
+
+  if (destinos.length === 0) {
+    // Nada encostou em parcela: ou não há parcela emitida, ou o pagamento foi
+    // registrado como adiantamento. Nos dois casos o dinheiro é crédito, e a
+    // frase não inventa número de parcela.
+    return totalDeParcelas === 0 ? "adiantamento" : "adiantamento, sem parcela quitada";
+  }
+
+  if (!enumerar) {
+    // Honorário não parcelado continua sendo "pagamento único": escrever
+    // "parcela 1 de 1" é ruído, e era assim desde a 4.1.
+    return totalDeParcelas <= 1
+      ? "pagamento único"
+      : `parcela ${destinos[0].numeroParcela} de ${totalDeParcelas}`;
+  }
+
+  const partes = destinos.map(
+    (d) => `${moeda(d.valor)} na parcela ${d.numeroParcela} de ${totalDeParcelas}`
+  );
+
+  if (creditoMantido > 0) {
+    partes.push(`${moeda(creditoMantido)} mantidos como crédito para abatimento futuro`);
+  }
+
+  if (partes.length === 1) return partes[0];
+  return `${partes.slice(0, -1).join(", ")} e ${partes[partes.length - 1]}`;
+};
+
+// A frase de QUITAÇÃO.
+//
+// Quitação plena só quando o pagamento não deixa nada pendente no que ele
+// alcança: sem crédito sobrando E com todas as parcelas tocadas integralmente
+// quitadas. Em qualquer outro caso a quitação é do VALOR RECEBIDO, e a frase
+// diz isso — dar quitação geral sobre obrigação que continua em aberto é o
+// defeito que a DEC-041 existe para fechar.
+export const frasePeDeQuitacao = ({ destinos = [], creditoMantido = 0 }) => {
+  const plena =
+    destinos.length > 0 &&
+    creditoMantido <= 0 &&
+    destinos.every((d) => d.quitaAParcela);
+
+  if (plena) {
+    return (
+      "Para clareza e como prova, firmo o presente recibo, dando plena e geral " +
+      "quitação do valor acima em relação à obrigação a que se refere."
+    );
+  }
+
+  return (
+    "Para clareza e como prova, firmo o presente recibo, dando quitação do " +
+    "valor acima efetivamente recebido. A quitação é PARCIAL e não alcança o " +
+    "saldo remanescente da obrigação, que permanece devido."
+  );
+};
+
 export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
   if (!mongoose.Types.ObjectId.isValid(pagamentoId)) {
     throw createError("Identificador de pagamento inválido", 400);
@@ -154,10 +247,11 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     User.findById(usuarioId),
     resolverPagador(processo, usuarioId),
     Installment.countDocuments({ feeId: honorario._id, usuarioId, ativo: true }),
-    // As parcelas que ESTE pagamento cobriu, ativas. Ordenadas por número para
-    // o recibo dizer "parcelas 2 e 3" na ordem em que a advogada as emitiu.
+    // As parcelas que ESTE pagamento cobriu, ativas. Cada alocação traz o
+    // VALOR que encostou na parcela e o estado atual dela — os dois são
+    // necessários para o recibo descrever o que de fato quitou (DEC-041).
     Allocation.find({ pagamentoId: pagamento._id, usuarioId, estornoId: null })
-      .populate("parcelaId", "numeroParcela")
+      .populate("parcelaId", "numeroParcela valor valorPago")
       .sort({ data: 1 })
   ]);
 
@@ -165,13 +259,42 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     throw createError("Usuário não encontrado", 404);
   }
 
-  const numerosDeParcela = [
-    ...new Set(
-      alocacoes
-        .map((a) => a.parcelaId?.numeroParcela)
-        .filter((n) => n !== undefined && n !== null)
-    )
-  ].sort((a, b) => a - b);
+  // Uma linha por PARCELA, com o quanto deste pagamento foi para ela. Duas
+  // alocações na mesma parcela (acontece quando um estorno parcial substitui a
+  // linha original) somam numa entrada só: o recibo descreve destino, não
+  // mecânica interna.
+  const porParcela = new Map();
+  for (const a of alocacoes) {
+    const numero = a.parcelaId?.numeroParcela;
+    if (numero === undefined || numero === null) continue;
+    const atual = porParcela.get(numero) ?? {
+      numeroParcela: numero,
+      valor: 0,
+      valorParcela: Number(a.parcelaId?.valor ?? 0),
+      // `valorPago` da parcela é a soma de TODAS as alocações ativas dela,
+      // inclusive de outros pagamentos. É o estado dela hoje, e é isso que a
+      // frase de quitação precisa refletir — não o quanto este pagamento
+      // sozinho contribuiu.
+      valorPagoDaParcela: Number(a.parcelaId?.valorPago ?? 0)
+    };
+    atual.valor = emCentavosRecibo(atual.valor + Number(a.valor));
+    porParcela.set(numero, atual);
+  }
+
+  const destinos = [...porParcela.values()]
+    .sort((a, b) => a.numeroParcela - b.numeroParcela)
+    .map((d) => ({ ...d, quitaAParcela: d.valorPagoDaParcela >= d.valorParcela }));
+
+  // O que do LÍQUIDO não encontrou parcela e ficou como crédito.
+  //
+  // Sai da diferença, e não de `Fee.saldoAdiantado`: aquele campo é do
+  // honorário e pode ter contribuição de outros pagamentos, enquanto o recibo
+  // fala de UM. A conta fecha mesmo com estorno no meio, porque a desalocação
+  // consome o crédito antes das parcelas — ver `desalocarPorEstorno`.
+  const alocadoNoTotal = emCentavosRecibo(
+    destinos.reduce((t, d) => t + d.valor, 0)
+  );
+  const creditoMantido = Math.max(0, emCentavosRecibo(liquido - alocadoNoTotal));
 
   return {
     pagamento,
@@ -180,7 +303,8 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     cliente,
     usuario,
     totalDeParcelas,
-    numerosDeParcela,
+    destinos,
+    creditoMantido,
     valorLiquido: liquido
   };
 };
@@ -211,7 +335,8 @@ export const montarPdfDoRecibo = ({
   cliente,
   usuario,
   totalDeParcelas,
-  numerosDeParcela = [],
+  destinos = [],
+  creditoMantido = 0,
   valorLiquido: liquido
 }) => {
   registrarFontes();
@@ -228,20 +353,11 @@ export const montarPdfDoRecibo = ({
 
   const forma = ROTULO_FORMA_PAGAMENTO[pagamento.formaPagamento] || "";
 
+  // O destino do dinheiro, por extenso (DEC-041). A regra inteira mora em
+  // `descreverDestino`, que é pura e testável sem montar PDF.
   const referencia = [
     honorario.descricao,
-    // Um pagamento pode cobrir DUAS parcelas, ou nenhuma (adiantamento). A
-    // frase acompanha o fato em vez de fingir que sempre há uma só.
-    // Honorário não parcelado continua sendo "pagamento único": escrever
-    // "parcela 1 de 1" é ruído, e era assim desde a 4.1.
-    totalDeParcelas <= 1
-      ? "pagamento único"
-      : numerosDeParcela.length === 0
-        ? "adiantamento"
-        : numerosDeParcela.length === 1
-          ? `parcela ${numerosDeParcela[0]} de ${totalDeParcelas}`
-          : `parcelas ${numerosDeParcela.slice(0, -1).join(", ")} e ` +
-            `${numerosDeParcela[numerosDeParcela.length - 1]} de ${totalDeParcelas}`,
+    descreverDestino({ destinos, creditoMantido, totalDeParcelas }),
     processo.numeroProcesso ? `processo nº ${processo.numeroProcesso}` : "",
     processo.titulo
   ]
@@ -275,9 +391,9 @@ export const montarPdfDoRecibo = ({
       : []),
     {
       style: "corpo",
-      text:
-        "Para clareza e como prova, firmo o presente recibo, dando plena e geral " +
-        "quitação do valor acima em relação à obrigação a que se refere."
+      // Plena ou parcial, conforme o pagamento tenha ou não deixado saldo —
+      // ver `frasePeDeQuitacao`. Era incondicionalmente plena até a F-1a.1.
+      text: frasePeDeQuitacao({ destinos, creditoMantido })
     },
     ...(cidadeEData ? [{ text: cidadeEData, style: "cidadeData" }] : []),
     linhaAssinatura(),
