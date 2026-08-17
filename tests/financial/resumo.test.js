@@ -25,7 +25,7 @@ import { subirApp, derrubarApp } from "../helpers/server.js";
 import { limparColecoes, TODAS_AS_COLECOES, desconectar } from "../helpers/db.js";
 import {
   registrarUsuario, criarClientePF, criarProcesso, criarHonorario,
-  criarParcela, criarPagamento, esperado
+  criarParcela, criarPagamento, criarEstorno, esperado
 } from "../helpers/setup.js";
 
 const AGORA = new Date();
@@ -61,27 +61,43 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     // 1) Vencida no mês passado e QUITADA, com o pagamento também no mês
     //    passado. Não pode aparecer nem em `valorVencido` nem em
     //    `recebidoNoMes`.
+    // ── A ORDEM DE CRIAÇÃO passa a fazer parte do arranjo (F-1a) ──────────
+    //
+    // O pagamento nasce contra o HONORÁRIO e o motor o aloca na parcela de
+    // vencimento mais ANTIGO em aberto. Criar as quatro parcelas e só então
+    // pagar levaria todo o dinheiro para as primeiras — e o estado que este
+    // arquivo mede (uma quitada, uma vencida em aberto, uma parcial no mês)
+    // seria impossível de montar.
+    //
+    // Por isso cada parcela nasce imediatamente antes do pagamento que lhe é
+    // destinado, e as que ficam em aberto nascem por último. O `numeroParcela`
+    // continua sendo o da leitura humana; quem manda na alocação é a data.
+
+    // 1) Vencida no mês passado e QUITADA, com o pagamento também no mês
+    //    passado. Não pode aparecer nem em `valorVencido` nem em
+    //    `recebidoNoMes`.
     quitadaVencida = await criarParcela(api, honorario._id, 1, {
       valor: 2000, dataVencimento: dataUTC(-1, 10)
     });
-    await criarPagamento(api, quitadaVencida._id, {
-      valorPago: 2000, dataPagamento: dataUTC(-1, 12)
+    await criarPagamento(api, honorario._id, {
+      valor: 2000, data: dataUTC(-1, 12)
+    });
+
+    // 3) Vence no mês corrente, com pagamento PARCIAL feito neste mês.
+    //    Sustenta `aReceberNoMes` (pelo que falta) e `recebidoNoMes` (pelo que
+    //    entrou). Nasce ANTES da parcela 2 justamente para receber este
+    //    pagamento: com a 2 já existindo, o motor mandaria os 1.000 para ela.
+    doMesCorrente = await criarParcela(api, honorario._id, 3, {
+      valor: 4000, dataVencimento: dataUTC(0, 15)
+    });
+    await criarPagamento(api, honorario._id, {
+      valor: 1000, data: dataUTC(0, AGORA.getUTCDate())
     });
 
     // 2) Vencida no mês passado e em aberto: é a única que sustenta
     //    `valorVencido` e a contagem `vencidas`.
     vencidaEmAberto = await criarParcela(api, honorario._id, 2, {
       valor: 3000, dataVencimento: dataUTC(-1, 20)
-    });
-
-    // 3) Vence no mês corrente, com pagamento PARCIAL feito neste mês.
-    //    Sustenta `aReceberNoMes` (pelo que falta) e `recebidoNoMes` (pelo que
-    //    entrou).
-    doMesCorrente = await criarParcela(api, honorario._id, 3, {
-      valor: 4000, dataVencimento: dataUTC(0, 15)
-    });
-    await criarPagamento(api, doMesCorrente._id, {
-      valorPago: 1000, dataPagamento: dataUTC(0, AGORA.getUTCDate())
     });
 
     // 4) Vence no mês que vem, intocada.
@@ -92,15 +108,21 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     // ── Honorário CANCELADO, com parcela quitada NESTE mês ──────────────────
     // O caso mais perigoso do arquivo: se o cancelado entrasse na cadeia, ele
     // inflaria contratado, recebido E recebidoNoMes de uma vez.
+    // O cancelamento vem DEPOIS do pagamento: desde a F-1a, honorário
+    // cancelado recusa pagamento com 409.
     cancelado = await criarHonorario(api, processo._id, {
-      tipo: "custas", valor: 5000, status: "cancelado", descricao: "Custas — cancelada"
+      tipo: "custas", valor: 5000, descricao: "Custas — cancelada"
     });
-    const parcelaCancelada = await criarParcela(api, cancelado._id, 1, {
+    await criarParcela(api, cancelado._id, 1, {
       valor: 5000, dataVencimento: dataUTC(0, 5)
     });
-    await criarPagamento(api, parcelaCancelada._id, {
-      valorPago: 5000, dataPagamento: dataUTC(0, AGORA.getUTCDate())
+    await criarPagamento(api, cancelado._id, {
+      valor: 5000, data: dataUTC(0, AGORA.getUTCDate())
     });
+    esperado(
+      await api.patch(`/fees/${cancelado._id}`, { status: "cancelado" }),
+      200, "cancela o honorário depois do pagamento"
+    );
 
     // ── Processo DESATIVADO, com honorário e pagamento vivos ────────────────
     // A ficha de um processo desativado responde 404: ele não aparece em soma
@@ -111,11 +133,11 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     const feeOrfao = await criarHonorario(api, desativado._id, {
       tipo: "fixo", valor: 7000, descricao: "Honorário de processo desativado"
     });
-    const parcelaOrfa = await criarParcela(api, feeOrfao._id, 1, {
+    await criarParcela(api, feeOrfao._id, 1, {
       valor: 7000, dataVencimento: dataUTC(0, 20)
     });
-    await criarPagamento(api, parcelaOrfa._id, {
-      valorPago: 700, dataPagamento: dataUTC(0, AGORA.getUTCDate())
+    await criarPagamento(api, feeOrfao._id, {
+      valor: 700, data: dataUTC(0, AGORA.getUTCDate())
     });
     esperado(await api.delete(`/processes/${desativado._id}`), 200, "desativa o processo");
   });
@@ -140,7 +162,8 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
       Object.keys(r).sort(),
       [
         "aReceberNoMes", "mesReferencia", "pendente", "proximosVencimentos",
-        "recebido", "recebidoNoMes", "valorContratado", "valorVencido", "vencidas"
+        "recebido", "recebidoNoMes", "saldoAdiantado", "valorContratado",
+        "valorVencido", "vencidas"
       ],
       "o contrato do resumo mudou de forma"
     );
@@ -180,8 +203,8 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     // é a data em que a parcela fechou, e responderia outra pergunta.
     const antes = await resumo();
 
-    const pagamento = await criarPagamento(api, vencidaEmAberto._id, {
-      valorPago: 500, dataPagamento: dataUTC(0, AGORA.getUTCDate())
+    const { pagamento } = await criarPagamento(api, honorario._id, {
+      valor: 500, data: dataUTC(0, AGORA.getUTCDate())
     });
 
     const depois = await resumo();
@@ -191,8 +214,19 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     );
 
     // Devolve ao estado do arranjo, para os testes seguintes não dependerem da
-    // ordem de execução.
-    esperado(await api.delete(`/payments/${pagamento._id}`), 200, "desfaz o pagamento do teste");
+    // ordem de execução. O caminho é o ESTORNO — `DELETE /payments/:id` morreu
+    // na F-1a (DEC-032).
+    //
+    // E o estorno abate `recebidoNoMes` do próprio mês do PAGAMENTO, que é o
+    // que faz o número voltar ao valor de antes: o cartão responde "quanto
+    // entrou e ficou".
+    await criarEstorno(api, pagamento._id, { valor: 500, motivo: "Desfaz o pagamento do teste" });
+
+    const voltou = await resumo();
+    assert.equal(
+      voltou.recebidoNoMes, antes.recebidoNoMes,
+      "o estorno não abateu o recebido do mês do pagamento"
+    );
   });
 
   test("parcela vencida e QUITADA não conta em `valorVencido`", async () => {
@@ -207,18 +241,18 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
   test("`valorVencido` usa o EM ABERTO, não o valor cheio da parcela", async () => {
     // Um pagamento parcial numa parcela vencida derruba o vencido pelo que
     // entrou — quem somasse `valor` continuaria acusando os 3.000 inteiros.
-    const pagamento = await criarPagamento(api, vencidaEmAberto._id, {
-      valorPago: 1200, dataPagamento: dataUTC(0, AGORA.getUTCDate())
+    const { pagamento } = await criarPagamento(api, honorario._id, {
+      valor: 1200, data: dataUTC(0, AGORA.getUTCDate())
     });
 
     const r = await resumo();
     assert.equal(r.valorVencido, 0, "a parcela virou `parcial` e sai do vencido");
     assert.equal(r.vencidas, 0);
 
-    esperado(await api.delete(`/payments/${pagamento._id}`), 200, "desfaz o pagamento parcial");
+    await criarEstorno(api, pagamento._id, { valor: 1200, motivo: "Desfaz o pagamento parcial" });
 
     const voltou = await resumo();
-    assert.equal(voltou.valorVencido, 3000, "desativar o pagamento devolve o vencido");
+    assert.equal(voltou.valorVencido, 3000, "estornar o pagamento devolve o vencido");
     assert.equal(voltou.vencidas, 1);
   });
 
@@ -314,6 +348,7 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     assert.equal(r.aReceberNoMes, 0);
     assert.equal(r.recebidoNoMes, 0);
     assert.equal(r.valorVencido, 0);
+    assert.equal(r.saldoAdiantado, 0);
     assert.deepEqual(r.proximosVencimentos, []);
     assert.equal(r.mesReferencia, MES_REFERENCIA);
   });

@@ -1,4 +1,4 @@
-import Fee from "../models/Fee.js";
+import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Process from "../models/Process.js";
 import Installment from "../models/Installment.js";
 import {
@@ -9,6 +9,7 @@ import {
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { recalcularStatusFee } from "./paymentService.js";
+import { registrarStatus, registrarCriacao, ORIGEM_STATUS } from "./statusHistory.js";
 import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
 import { regexTermoSimples } from "../utils/texto.js";
 
@@ -170,6 +171,10 @@ const createFee = async (usuarioId, feeData) => {
   // as duas gravações do service pelo mesmo caminho é o que impede alguém de
   // "otimizar" só uma delas de volta para um método que pula o hook.
   const fee = new Fee({ ...sanitizedData, usuarioId });
+  // DEC-038 (F-1a): a linha de nascimento do histórico. Registrada ANTES do
+  // `save()`, para o honorário já chegar ao banco com a cadeia começada — e
+  // não num segundo `save()` que uma falha de rede deixaria pela metade.
+  registrarCriacao(fee);
   await gravar(fee);
 
   // DEC-028: `status` é derivado. O que veio no corpo vale como intenção
@@ -280,7 +285,35 @@ const updateFee = async (feeId, usuarioId, updateData) => {
   //
   // Semântica preservada: só os campos presentes no corpo são atribuídos, como
   // no `$set` implícito de antes.
+  // ── `status` NÃO entra por `Object.assign` (DEC-038, F-1a) ──────────────
+  //
+  // O campo tem UM ponto de escrita, `statusHistory.registrarStatus`, e é
+  // essa exclusividade que faz o histórico valer: uma atribuição direta aqui
+  // mudaria o status sem deixar linha, e a advogada leria o array com um
+  // buraco — que é pior que histórico nenhum, porque um incompleto parece
+  // completo.
+  //
+  // O que o corpo pede continua valendo como INTENÇÃO, e a reconciliação com
+  // as parcelas logo abaixo continua mandando (DEC-028). A única intenção que
+  // o sistema respeita é `cancelado` — e o seu inverso, descancelar, que
+  // precisa de escrita explícita justamente porque a guarda do recálculo não
+  // sobrescreve `cancelado` e o honorário ficaria preso para sempre.
+  const statusPedido = sanitizedData.status;
+  delete sanitizedData.status;
+
   Object.assign(existingFee, sanitizedData);
+
+  if (statusPedido !== undefined) {
+    const cancelando = statusPedido === STATUS_CANCELADO;
+    const descancelando =
+      existingFee.status === STATUS_CANCELADO && statusPedido !== STATUS_CANCELADO;
+
+    if (cancelando || descancelando) {
+      registrarStatus(existingFee, statusPedido, ORIGEM_STATUS.CANCELAMENTO);
+    }
+    // Qualquer outro status pedido é ignorado de propósito: as parcelas
+    // decidem, e o recálculo abaixo grava o que elas disserem.
+  }
 
   await gravar(existingFee);
 

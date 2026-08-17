@@ -67,7 +67,7 @@ describe("portal: isolamento — a terceira dimensão", () => {
     ]);
     const honorario = await criarHonorario(adv, processo._id);
     const parcela = await criarParcela(adv, honorario._id, 1);
-    const pagamento = await criarPagamento(adv, parcela._id);
+    const { pagamento } = await criarPagamento(adv, honorario._id);
     const secao = await criarSecao(adv, { texto: "Texto sem variável." });
     const modelo = await criarModelo(adv);
     await vincularSecao(adv, modelo._id, secao._id);
@@ -160,8 +160,27 @@ describe("portal: isolamento — a terceira dimensão", () => {
       ["POST", "/payments"], ["GET", "/payments"],
       ["GET", `/payments/${c.pagamento._id}`],
       ["PATCH", `/payments/${c.pagamento._id}`], ["PUT", `/payments/${c.pagamento._id}`],
-      ["DELETE", `/payments/${c.pagamento._id}`],
       ["GET", `/payments/${c.pagamento._id}/recibo`],
+
+      // ── As superfícies do Financeiro 2.0 (F-1a) ────────────────────────
+      //
+      // `DELETE /payments/:id` e as duas rotas de reativação saíram da lista
+      // porque as rotas não existem mais: manter um 404 esperado aqui mediria
+      // o `notFoundMiddleware`, não o isolamento, e o teste passaria por
+      // acidente no dia em que alguém recriasse a rota sem o middleware certo.
+      //
+      // No lugar entram as cinco rotas novas — estorno, extrato,
+      // reparcelamento e a listagem de pagamentos do processo. Rota nova é
+      // superfície nova, e a DEC-029 ponto 8 mantém o portal SEM nada
+      // financeiro. O extrato é o pior lugar possível para um 200 indevido:
+      // devolve a linha do tempo do dinheiro de uma cobrança inteira.
+      ["POST", "/payments/preview"],
+      ["POST", `/payments/${c.pagamento._id}/reversals`],
+      ["GET", `/payments/${c.pagamento._id}/reversals`],
+      ["GET", `/fees/${c.honorario._id}/statement`],
+      ["POST", `/fees/${c.honorario._id}/renegotiations`],
+      ["GET", `/fees/${c.honorario._id}/renegotiations`],
+      ["GET", `/financeiro/processos/${c.processo._id}/payments`],
 
       ["GET", "/dashboard"], ["GET", "/dashboard/status"],
       ["GET", "/dashboard/honorarios-por-mes"], ["GET", "/financeiro/resumo"],

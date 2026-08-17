@@ -1599,15 +1599,32 @@ de acesso de cada vínculo sai no resumo final do seed.
 | `processes`        | 10   |
 | `processo_clientes`| 12   |
 | `fees`             | 12   |
-| `installments`     | 20   |
-| `payments`         | 11   |  ← ativos; há **+1 desativado**, fora da soma |
+| `installments`     | 23   |  ← 20 + 3 nascidas do reparcelamento |
+| `payments`         | 15   |  ← todos ativos: pagamento não se desativa (DEC-032) |
+| `alocacoes`        | 17   |  ← 15 ativas + 2 desfeitas por estorno |
+| `estornos`         | 2    |  ← 1 total e 1 parcial |
+| `reparcelamentos`  | 1    |  ← 2 parcelas canceladas COM vínculo |
 | `documents`        | 19   |
 | `secoes`           | 11   |
 | `documento_secao`  | 41   |
 | `confirmacoes_visualizacao` | 2 |
 
-**Estados financeiros do seed (Fase 4.1):** os quatro derivados estão
-presentes — `cancelado` 1, `pago` 2, `parcialmente_pago` 4, `pendente` 5. O
+**Estados financeiros do seed (atualizado na F-1a):** os quatro derivados
+continuam presentes — `cancelado` 1, `pago` 3, `parcialmente_pago` 5,
+`pendente` 3.
+
+**Os cinco casos do Financeiro 2.0 que o seed exercita**, todos pelos services
+de verdade (nada é escrito à mão no banco, então um seed que roda até o fim é
+teste de fumaça do módulo inteiro):
+
+| Caso | Onde |
+|---|---|
+| pagamento que atravessa **duas parcelas** | divórcio litigioso — PIX de 4.500 |
+| **estorno total** com desalocação | fase inicial — boleto devolvido |
+| **estorno parcial** com desalocação | usucapião — contestação do cartão |
+| **adiantamento** com auto-alocação posterior | inventário — 5.000 antes das parcelas |
+| **sobra** virando saldo adiantado | recurso administrativo — 3.500 sobre 3.000 |
+| **reparcelamento** com parcelas canceladas-com-vínculo | assessoria tributária — 2 viram 3 | O
 `cancelado` tem a parcela **integralmente paga**: é o caso que prova a guarda da
 DEC-028, e o resumo do seed imprime os estados justamente para que ele apareça.
 O seed exercita **48 de 48** chaves do catálogo, contadas do banco e não das
@@ -2180,6 +2197,364 @@ fora. A advogada clicava em Regerar e não tinha como descobrir o que faltava.
 
 ---
 
+---
+
+## Financeiro 2.0 — DEC-032 a DEC-039 (Fase F-1a)
+
+> O módulo financeiro foi reescrito sobre um modelo novo. As oito decisões
+> abaixo nasceram nos cabeçalhos dos arquivos da fundação (commit `2c639ee`) e
+> estão transcritas aqui por extenso — até esta fase o raciocínio existia só no
+> código, e um `CLAUDE.md` que não o carrega deixa a próxima sessão reabrindo
+> discussão fechada.
+>
+> **A Fase F-1 foi DIVIDIDA em três.** Ver o bloco "A divisão F-1a/b/c", no fim.
+
+### DEC-032 — o pagamento é IMUTÁVEL
+
+`Payment` deixou de ter `installmentId` e deixou de ser editável.
+
+| Antes (até F-0) | Agora |
+|---|---|
+| `installmentId` obrigatório | `honorarioId` — o vínculo com parcelas virou `Allocation` |
+| `valorPago`, `dataPagamento` | `valor`, `data` |
+| PATCH de 5 campos | PATCH de **um**: `observacoes` |
+| `DELETE /payments/:id` | **não existe** — estornar é o caminho |
+| `PATCH /payments/:id/reativar` | **não existe** (ver DEC-034) |
+
+**Um registro de dinheiro que muda de valor não é registro, é rascunho.** A
+advogada precisa poder responder, meses depois, "quanto entrou, quando, e por
+que parte disso voltou" — e um PATCH que reescreve o valor apaga exatamente
+essa pergunta, sem deixar rastro de que houve correção.
+
+`observacoes` fica porque é **anotação sobre o fato, não o fato**.
+
+**`ativo` continua no schema e nenhuma rota o escreve.** O soft delete
+universal é regra central do projeto e a coleção mantém o campo por
+uniformidade de leitura. O que mudou é que não há caminho para gravá-lo.
+
+**Não houve migração**: não existe base de produção, e o seed é a única
+população. O modelo antigo morreu inteiro.
+
+**`formaPagamento` foi PRESERVADO** contra a lista de campos do roteiro
+original da F-1. A advogada registra por onde o dinheiro entrou, a listagem
+filtra por isso e o recibo imprime. Tirar o campo seria perder informação real
+para encurtar um contrato.
+
+### DEC-033 — estorno, e por que ele não é um campo
+
+Coleção `estornos` (`models/Reversal.js`). Corrigir dinheiro gravado deixou de
+ser edição e passou a ser um **registro novo que aponta para o anterior**.
+
+**Imutável de verdade: sem PATCH e sem DELETE.** Um estorno errado se desfaz
+com OUTRO estorno, do tipo `anulacao`, apontando o anulado por
+`estornoAnuladoId`. Três fatos, três registros, nenhuma reescrita.
+
+**`ativo` NÃO existe neste model, e a ausência é deliberada.** Em todo o resto
+do projeto `ativo: false` significa "excluído"; aqui, "estorno que não vale
+mais" é o que a anulação descreve. Ter os dois mecanismos daria duas maneiras
+de anular a mesma coisa, e um relatório que somasse por um deles ficaria errado
+sem ninguém notar.
+
+**"Estorno ativo" é resposta de CONSULTA, não campo gravado**
+(`reversalService.mapaDeAnulacoes`). Campo desnormalizado com duas fontes de
+escrita é campo que diverge — a mesma razão pela qual `Installment.valorPago`
+tem ponto único de escrita.
+
+**Um estorno só pode ser anulado UMA vez**, garantido por índice único parcial
+em `estornoAnuladoId`. A checagem no service é a mensagem amigável (409 que
+orienta); o índice é o que segura numa corrida entre duas requisições.
+
+**A anulação re-aloca pela regra normal**, e não repõe o dinheiro exatamente
+nas parcelas de onde ele saiu: entre o estorno e a anulação o mundo pode ter
+mudado — uma parcela pode ter sido reparcelada, outra quitada por outro
+pagamento. Repor no estado antigo criaria alocação em parcela cancelada.
+
+| Situação | Resposta |
+|---|---|
+| estorno acima do líquido | **422**, `errors.estornavel` diz o teto |
+| pagamento já estornado por inteiro | **422**, `errors.estornavel: 0` |
+| anular estorno já anulado | **409** `estornoJaAnulado` |
+| anular uma anulação | **409** `anulacaoDeAnulacao` |
+| anular estorno de outro pagamento | **409** `estornoInexistente` |
+
+### DEC-034 — as duas rotas de reativação MORRERAM
+
+`PATCH /api/payments/:id/reativar` e `PATCH /api/installments/:id/reativar`,
+criadas na Fase 4.5, respondem **404**.
+
+As duas existiam para desfazer um soft delete. Com o Financeiro 2.0:
+
+- **pagamento** não se desativa — ele se estorna (DEC-033), e o estorno se
+  desfaz por anulação. Os dois registram um fato novo em vez de reescrever o
+  antigo; uma rota que devolvesse o pagamento ao ar apagaria o motivo pelo qual
+  ele saiu;
+- **parcela** que sai de circulação por decisão da advogada sai por
+  reparcelamento (DEC-037), cancelada COM `reparcelamentoId`. "Reativar" uma
+  dessas ressuscitaria uma cobrança que foi substituída, ao lado da que a
+  substituiu: as duas somariam, e a advogada cobraria duas vezes.
+
+**`ativo` continua fora de toda allowlist de PATCH** (Fase 4.5), e isso ficou
+MAIS importante e não menos: é agora a única coisa entre a advogada e um
+registro financeiro desativado em silêncio por um campo de formulário.
+
+`tests/integrity/reativacao.test.js` foi **reescrito, não apagado** — trava os
+404, os caminhos que tomaram o lugar das rotas, e as duas premissas estruturais
+que ele já protegia.
+
+### DEC-035 — o motor de alocação
+
+Um pagamento não pertence a uma parcela: ele gera `Allocation`s. Um PIX que
+cobre duas parcelas passa a ser **um** pagamento com **duas** alocações, em vez
+de dois pagamentos e dois recibos.
+
+**As duas ordens, e por que são opostas:**
+
+- **alocar: do vencimento mais ANTIGO para o mais novo.** É o que qualquer
+  pessoa faz com uma dívida — paga o que está vencido primeiro. Alocar no mais
+  novo deixaria a parcela vencida em aberto com dinheiro no caixa, e a listagem
+  mostraria "vencida" para quem acabou de pagar;
+- **desalocar: do mais NOVO para o mais antigo.** Espelhada, e não igual. Um
+  estorno desfaz o efeito do pagamento na ordem inversa em que ele aconteceu.
+  Desalocar do mais antigo faria uma parcela antiga voltar a dever enquanto uma
+  nova continuasse quitada pelo mesmo dinheiro estornado — estado que nenhuma
+  leitura humana explica.
+
+**Três decisões INTOCÁVEIS, registradas na fundação:**
+
+1. **Alocação negativa é proibida.** Desalocar carimba `estornoId` na linha; não
+   existe `Allocation` de valor negativo. Uma linha negativa somaria certo e
+   leria errado — e nenhum extrato explicaria "alocação de −R$ 300".
+2. **Estorno parcial SUBSTITUI a linha da alocação.** A original é carimbada e
+   uma linha nova, com o resto, toma o lugar dela. A alternativa descartada era
+   reduzir `valor` na linha existente: seria uma linha a menos e uma mentira —
+   o registro passaria a dizer que sempre alocou o valor menor, e o extrato
+   perderia a informação de que houve alocação maior antes.
+3. **Preview e criação usam a MESMA função de planejamento**
+   (`planejarAlocacao`, pura). É isso que impede o preview de mentir: se ele
+   mostrar algo diferente do que o POST faz, é porque alguém escreveu a regra
+   duas vezes — e aqui não há como.
+
+**O 409 `pagamentoExcedeParcela` foi REVOGADO.** Ele recusava um fato: o cliente
+depositou 3.500 numa cobrança de 3.000, e o sistema mandava a advogada registrar
+outra coisa — o depósito real não existia em lugar nenhum. O valor agora
+atravessa as parcelas seguintes e o resto vira saldo (DEC-036). O valor saiu do
+vocabulário fechado `REGRA_CONFLITO`: lista fechada com entrada morta é como
+alguém volta a emitir a regra achando que ela vale.
+
+**Toda conta passa por `emCentavos`.** Somar float em cima de float acumula
+resíduo, e resíduo aqui é a advogada lendo "em aberto: R$ 0,00000000001" ou,
+pior, uma parcela que nunca fecha porque falta 1e-13.
+
+### DEC-036 — `saldoAdiantado`, para que nada se perca
+
+`Fee.saldoAdiantado` guarda dinheiro recebido que ainda não achou parcela.
+Alimentado por pagamento sem parcelas em aberto e pela SOBRA de um pagamento
+que cobriu tudo. Consumido automaticamente quando parcelas novas nascem, do
+primeiro vencimento em diante, virando `Allocation`s de origem `saldoAdiantado`.
+
+Sem ele, o troco de um pagamento maior teria de ser **recusado** (e a advogada
+registraria um valor que não foi o que entrou) ou **descartado em silêncio**
+(pior). Com ele, o dinheiro fica visível no extrato até encontrar destino.
+
+**As alocações de saldo nascem sem pagamento novo**, com `origem:
+"saldoAdiantado"`: o dinheiro já tinha entrado, e o extrato precisa distinguir
+"entrou hoje" de "encontrou destino hoje". Sem essa distinção, o cartão
+"recebido no mês" contaria duas vezes o mesmo real.
+
+**A auto-alocação dispara quando a parcela NASCE** — criação avulsa, criação em
+lote e reparcelamento. Sem isso, a advogada registraria um adiantamento,
+emitiria as parcelas e veria todas em aberto com o dinheiro parado no saldo, e
+"resolveria" lançando o pagamento de novo — criando um recebimento que nunca
+existiu.
+
+**`tipo` do pagamento (`comum` / `adiantamento`) é DESCRITIVO, não um segundo
+motor.** Ver "Decisões tomadas por conta própria" — este ponto foi alterado em
+relação à fundação nesta fase.
+
+### DEC-037 — reparcelamento com VÍNCULO
+
+`POST /api/fees/:id/renegotiations`. Coleção `reparcelamentos`.
+
+Renegociar **não apaga** as parcelas antigas: as que estavam em aberto ganham
+`status: "cancelado"` **e** `reparcelamentoId` apontando para o registro. O
+histórico conta a história — "estas cinco viraram aquelas três, nesta data, por
+este motivo" — e some inteiro se as antigas forem deletadas. É a mesma tese da
+confirmação de visualização da DEC-029: **prova que some não serve para nada**.
+
+**A soma das parcelas novas tem de igualar EXATAMENTE o saldo em aberto.**
+Aceitar soma diferente seria aceitar que a operação mude o valor devido sem
+dizer. Renegociar prazo é uma coisa; dar desconto é outra, tem nome, tem
+consequência contábil e precisa de decisão explícita — não pode acontecer como
+efeito colateral de uma conta que não fechou. O **422** devolve
+`errors.saldoEsperado` e `errors.somaInformada` justamente para ela ver os dois
+números e decidir.
+
+**Parcelas PAGAS ficam intactas** — não entram no cancelamento, no snapshot nem
+na conta. O dinheiro já foi recebido e a cobrança correspondente foi cumprida;
+cancelá-las apagaria a quitação. As **PARCIAIS** são canceladas com vínculo, e o
+que já foi alocado nelas fica onde está, como histórico: só o que faltava entra
+no saldo renegociado.
+
+**O snapshot `parcelasCanceladas` não é redundância.** A parcela continua
+existindo e legível, mas o `valorPago` dela pode mudar depois (um estorno
+desaloca), e a leitura "quanto estava em aberto quando renegociamos" deixaria
+de ser recuperável. O snapshot congela o que a conta usou.
+
+**A numeração das parcelas novas CONTINUA a sequência**, não recomeça em 1: o
+índice `{feeId, numeroParcela}` não é parcial (Fase 4.5), então a parcela
+cancelada nunca solta o número, e recomeçar colidiria na primeira.
+
+### DEC-038 — `historicoStatus` append-only, com ORIGEM
+
+`Fee.historicoStatus` registra cada transição de status. **Ponto único de
+escrita: `services/statusHistory.js`.**
+
+Um array append-only cuja escrita estivesse espalhada por três services
+registraria as transições que alguém lembrou de registrar, e a advogada leria os
+buracos como "não mudou". **Pior que histórico nenhum: um incompleto parece
+completo.**
+
+**Por que uma função, e não um hook `pre("save")`:** o hook não sabe a ORIGEM.
+Ele enxerga que `status` mudou de `pendente` para `pago`, mas não se foi
+recálculo, cancelamento explícito ou reparcelamento — que é justamente a
+informação que distingue "o sistema derivou" de "alguém decidiu".
+
+| `origem` | Quando |
+|---|---|
+| `criacao` | a linha de nascimento (`de: null`) |
+| `recalculo` | derivação normal da DEC-028 |
+| `cancelamento` | escrita explícita de/para `cancelado` |
+| `reparcelamento` | o plano foi refeito |
+
+**A origem VIAJA pela cadeia de recálculo** (`recalcularParcelas` →
+`recalcularStatusInstallment` → `recalcularStatusFee`). Carimbá-la depois não
+funciona, e a primeira versão desta fase tentou: quando o bloco explícito
+rodava, o recálculo já tinha gravado a transição como `recalculo` e
+`registrarStatus` devolvia `false` por status igual. O teste do invariante 9
+pegou.
+
+**Status igual não vira linha**: um recálculo que confirma `pendente` mil vezes
+encheria o array de ruído e enterraria as mudanças reais.
+
+**`feeService` não escreve `status` por `Object.assign`.** O campo é retirado do
+payload e passa pelo ponto único — senão o histórico nasceria com buracos
+exatamente no cancelamento, que é a transição mais importante.
+
+### DEC-039 — `config/tiposHonorario.js`. **PROVISÓRIA**
+
+O vocabulário de tipo de honorário saiu de `models/Fee.js` para arquivo
+próprio, com valor gravado e rótulo de exibição separados, para que ratificar a
+lista com a advogada vire acrescentar uma linha lá. O `Fee` reexporta, porque é
+de lá que meio projeto importa desde a Fase 1 — trocar todos os imports de uma
+vez seria churn sem ganho.
+
+**A decisão é PROVISÓRIA e aguarda ratificação da Laís.** É vocabulário
+jurídico da prática dela, não decisão técnica, e esta fase **não acrescentou
+nem tirou nenhum valor**: continuam `fixo`, `percentual`, `custas`.
+
+As perguntas em aberto são as mesmas registradas desde a Fase 4.6: "custas" é
+despesa processual e pode não pertencer a este enum; "êxito" e "sucumbência"
+podem ser tipos que faltam. **Nada disso se decide sem ela.**
+
+O que a fase FEZ foi tirar a segunda lista de rótulos do projeto — havia um mapa
+local em `Fee.js` ao lado do enum, e duas listas para a mesma pergunta divergem.
+
+---
+
+### O contrato das rotas novas (F-1a)
+
+| Verbo | Caminho | Nota |
+|---|---|---|
+| POST | `/api/payments` | nasce contra `honorarioId`; devolve `{ pagamento, alocacoes, sobra, saldoAdiantado }` |
+| POST | `/api/payments/preview` | o que ACONTECERIA; não grava nada |
+| POST | `/api/payments/:id/reversals` | estorno e anulação (`estornoAnuladoId`) |
+| GET | `/api/payments/:id/reversals` | os estornos do pagamento, com `anulado` |
+| GET | `/api/fees/:id/statement` | **extrato** — linha do tempo mesclada, paginada |
+| POST | `/api/fees/:id/renegotiations` | reparcelamento |
+| GET | `/api/fees/:id/renegotiations` | os reparcelamentos do honorário |
+| GET | `/api/financeiro/processos/:id/payments` | pagamentos do processo, paginados |
+
+**O extrato é agregado por LEITURA. Nenhuma coleção de log nova.** Cada evento é
+derivado de um registro que já existe e já é imutável — `Payment`, `Reversal`,
+`Allocation`, `Renegotiation` e o `historicoStatus` do `Fee`. Uma coleção de
+eventos separada seria uma SEGUNDA fonte da verdade sobre os mesmos fatos, livre
+para divergir no dia em que alguém gravasse num lugar e esquecesse do outro — e
+um extrato que discorda da ficha é pior que extrato nenhum, porque parece
+autoridade.
+
+O extrato **usa** o envelope de listagem (`data`/`total`/`page`/`limit`/
+`totalPages`), diferente da ficha financeira: ali há uma listagem de verdade.
+Ordenação por data e, em empate, por `id` — sem o segundo critério a paginação
+repetiria e pularia linhas.
+
+### A invariante da ficha e o contrato do resumo mudaram
+
+```
+contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto
+```
+
+Os dois termos abatem o em aberto porque os dois são dinheiro no caixa da
+advogada; o que os separa é só ter ou não uma parcela apontada. Contar só o
+alocado faria um honorário integralmente adiantado aparecer como devendo tudo,
+no dia seguinte ao cliente ter pago.
+
+`emAberto` sai da FÓRMULA, e não de uma segunda soma sobre as parcelas — mesma
+razão pela qual `pendente` do resumo é `contratado − recebido` desde a 4.3. Pode
+dar **negativo**, e é honesto: um honorário que recebeu mais do que foi
+contratado tem crédito, e zerar no piso esconderia dinheiro da cliente.
+
+**DUAS mudanças de contrato em `GET /financeiro/resumo`:**
+
+1. **`pendente` passa a ser `contratado − recebido − saldoAdiantado`.** Sem o
+   terceiro termo ele divergiria da soma das fichas no primeiro adiantamento — a
+   mesma divergência que a Fase 4.3 existiu para fechar, e que
+   `tests/financial/resumo.test.js` trava somando as fichas de verdade.
+2. **`saldoAdiantado` é chave NOVA de primeiro nível.** São dez agora.
+
+**`recebidoNoMes` continua saindo de `Payment`** e passa a ser **líquido dos
+estornos do próprio pagamento**. Um pagamento de 1.000 em agosto, estornado em
+300, contribui com 700 — mesmo que o estorno seja de setembro: o abatimento
+segue o PAGAMENTO, que é a coisa datada de agosto. Contar o bruto faria a
+advogada fechar o mês com dinheiro que devolveu; datar o abatimento pelo estorno
+faria agosto mudar de valor conforme setembro, e um mês fechado não pode se
+mexer.
+
+**A ficha trocou `parcela.pagamentos` por `parcela.alocacoes`.** O nome mudou
+porque a coisa mudou: não são os pagamentos da parcela, são os pedaços de
+pagamento que encostaram nela — e um mesmo pagamento pode aparecer em duas.
+Cada alocação traz `pagamentoId`, que é o vínculo que a tela navega.
+
+**O recibo é do valor LÍQUIDO**, e some (404) quando o líquido zera. "Recebi de
+fulano a importância de X" precisa ser verdade no dia em que o papel é lido;
+imprimir o bruto daria ao cliente um comprovante de um valor que ele não pagou —
+justamente o documento que ele guardaria para provar o contrário. Um pagamento
+que cobre duas parcelas as nomeia ("parcelas 1 e 2 de 3").
+
+### A divisão F-1a / F-1b / F-1c
+
+**Decisão registrada:** o escopo original da Fase F-1 não cabia numa sessão e
+foi dividido em três. Não é adiamento — é o reconhecimento de que backend novo,
+seed novo, onze invariantes, telas ricas e roteiro manual numa entrega só
+produziriam ou uma sessão pela metade ou um merge sem prova.
+
+| Fase | Escopo |
+|---|---|
+| **F-1a** (esta) | backend completo, seed refeito, os 11 invariantes provados, frontend só o suficiente para o app funcionar |
+| **F-1b** | UX do dinheiro: preview de alocação na tela, estorno em modal, extrato com vínculos, paginador real |
+| **F-1c** | reparcelamento ponta a ponta na tela, navegação honorário↔parcelas, e a **seção 21 do roteiro manual** |
+
+**Nenhuma seção nova entrou no roteiro manual nesta fase, e é deliberado.** A
+seção 21 nasce na F-1c, quando as telas que ela descreveria existirem. Um passo
+de validação visual sobre uma tela que ainda não foi desenhada é passo que
+reprova por motivo errado — e a conta do roteiro (154 passos) fica parada de
+propósito, não por esquecimento.
+
+**O que a F-1a deixou PRONTO e sem tela**, para a F-1b não precisar de backend:
+`POST /payments/preview`, `GET /fees/:id/statement` com os vínculos completos,
+`GET /payments/:id/reversals` e `GET /financeiro/processos/:id/payments`. Os
+quatro estão testados e cobertos pela varredura de isolamento.
+
+
 ### Fase F-0 — Ponto de restauração e faxina do backlog
 
 **Resumo:** a tag de restauração publicada no GitHub, e depois a limpeza dos
@@ -2312,6 +2687,68 @@ por causa do defeito. Corrigido o backend, o default de 20 passaria a truncar em
 silêncio. As duas passaram a pedir o **teto de 100** explicitamente e a exibir
 "Mostrando N de M" quando o conjunto é maior. Paginador de verdade é da F-1,
 que reescreve estas telas; truncar sem avisar não podia sobreviver a esta.
+
+### Fase F-1a — Financeiro 2.0: backend completo, seed e os 11 invariantes
+
+**Resumo:** a branch da fundação (`2c639ee`) trazia os models, o motor de
+alocação e o service de estorno, mas `src/app.js` **não subia** — os
+consumidores antigos importavam símbolos que o modelo novo removeu. Esta fase
+os religou, refez o seed, provou os onze invariantes e tocou o frontend só o
+suficiente. Backend 346 → **395**. Frontend 264 → **289**.
+
+**Commits:** `8f41fbf` (backend + seed + invariantes), `f97a573` (adaptação da
+suíte), `00c608a` (frontend, no outro repositório).
+
+**Arquivos novos (backend):** `services/renegotiationService.js`,
+`services/statementService.js`, `controllers/reversalController.js`,
+`controllers/renegotiationController.js`, `controllers/statementController.js`,
+`validations/reversalValidation.js`, `validations/renegotiationValidation.js`,
+`tests/financial/financeiro2.test.js`.
+
+**Arquivos novos (frontend):** `pages/payments/allocationSummary.js`,
+`pages/payments/paymentRow.js`, `tests/financial/financeiro2.test.js`.
+
+**Decisões**, todas por extenso no bloco "Financeiro 2.0 — DEC-032 a DEC-039",
+acima: pagamento imutável; estorno como registro e não como campo; as duas
+rotas de reativação mortas; o motor de alocação com ordens opostas; o saldo
+adiantado para que nada se perca; reparcelamento com vínculo e soma exigida; o
+histórico de status com origem viajando pela cadeia; e o vocabulário de tipo de
+honorário em arquivo próprio, **provisório**.
+
+**Um desvio deliberado em relação à fundação**, com o motivo escrito no
+cabeçalho de `allocationService.js`: `adiantamento` deixou de curto-circuitar
+para o saldo e passa pelo MESMO planejamento de `comum`. A fundação tinha dois
+motores por tipo para a mesma pergunta, e o cabeçalho do próprio `Payment.js`
+já dizia que o tipo é do PEDIDO e não do resultado. Num honorário sem parcelas o
+resultado é idêntico ao de antes.
+
+**Dois defeitos meus, pegos pela própria suíte:**
+
+1. `paymentService.update` tinha deixado de chamar `validateUpdatePayment` ao
+   ser reescrito. A varredura estática de `tests/integrity/allowlist.test.js`,
+   escrita na Fase 4.5 justamente para travar o LUGAR da validação, caiu na
+   hora — é o teste provando o que foi escrito para provar.
+2. O recibo passou a escrever "parcela 1 de 1" num honorário não parcelado, ao
+   ganhar o caso de duas parcelas.
+
+**Uma premissa MINHA que não se sustentou**, corrigida no teste e não no
+código: o invariante 9 media a origem `reparcelamento` num cenário em que o
+status do honorário **não muda** (uma parcela `pago` sobrevive ao
+reparcelamento e o mantém `parcialmente_pago`). `registrarStatus` não grava
+linha para status igual, por desenho. Era o teste que estava errado.
+
+**Nenhum teste foi apagado.** Os que mediam comportamento revogado foram
+INVERTIDOS no lugar, no padrão que a Fase 4.1 usou com a DEC-028: o 409 de
+excedente virou o teste da alocação que o substituiu e da AUSÊNCIA da regra;
+`tests/integrity/reativacao.test.js` virou o teste dos 404 e das duas premissas
+estruturais que ele já protegia.
+
+**Não tocado:** `documentRenderService.js`, `letterheadService.js`, catálogo de
+variáveis, contrato das rotas do portal, envelope de `/auth`, vetores da
+fórmula percentual. **Nenhuma dependência nova** — `package.json` idêntico a
+`main` nos dois repositórios.
+
+**Roteiro manual: nenhuma seção nova** (ver "A divisão F-1a/b/c").
 
 ---
 

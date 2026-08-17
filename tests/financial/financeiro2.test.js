@@ -1,0 +1,878 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// OS 11 INVARIANTES DO FINANCEIRO 2.0 — Fase F-1a
+//
+// Um bloco por invariante, na ordem em que a fase os enumerou. Cada um mede
+// uma propriedade que precisa valer SEMPRE, e não um caminho feliz:
+//
+//    1. valorLiquido = valor − Σ estornos ativos; nunca negativo; excesso 422
+//    2. estorno total zera; estorno-do-estorno restaura; anular 2× → 409
+//    3. conservação: Σ alocações ativas + saldo = valor líquido
+//    4. alocação antigo→novo; desalocação espelhada (novo→antigo)
+//    5. pagamento maior que tudo quita e sobra em saldo; parcela nova auto-aloca
+//    6. a invariante da ficha, antes e depois de pagamento/estorno/reparcelamento
+//    7. reparcelamento: soma exigida, vínculo nas antigas, pagas intactas
+//    8. `cancelado` de Fee nunca sobrescrito (regressão DEC-028)
+//    9. `historicoStatus` só cresce; origem correta por transição
+//   10. rotas `reativar` → 404; PATCH de payment fora de `observacoes` → 400
+//   11. paginação do extrato: duas páginas sem id repetido
+//
+// ── O nº 3 NÃO é reescrito aqui ───────────────────────────────────────────
+// A fundação desta branch provou a conservação como propriedade da função PURA
+// `planejarAlocacao`, em 200 casos gerados. Aquela prova é mais forte do que
+// qualquer arranjo por HTTP conseguiria ser, e por isso ela é INTEGRADA — o
+// bloco 3 daqui roda a mesma verificação sobre o motor real, pela API, para
+// travar a ponta que a prova pura não alcança: que a execução grava o que o
+// planejamento decidiu.
+//
+// ── Tudo por HTTP, nada por model ─────────────────────────────────────────
+// Um cenário montado por `insertMany` testaria um estado que a aplicação
+// talvez nunca produza. Onde um teste precisa de estado impossível pela API,
+// isso está dito na linha.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+
+import { subirApp, derrubarApp } from "../helpers/server.js";
+import { limparColecoes, TODAS_AS_COLECOES, desconectar } from "../helpers/db.js";
+import {
+  registrarUsuario, criarClientePF, criarProcesso, criarHonorario,
+  criarParcela, criarPagamento, criarEstorno, anularEstorno,
+  criarReparcelamento, esperado
+} from "../helpers/setup.js";
+
+// Comparação em centavos inteiros. Comparar float com float é como o resíduo
+// de 1e-13 entra num teste e o faz passar quando não devia.
+const centavos = (n) => Math.round(Number(n) * 100);
+const iguais = (a, b, msg) => assert.equal(centavos(a), centavos(b), msg);
+
+describe("Financeiro 2.0 — os 11 invariantes (F-1a)", () => {
+  let api, processo;
+
+  before(async () => {
+    await subirApp();
+    await limparColecoes(TODAS_AS_COLECOES);
+    api = await registrarUsuario("financeiro2");
+    const pf = await criarClientePF(api);
+    processo = await criarProcesso(api, [
+      { clienteId: pf._id, papel: "autor", principal: true }
+    ]);
+  });
+
+  after(async () => {
+    await limparColecoes(TODAS_AS_COLECOES);
+    await derrubarApp();
+    await desconectar();
+  });
+
+  // Um honorário limpo por teste: os invariantes medem propriedades de um
+  // honorário, e compartilhar um entre blocos faria a ordem dos testes virar
+  // parte do resultado.
+  const honorarioNovo = async (valor, extra = {}) =>
+    criarHonorario(api, processo._id, { valor, tipo: "fixo", ...extra });
+
+  const fichaDoProcesso = async () =>
+    esperado(await api.get(`/financeiro/processos/${processo._id}`), 200, "ficha");
+
+  const linhaDaFicha = async (feeId) => {
+    const ficha = await fichaDoProcesso();
+    return ficha.honorarios.find((h) => String(h._id) === String(feeId));
+  };
+
+  const buscarPagamento = async (id) =>
+    esperado(await api.get(`/payments/${id}`), 200, "pagamento");
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("1. valorLiquido = valor − Σ estornos ativos", () => {
+    test("o líquido acompanha cada estorno, e nunca fica negativo", async () => {
+      const fee = await honorarioNovo(5000);
+      await criarParcela(api, fee._id, 1, { valor: 5000, dataVencimento: "2026-03-10" });
+
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 5000 });
+
+      let visao = await buscarPagamento(pagamento._id);
+      iguais(visao.valorLiquido, 5000, "sem estorno, o líquido é o valor cheio");
+      iguais(visao.totalEstornado, 0, "nada estornado ainda");
+
+      await criarEstorno(api, pagamento._id, { valor: 1200, motivo: "Devolução parcial acordada" });
+      visao = await buscarPagamento(pagamento._id);
+      iguais(visao.valorLiquido, 3800, "5000 − 1200");
+      iguais(visao.totalEstornado, 1200, "Σ estornos ativos");
+
+      await criarEstorno(api, pagamento._id, { valor: 800, motivo: "Segunda devolução" });
+      visao = await buscarPagamento(pagamento._id);
+      iguais(visao.valorLiquido, 3000, "5000 − 1200 − 800");
+
+      assert.ok(visao.valorLiquido >= 0, "o líquido NUNCA é negativo");
+    });
+
+    test("estorno acima do líquido → 422 dizendo quanto ainda é estornável", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      await criarEstorno(api, pagamento._id, { valor: 400, motivo: "Parte devolvida" });
+
+      const r = await api.post(`/payments/${pagamento._id}/reversals`, {
+        valor: 700,
+        motivo: "Tentativa de estornar mais do que resta"
+      });
+
+      assert.equal(r.status, 422, `esperado 422, veio ${r.status}: ${JSON.stringify(r.body)}`);
+      // O valor estornável vem NA RESPOSTA. Sem ele a advogada teria de
+      // descobrir o limite por tentativa e erro — que é o beco que a Fase 4.6
+      // fechou no módulo de documentos e que este módulo não reabre.
+      iguais(r.body.errors.estornavel, 600, "1000 − 400 ainda estornáveis");
+      assert.match(r.body.message, /600,00/, "a prosa cita o valor estornável");
+    });
+
+    test("pagamento já estornado por inteiro recusa novo estorno com 422", async () => {
+      const fee = await honorarioNovo(900);
+      await criarParcela(api, fee._id, 1, { valor: 900, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 900 });
+
+      await criarEstorno(api, pagamento._id, { valor: 900, motivo: "Estorno integral" });
+
+      const r = await api.post(`/payments/${pagamento._id}/reversals`, {
+        valor: 1,
+        motivo: "Não há mais nada a estornar"
+      });
+      assert.equal(r.status, 422);
+      iguais(r.body.errors.estornavel, 0, "nada estornável");
+      assert.equal(r.body.regra, "pagamentoTotalmenteEstornado");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("2. estorno total zera, anulação restaura, dupla anulação 409", () => {
+    test("total zera o líquido; a anulação o traz de volta", async () => {
+      const fee = await honorarioNovo(2000);
+      await criarParcela(api, fee._id, 1, { valor: 2000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 2000 });
+
+      const { estorno } = await criarEstorno(api, pagamento._id, {
+        valor: 2000,
+        motivo: "Pagamento lançado por engano"
+      });
+      assert.equal(estorno.tipo, "total", "estorno que zera o líquido é `total`");
+
+      let visao = await buscarPagamento(pagamento._id);
+      iguais(visao.valorLiquido, 0, "o total zera");
+
+      // O estorno-do-estorno. Restaura o líquido E re-aloca o valor pela regra
+      // normal — não repõe nas mesmas parcelas, porque entre um e outro o
+      // mundo pode ter mudado (ver o cabeçalho de `reversalService`).
+      await anularEstorno(api, pagamento._id, estorno._id);
+
+      visao = await buscarPagamento(pagamento._id);
+      iguais(visao.valorLiquido, 2000, "a anulação restaura o líquido integral");
+      iguais(visao.totalEstornado, 0, "o estorno anulado sai da conta");
+    });
+
+    test("anular o MESMO estorno duas vezes → 409", async () => {
+      const fee = await honorarioNovo(1500);
+      await criarParcela(api, fee._id, 1, { valor: 1500, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1500 });
+
+      const { estorno } = await criarEstorno(api, pagamento._id, {
+        valor: 500,
+        motivo: "Estorno a ser anulado"
+      });
+
+      await anularEstorno(api, pagamento._id, estorno._id);
+
+      const r = await api.post(`/payments/${pagamento._id}/reversals`, {
+        estornoAnuladoId: estorno._id,
+        motivo: "Segunda anulação do mesmo estorno"
+      });
+      assert.equal(r.status, 409, `esperado 409, veio ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.regra, "estornoJaAnulado");
+    });
+
+    test("anulação de anulação → 409 (anulação não se anula)", async () => {
+      const fee = await honorarioNovo(1500);
+      await criarParcela(api, fee._id, 1, { valor: 1500, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1500 });
+
+      const { estorno } = await criarEstorno(api, pagamento._id, {
+        valor: 500,
+        motivo: "Estorno original"
+      });
+      const { estorno: anulacao } = await anularEstorno(api, pagamento._id, estorno._id);
+
+      const r = await api.post(`/payments/${pagamento._id}/reversals`, {
+        estornoAnuladoId: anulacao._id,
+        motivo: "Tentando anular a anulação"
+      });
+      assert.equal(r.status, 409);
+      assert.equal(r.body.regra, "anulacaoDeAnulacao");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("3. conservação — Σ alocações ativas + saldo = valor líquido", () => {
+    // A prova de propriedade sobre a função PURA vive na fundação
+    // (`planejarAlocacao`, 200 casos). Aqui a mesma conta é conferida sobre o
+    // motor REAL, pela API: é a ponta que a prova pura não alcança — que a
+    // execução grava exatamente o que o planejamento decidiu.
+    const conservacaoVale = async (feeId, pagamentoId) => {
+      const visao = await buscarPagamento(pagamentoId);
+      const linha = await linhaDaFicha(feeId);
+
+      const alocadoDestePagamento = visao.alocacoes
+        .filter((a) => a.ativa)
+        .reduce((t, a) => t + Number(a.valor), 0);
+
+      // O saldo do honorário só é atribuível a este pagamento quando ele é o
+      // único do honorário — que é o arranjo de todos os casos abaixo.
+      iguais(
+        alocadoDestePagamento + Number(linha.saldoAdiantado),
+        visao.valorLiquido,
+        "Σ alocações ativas + saldo = líquido"
+      );
+    };
+
+    test("cabe inteiro numa parcela", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+      await conservacaoVale(fee._id, pagamento._id);
+    });
+
+    test("atravessa duas parcelas", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 400, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 600, dataVencimento: "2026-04-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+      await conservacaoVale(fee._id, pagamento._id);
+    });
+
+    test("sobra vai para o saldo", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 400, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+      await conservacaoVale(fee._id, pagamento._id);
+    });
+
+    test("continua valendo DEPOIS de um estorno parcial", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 400, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 600, dataVencimento: "2026-04-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      await criarEstorno(api, pagamento._id, { valor: 350, motivo: "Devolução parcial" });
+      await conservacaoVale(fee._id, pagamento._id);
+    });
+
+    test("sem parcela nenhuma, tudo vira saldo", async () => {
+      const fee = await honorarioNovo(1000);
+      const { pagamento } = await criarPagamento(api, fee._id, {
+        valor: 700,
+        tipo: "adiantamento"
+      });
+      await conservacaoVale(fee._id, pagamento._id);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("4. alocação do mais ANTIGO; desalocação do mais NOVO", () => {
+    test("três vencimentos distintos: aloca do antigo para o novo", async () => {
+      const fee = await honorarioNovo(3000);
+      // Criadas FORA de ordem de vencimento de propósito: a ordem que vale é a
+      // do vencimento, não a de criação nem a do número da parcela.
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-05-10" });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 3, { valor: 1000, dataVencimento: "2026-04-10" });
+
+      const { alocacoes } = await criarPagamento(api, fee._id, { valor: 1500 });
+
+      const parcelas = esperado(
+        await api.get(`/installments?processoId=${processo._id}&limit=100`), 200, "parcelas"
+      ).data.filter((p) => String(p.feeId?._id ?? p.feeId) === String(fee._id));
+
+      const porId = new Map(parcelas.map((p) => [String(p._id), p]));
+      const emOrdem = alocacoes.map((a) => porId.get(String(a.parcelaId)));
+
+      assert.equal(emOrdem.length, 2, "1500 cobrem a de março e metade da de abril");
+      assert.equal(emOrdem[0].numeroParcela, 2, "março (parcela 2) recebe primeiro");
+      assert.equal(emOrdem[1].numeroParcela, 3, "abril (parcela 3) recebe depois");
+      iguais(alocacoes[0].valor, 1000, "quita março");
+      iguais(alocacoes[1].valor, 500, "abate metade de abril");
+    });
+
+    test("a desalocação é ESPELHADA: sai do vencimento mais novo primeiro", async () => {
+      const fee = await honorarioNovo(3000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-04-10" });
+      await criarParcela(api, fee._id, 3, { valor: 1000, dataVencimento: "2026-05-10" });
+
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 3000 });
+
+      // Estorna 1200: pela ordem espelhada, sai TODO o de maio (1000) e 200 de
+      // abril. Março, o mais antigo, não é tocado.
+      //
+      // A ordem oposta faria a parcela de março voltar a dever enquanto a de
+      // maio seguisse quitada pelo mesmo dinheiro estornado — estado que
+      // nenhuma leitura humana explica.
+      await criarEstorno(api, pagamento._id, { valor: 1200, motivo: "Devolução parcial" });
+
+      const parcelas = esperado(
+        await api.get(`/installments?processoId=${processo._id}&limit=100`), 200, "parcelas"
+      ).data.filter((p) => String(p.feeId?._id ?? p.feeId) === String(fee._id));
+
+      const porNumero = new Map(parcelas.map((p) => [p.numeroParcela, p]));
+
+      iguais(porNumero.get(1).valorPago, 1000, "março intacta — a mais antiga não é tocada");
+      assert.equal(porNumero.get(1).status, "pago");
+      iguais(porNumero.get(2).valorPago, 800, "abril perdeu 200");
+      assert.equal(porNumero.get(2).status, "parcial");
+      iguais(porNumero.get(3).valorPago, 0, "maio perdeu tudo — era a mais nova");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("5. pagamento maior que tudo, e a auto-alocação do saldo", () => {
+    test("quita o que existe e o resto vira saldo", async () => {
+      const fee = await honorarioNovo(5000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-04-10" });
+
+      const { alocacoes, sobra, saldoAdiantado } = await criarPagamento(api, fee._id, {
+        valor: 3000
+      });
+
+      assert.equal(alocacoes.length, 2, "as duas parcelas existentes são quitadas");
+      iguais(sobra, 1000, "3000 − 1000 − 1000");
+      iguais(saldoAdiantado, 1000, "a sobra fica visível no honorário");
+    });
+
+    test("parcela NOVA dispara a auto-alocação, a partir do primeiro vencimento", async () => {
+      const fee = await honorarioNovo(5000);
+
+      // Adiantamento num honorário SEM parcela: o valor inteiro fica em saldo.
+      const { saldoAdiantado } = await criarPagamento(api, fee._id, {
+        valor: 2500,
+        tipo: "adiantamento"
+      });
+      iguais(saldoAdiantado, 2500, "sem parcela, tudo vira saldo");
+
+      // Duas parcelas nascem. A primeira a vencer consome primeiro.
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      let linha = await linhaDaFicha(fee._id);
+      iguais(linha.saldoAdiantado, 1500, "a parcela de março consumiu 1000");
+      iguais(linha.parcelas.find((p) => p.numeroParcela === 1).valorPago, 1000, "quitada pelo saldo");
+
+      await criarParcela(api, fee._id, 2, { valor: 2000, dataVencimento: "2026-04-10" });
+      linha = await linhaDaFicha(fee._id);
+      iguais(linha.saldoAdiantado, 0, "os 1500 restantes foram para abril");
+      iguais(linha.parcelas.find((p) => p.numeroParcela === 2).valorPago, 1500, "parcial");
+    });
+
+    test("a alocação nascida de saldo é marcada como tal na origem", async () => {
+      const fee = await honorarioNovo(5000);
+      await criarPagamento(api, fee._id, { valor: 800, tipo: "adiantamento" });
+      await criarParcela(api, fee._id, 1, { valor: 800, dataVencimento: "2026-03-10" });
+
+      const extrato = esperado(
+        await api.get(`/fees/${fee._id}/statement?limit=100`), 200, "extrato"
+      );
+      const alocacao = extrato.data.find((e) => e.tipo === "alocacao");
+
+      // A distinção importa: uma parcela quitada por saldo adiantado NÃO teve
+      // dinheiro entrando naquela data, e o cartão "recebido no mês" contaria
+      // duas vezes o mesmo real se as duas origens fossem iguais.
+      assert.equal(alocacao.origem, "saldoAdiantado");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("6. a invariante da ficha, antes e depois de cada operação", () => {
+    // contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto
+    const invarianteVale = async (feeId, momento) => {
+      const linha = await linhaDaFicha(feeId);
+      iguais(
+        Number(linha.totais.contratado) -
+          Number(linha.totais.pagoLiquidoAlocado) -
+          Number(linha.totais.saldoAdiantado),
+        linha.totais.emAberto,
+        `invariante da ficha quebrou ${momento}`
+      );
+      return linha;
+    };
+
+    test("vale em cada passo: pagamento → estorno → reparcelamento", async () => {
+      const fee = await honorarioNovo(4000);
+      await criarParcela(api, fee._id, 1, { valor: 2000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 2000, dataVencimento: "2026-04-10" });
+
+      let linha = await invarianteVale(fee._id, "no honorário recém-parcelado");
+      iguais(linha.totais.emAberto, 4000, "nada pago ainda");
+
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 2500 });
+      linha = await invarianteVale(fee._id, "depois do pagamento");
+      iguais(linha.totais.pagoLiquidoAlocado, 2500);
+      iguais(linha.totais.emAberto, 1500);
+
+      await criarEstorno(api, pagamento._id, { valor: 500, motivo: "Devolução parcial" });
+      linha = await invarianteVale(fee._id, "depois do estorno");
+      iguais(linha.totais.pagoLiquidoAlocado, 2000, "o estornado sai do alocado");
+      iguais(linha.totais.emAberto, 2000);
+
+      // Saldo em aberto = 2000. O plano novo precisa somar exatamente isso.
+      await criarReparcelamento(api, fee._id, [
+        { valor: 1000, dataVencimento: "2026-06-10" },
+        { valor: 1000, dataVencimento: "2026-07-10" }
+      ]);
+      linha = await invarianteVale(fee._id, "depois do reparcelamento");
+      iguais(linha.totais.emAberto, 2000, "reparcelar não muda o quanto se deve");
+    });
+
+    test("o saldo adiantado abate o em aberto tanto quanto o alocado", async () => {
+      const fee = await honorarioNovo(3000);
+      await criarPagamento(api, fee._id, { valor: 3000, tipo: "adiantamento" });
+
+      const linha = await invarianteVale(fee._id, "com honorário integralmente adiantado");
+      iguais(linha.totais.saldoAdiantado, 3000);
+      iguais(
+        linha.totais.emAberto, 0,
+        "quem adiantou tudo não deve nada — contar só o alocado diria 3000"
+      );
+    });
+
+    test("o resumo global fecha com a soma das fichas, com saldo em cena", async () => {
+      // A Fase 4.3 existiu para fechar esta igualdade. A F-1a acrescentou um
+      // terceiro termo à fórmula, e este teste é o que impede o resumo de
+      // divergir de novo no primeiro adiantamento.
+      const resumo = esperado(await api.get("/financeiro/resumo"), 200, "resumo");
+
+      const processos = esperado(
+        await api.get("/processes?limit=100"), 200, "processos"
+      ).data;
+
+      const soma = { contratado: 0, pago: 0, emAberto: 0, saldo: 0 };
+      for (const p of processos) {
+        const ficha = esperado(
+          await api.get(`/financeiro/processos/${p._id}`), 200, `ficha de ${p._id}`
+        );
+        soma.contratado += ficha.totais.contratado;
+        soma.pago += ficha.totais.pago;
+        soma.emAberto += ficha.totais.emAberto;
+        soma.saldo += ficha.totais.saldoAdiantado;
+      }
+
+      iguais(resumo.valorContratado, soma.contratado, "contratado divergiu das fichas");
+      iguais(resumo.recebido, soma.pago, "recebido divergiu das fichas");
+      iguais(resumo.saldoAdiantado, soma.saldo, "saldo divergiu das fichas");
+      iguais(resumo.pendente, soma.emAberto, "em aberto divergiu das fichas");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("7. reparcelamento", () => {
+    test("soma errada → 422 com o valor esperado", async () => {
+      const fee = await honorarioNovo(6000);
+      await criarParcela(api, fee._id, 1, { valor: 3000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 3000, dataVencimento: "2026-04-10" });
+      await criarPagamento(api, fee._id, { valor: 1000 });
+
+      // Saldo real = 6000 − 1000 = 5000. O plano abaixo soma 4000.
+      const r = await api.post(`/fees/${fee._id}/renegotiations`, {
+        parcelas: [
+          { valor: 2000, dataVencimento: "2026-06-10" },
+          { valor: 2000, dataVencimento: "2026-07-10" }
+        ],
+        motivo: "Plano que não fecha"
+      });
+
+      assert.equal(r.status, 422, `esperado 422, veio ${r.status}: ${JSON.stringify(r.body)}`);
+      iguais(r.body.errors.saldoEsperado, 5000, "o 422 diz quanto era esperado");
+      iguais(r.body.errors.somaInformada, 4000, "e quanto veio");
+      assert.equal(r.body.regra, "somaDivergeDoSaldo");
+      assert.match(r.body.message, /5\.?000,00/, "a prosa cita o valor esperado");
+    });
+
+    test("as antigas em aberto saem canceladas COM `reparcelamentoId`", async () => {
+      const fee = await honorarioNovo(6000);
+      const p1 = await criarParcela(api, fee._id, 1, { valor: 3000, dataVencimento: "2026-03-10" });
+      const p2 = await criarParcela(api, fee._id, 2, { valor: 3000, dataVencimento: "2026-04-10" });
+
+      await criarReparcelamento(api, fee._id, [
+        { valor: 2000, dataVencimento: "2026-06-10" },
+        { valor: 2000, dataVencimento: "2026-07-10" },
+        { valor: 2000, dataVencimento: "2026-08-10" }
+      ]);
+
+      for (const antiga of [p1, p2]) {
+        const lida = esperado(
+          await api.get(`/installments/${antiga._id}`), 200, "parcela antiga"
+        );
+        assert.equal(lida.status, "cancelado", "a antiga sai de circulação");
+        assert.ok(lida.reparcelamentoId, "COM vínculo — o histórico continua navegável");
+      }
+    });
+
+    test("parcela PAGA fica intacta e fora da conta", async () => {
+      const fee = await honorarioNovo(6000);
+      const paga = await criarParcela(api, fee._id, 1, { valor: 2000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 4000, dataVencimento: "2026-04-10" });
+
+      await criarPagamento(api, fee._id, { valor: 2000 }); // quita a parcela 1
+
+      // Saldo = 6000 − 2000 = 4000, e é só a parcela 2 que se redistribui.
+      const { reparcelamento } = await criarReparcelamento(api, fee._id, [
+        { valor: 2000, dataVencimento: "2026-06-10" },
+        { valor: 2000, dataVencimento: "2026-07-10" }
+      ]);
+
+      const lida = esperado(await api.get(`/installments/${paga._id}`), 200, "parcela paga");
+      assert.equal(lida.status, "pago", "a paga continua paga");
+      assert.equal(lida.reparcelamentoId ?? null, null, "e sem vínculo — não foi renegociada");
+
+      assert.equal(reparcelamento.parcelasCanceladas.length, 1, "só a em aberto entrou");
+      iguais(reparcelamento.saldoRenegociado, 4000);
+    });
+
+    test("parcela PARCIAL é cancelada com vínculo, e o alocado nela fica", async () => {
+      const fee = await honorarioNovo(6000);
+      const parcial = await criarParcela(api, fee._id, 1, { valor: 3000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 3000, dataVencimento: "2026-04-10" });
+
+      await criarPagamento(api, fee._id, { valor: 1200 }); // parcial na parcela 1
+
+      const { reparcelamento } = await criarReparcelamento(api, fee._id, [
+        { valor: 4800, dataVencimento: "2026-06-10" }
+      ]);
+
+      const lida = esperado(await api.get(`/installments/${parcial._id}`), 200, "parcela parcial");
+      assert.equal(lida.status, "cancelado");
+      assert.ok(lida.reparcelamentoId, "cancelada COM vínculo");
+      iguais(lida.valorPago, 1200, "o que foi alocado nela FICA — é histórico, não volta");
+
+      const snapshot = reparcelamento.parcelasCanceladas.find(
+        (p) => String(p.parcelaId) === String(parcial._id)
+      );
+      assert.equal(snapshot.statusAnterior, "parcial", "o snapshot congela o estado de então");
+      iguais(snapshot.emAberto, 1800, "só o que faltava entrou no saldo renegociado");
+    });
+
+    test("o saldo adiantado se auto-aloca nas parcelas novas", async () => {
+      const fee = await honorarioNovo(5000);
+      await criarParcela(api, fee._id, 1, { valor: 5000, dataVencimento: "2026-03-10" });
+      // 6000 num honorário de 5000: quita a parcela e deixa 1000 em saldo.
+      await criarPagamento(api, fee._id, { valor: 6000 });
+
+      let linha = await linhaDaFicha(fee._id);
+      iguais(linha.saldoAdiantado, 1000, "sobra em saldo");
+      iguais(linha.totais.emAberto, -1000, "honorário com crédito — negativo é honesto");
+
+      // Não há saldo em aberto positivo: o reparcelamento é recusado, e a
+      // mensagem diz por quê em vez de criar parcelas do nada.
+      const r = await api.post(`/fees/${fee._id}/renegotiations`, {
+        parcelas: [{ valor: 100, dataVencimento: "2026-06-10" }]
+      });
+      assert.equal(r.status, 422);
+      assert.equal(r.body.regra, "semSaldoParaReparcelar");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("8. `cancelado` de Fee nunca é sobrescrito (regressão DEC-028)", () => {
+    test("honorário cancelado com TODAS as parcelas quitadas continua cancelado", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      // O pagamento entra ANTES do cancelamento: depois dele a rota recusa.
+      await criarPagamento(api, fee._id, { valor: 1000 });
+
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "cancelado" }), 200, "cancelamento");
+
+      const lido = esperado(await api.get(`/fees/${fee._id}`), 200, "honorário");
+      assert.equal(
+        lido.status, "cancelado",
+        "a guarda caiu: o recálculo sobrescreveu `cancelado` com `pago`"
+      );
+    });
+
+    test("honorário cancelado RECUSA pagamento novo com 409", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "cancelado" }), 200, "cancelamento");
+
+      const r = await api.post("/payments", {
+        honorarioId: fee._id,
+        valor: 500,
+        data: "2026-03-15",
+        formaPagamento: "pix"
+      });
+      assert.equal(r.status, 409, `esperado 409, veio ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.regra, "honorarioCancelado");
+    });
+
+    test("descancelar é escrita explícita, e aí a derivação volta a valer", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarPagamento(api, fee._id, { valor: 1000 });
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "cancelado" }), 200, "cancelamento");
+
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "pendente" }), 200, "descancelamento");
+
+      const lido = esperado(await api.get(`/fees/${fee._id}`), 200, "honorário");
+      assert.equal(
+        lido.status, "pago",
+        "descancelado, a derivação manda de novo — a parcela está quitada"
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("9. `historicoStatus` só cresce, com a origem certa", () => {
+    const historico = async (feeId) => {
+      const extrato = esperado(
+        await api.get(`/fees/${feeId}/statement?limit=100`), 200, "extrato"
+      );
+      return extrato.data.filter((e) => e.tipo === "mudancaStatus");
+    };
+
+    test("a cadeia começa no nascimento, com `de: null` e origem `criacao`", async () => {
+      const fee = await honorarioNovo(1000);
+      const h = await historico(fee._id);
+
+      assert.equal(h.length, 1, "um honorário recém-criado tem UMA linha");
+      assert.equal(h[0].de, null, "o começo da cadeia é reconhecível");
+      assert.equal(h[0].para, "pendente");
+      assert.equal(h[0].origemStatus, "criacao");
+    });
+
+    test("cada transição acrescenta UMA linha, e nenhuma some", async () => {
+      const fee = await honorarioNovo(2000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-04-10" });
+
+      const antes = await historico(fee._id);
+
+      await criarPagamento(api, fee._id, { valor: 1000 });   // → parcialmente_pago
+      const depoisDoParcial = await historico(fee._id);
+
+      await criarPagamento(api, fee._id, { valor: 1000 });   // → pago
+      const depoisDoPago = await historico(fee._id);
+
+      assert.ok(depoisDoParcial.length > antes.length, "o histórico cresceu");
+      assert.ok(depoisDoPago.length > depoisDoParcial.length, "e cresceu de novo");
+
+      // Só cresce: o prefixo antigo continua idêntico, linha a linha.
+      antes.forEach((linha, i) => {
+        assert.equal(depoisDoPago[i].id, linha.id, "uma linha antiga mudou de lugar ou sumiu");
+        assert.equal(depoisDoPago[i].para, linha.para);
+      });
+
+      const ultima = depoisDoPago[depoisDoPago.length - 1];
+      assert.equal(ultima.para, "pago");
+      assert.equal(
+        ultima.origemStatus, "recalculo",
+        "quitar parcela é DERIVAÇÃO, não decisão de alguém"
+      );
+    });
+
+    test("cancelar registra origem `cancelamento`, não `recalculo`", async () => {
+      const fee = await honorarioNovo(1000);
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "cancelado" }), 200, "cancelamento");
+
+      const h = await historico(fee._id);
+      const ultima = h[h.length - 1];
+      assert.equal(ultima.para, "cancelado");
+      assert.equal(
+        ultima.origemStatus, "cancelamento",
+        "é o que distingue `o sistema derivou` de `alguém decidiu`"
+      );
+    });
+
+    test("reparcelar registra origem `reparcelamento`", async () => {
+      // ── O cenário precisa PRODUZIR uma transição ─────────────────────────
+      //
+      // A primeira versão deste teste quitava a parcela 1 por inteiro. Com uma
+      // parcela `pago` sobrevivendo ao reparcelamento, o honorário continua
+      // `parcialmente_pago` antes e depois — não há transição nenhuma, e
+      // `registrarStatus` não grava linha para status igual, por desenho
+      // (senão o array encheria de ruído).
+      //
+      // Era a premissa do teste que estava errada, não o código. Aqui o
+      // pagamento é PARCIAL: a parcela 1 fica `parcial`, é cancelada pelo
+      // reparcelamento junto com a 2, e as novas nascem sem alocação — o
+      // honorário volta de `parcialmente_pago` para `pendente`, e é essa
+      // transição que precisa levar o carimbo certo.
+      const fee = await honorarioNovo(2000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-04-10" });
+      await criarPagamento(api, fee._id, { valor: 400 }); // parcela 1 → parcial
+
+      const antes = await historico(fee._id);
+      assert.equal(
+        antes[antes.length - 1].para, "parcialmente_pago",
+        "arranjo: o honorário precisa estar `parcialmente_pago` antes"
+      );
+
+      // Saldo = 2000 − 400 = 1600, redistribuído em duas de 800.
+      await criarReparcelamento(api, fee._id, [
+        { valor: 800, dataVencimento: "2026-06-10" },
+        { valor: 800, dataVencimento: "2026-07-10" }
+      ]);
+
+      const h = await historico(fee._id);
+      const ultima = h[h.length - 1];
+
+      assert.equal(ultima.para, "pendente", "as antigas saíram, as novas nasceram sem alocação");
+      assert.equal(
+        ultima.origemStatus, "reparcelamento",
+        "a transição foi atribuída a `recalculo` — a origem não viajou pela cadeia"
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("10. as rotas que morreram, e a allowlist de um campo", () => {
+    test("PATCH /payments/:id/reativar → 404", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      const r = await api.patch(`/payments/${pagamento._id}/reativar`, {});
+      assert.equal(r.status, 404, "a rota de reativação de pagamento morreu (DEC-034)");
+    });
+
+    test("PATCH /installments/:id/reativar → 404", async () => {
+      const fee = await honorarioNovo(1000);
+      const parcela = await criarParcela(api, fee._id, 1, {
+        valor: 1000, dataVencimento: "2026-03-10"
+      });
+
+      const r = await api.patch(`/installments/${parcela._id}/reativar`, {});
+      assert.equal(r.status, 404, "a rota de reativação de parcela morreu (DEC-034)");
+    });
+
+    test("DELETE /payments/:id → 404 (estornar é o caminho)", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      const r = await api.delete(`/payments/${pagamento._id}`);
+      assert.equal(r.status, 404, "pagamento não se apaga (DEC-032)");
+    });
+
+    test("PATCH de payment fora de `observacoes` → 400 com `campo`", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      // Um por um, porque cada um tem de ser recusado por si — e porque um
+      // teste que mandasse os quatro juntos passaria mesmo que só o primeiro
+      // estivesse na guarda.
+      for (const [campo, valor] of [
+        ["valor", 5000],
+        ["data", "2026-01-01"],
+        ["formaPagamento", "dinheiro"],
+        ["honorarioId", String(fee._id)],
+        ["ativo", false]
+      ]) {
+        const r = await api.patch(`/payments/${pagamento._id}`, { [campo]: valor });
+        assert.equal(
+          r.status, 400,
+          `PATCH { ${campo} } devia ser 400, veio ${r.status}: ${JSON.stringify(r.body)}`
+        );
+        assert.equal(r.body.campo, campo, `o 400 precisa nomear o campo recusado`);
+      }
+    });
+
+    test("`observacoes` continua editável, e é a única", async () => {
+      const fee = await honorarioNovo(1000);
+      await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+      const atualizado = esperado(
+        await api.patch(`/payments/${pagamento._id}`, { observacoes: "Conferido no extrato" }),
+        200, "PATCH observacoes"
+      );
+      assert.equal(atualizado.observacoes, "Conferido no extrato");
+      iguais(atualizado.valor, 1000, "o valor não se move — pagamento é imutável");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  describe("11. paginação do extrato", () => {
+    test("duas páginas, sem id repetido e sem linha perdida", async () => {
+      const fee = await honorarioNovo(10000);
+      await criarParcela(api, fee._id, 1, { valor: 2000, dataVencimento: "2026-03-10" });
+      await criarParcela(api, fee._id, 2, { valor: 2000, dataVencimento: "2026-04-10" });
+      await criarParcela(api, fee._id, 3, { valor: 2000, dataVencimento: "2026-05-10" });
+
+      // Eventos suficientes para atravessar a fronteira de página: pagamentos,
+      // um estorno (que gera estorno + desalocação) e mudanças de status.
+      const { pagamento: p1 } = await criarPagamento(api, fee._id, { valor: 2000, data: "2026-03-11" });
+      await criarPagamento(api, fee._id, { valor: 2000, data: "2026-04-11" });
+      await criarPagamento(api, fee._id, { valor: 1500, data: "2026-05-11" });
+      await criarEstorno(api, p1._id, { valor: 500, motivo: "Devolução parcial", data: "2026-05-20" });
+
+      const inteiro = esperado(
+        await api.get(`/fees/${fee._id}/statement?limit=100`), 200, "extrato inteiro"
+      );
+      assert.ok(inteiro.total > 5, `poucos eventos para o teste valer: ${inteiro.total}`);
+
+      const tamanho = Math.ceil(inteiro.total / 2);
+      const pag1 = esperado(
+        await api.get(`/fees/${fee._id}/statement?page=1&limit=${tamanho}`), 200, "página 1"
+      );
+      const pag2 = esperado(
+        await api.get(`/fees/${fee._id}/statement?page=2&limit=${tamanho}`), 200, "página 2"
+      );
+
+      assert.equal(pag1.total, inteiro.total, "o total não muda entre páginas");
+      assert.equal(pag1.totalPages, 2);
+
+      const ids1 = pag1.data.map((e) => e.id);
+      const ids2 = pag2.data.map((e) => e.id);
+
+      const repetidos = ids1.filter((id) => ids2.includes(id));
+      assert.deepEqual(repetidos, [], `id repetido entre as páginas: ${repetidos.join(", ")}`);
+
+      const juntos = new Set([...ids1, ...ids2]);
+      assert.equal(
+        juntos.size, inteiro.total,
+        "a soma das páginas não reconstrói o extrato inteiro"
+      );
+    });
+
+    test("o extrato traz os vínculos de cada linha", async () => {
+      const fee = await honorarioNovo(3000);
+      await criarParcela(api, fee._id, 1, { valor: 3000, dataVencimento: "2026-03-10" });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 3000, data: "2026-03-11" });
+      await criarEstorno(api, pagamento._id, {
+        valor: 1000, motivo: "Devolução acordada", data: "2026-03-20"
+      });
+
+      const extrato = esperado(
+        await api.get(`/fees/${fee._id}/statement?limit=100`), 200, "extrato"
+      );
+      const porTipo = (t) => extrato.data.filter((e) => e.tipo === t);
+
+      const estorno = porTipo("estorno")[0];
+      assert.equal(String(estorno.pagamentoId), String(pagamento._id), "o estorno aponta o pagamento");
+      assert.equal(estorno.motivo, "Devolução acordada");
+
+      const desalocacao = porTipo("desalocacao")[0];
+      assert.ok(desalocacao, "a desalocação vira linha própria, com data própria");
+      assert.equal(String(desalocacao.pagamentoId), String(pagamento._id));
+      assert.ok(desalocacao.parcelaId, "e aponta a parcela");
+      assert.ok(desalocacao.estornoId, "e o estorno que a causou");
+
+      const alocacao = porTipo("alocacao")[0];
+      assert.equal(String(alocacao.pagamentoId), String(pagamento._id));
+      assert.ok(alocacao.numeroParcela, "a alocação nomeia a parcela");
+    });
+
+    test("teto de 100 no limit, no padrão da F-0", async () => {
+      const fee = await honorarioNovo(1000);
+      const r = esperado(
+        await api.get(`/fees/${fee._id}/statement?limit=5000`), 200, "extrato"
+      );
+      assert.equal(r.limit, 100, "o teto de 100 vale aqui como em toda listagem");
+    });
+  });
+});

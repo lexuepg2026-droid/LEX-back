@@ -5,6 +5,7 @@ import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
+import Reversal from "../models/Reversal.js";
 import { contarNaoVistas } from "./confirmacaoService.js";
 
 const toCountMap = (arr) =>
@@ -60,13 +61,13 @@ export const getSummary = async (usuarioId) => {
         $match: {
           usuarioId,
           ativo: true,
-          dataPagamento: { $gte: startOfMonth, $lte: endOfMonth }
+          data: { $gte: startOfMonth, $lte: endOfMonth }
         }
       },
       {
         $group: {
           _id: null,
-          total: { $sum: "$valorPago" }
+          total: { $sum: "$valor" }
         }
       }
     ]),
@@ -143,8 +144,15 @@ export const getStatusCounts = async (usuarioId) => {
 // `Installment.dataPagamento` é a data em que a parcela FECHOU. Um pagamento
 // de julho numa parcela vencida em maio precisa contar em julho, que é quando
 // o dinheiro entrou — é disso que a advogada precisa para saber o que recebeu
-// no mês. Por isso a fonte é `Payment.dataPagamento`, sempre restrita às
-// parcelas da cadeia acima.
+// no mês. Por isso a fonte é `Payment.data`, restrita aos HONORÁRIOS da cadeia
+// acima (F-1a: a âncora do pagamento deixou de ser a parcela) e LÍQUIDA dos
+// estornos do próprio pagamento.
+//
+// ── DUAS MUDANÇAS DE CONTRATO na F-1a, as duas deliberadas ────────────────
+// 1. `pendente` passa a ser `contratado − recebido − saldoAdiantado`. Sem o
+//    terceiro termo ele divergiria da soma das fichas no primeiro
+//    adiantamento — a mesma divergência que a Fase 4.3 existiu para fechar.
+// 2. `saldoAdiantado` é chave NOVA de primeiro nível. São dez agora.
 // ═══════════════════════════════════════════════════════════════════════════
 export const getFinanceiroResumo = async (usuarioId) => {
   const uid = new mongoose.Types.ObjectId(usuarioId);
@@ -191,7 +199,7 @@ export const getFinanceiroResumo = async (usuarioId) => {
     ativo: true,
     status: { $ne: STATUS_CANCELADO },
     processoId: { $in: processoIds }
-  }).select("valor descricao processoId");
+  }).select("valor descricao processoId saldoAdiantado");
 
   const feeIds = honorarios.map((f) => f._id);
   const honorarioPorId = new Map(honorarios.map((f) => [String(f._id), f]));
@@ -226,20 +234,63 @@ export const getFinanceiroResumo = async (usuarioId) => {
   });
 
   // ── 4. Pagamentos do mês, pela data em que o dinheiro entrou ──────────────
-  const recebidoNoMesRes = await Payment.aggregate([
-    {
-      $match: {
-        usuarioId: uid,
-        ativo: true,
-        installmentId: { $in: parcelas.map((p) => p._id) },
-        dataPagamento: { $gte: inicioDoMes, $lte: fimDoMes }
-      }
-    },
-    { $group: { _id: null, total: { $sum: "$valorPago" } } }
-  ]);
+  //
+  // A âncora mudou na F-1a: o pagamento nasce contra o HONORÁRIO, então o
+  // recorte da cadeia é `honorarioId`, e não mais a lista de parcelas. Um
+  // adiantamento não tem parcela nenhuma e continuava sendo dinheiro que
+  // entrou no mês — pelo filtro antigo ele sumiria do cartão.
+  //
+  // ── LÍQUIDO DE ESTORNOS DO PRÓPRIO PAGAMENTO ────────────────────────────
+  // O cartão responde "quanto entrou neste mês e ficou". Um pagamento de 1.000
+  // em agosto, estornado em 300, contribui com 700 — mesmo que o estorno seja
+  // de setembro: o abatimento segue o PAGAMENTO, que é a coisa datada de
+  // agosto. Contar o bruto faria a advogada fechar o mês com dinheiro que
+  // devolveu; datar o abatimento pelo estorno faria agosto mudar de valor
+  // conforme setembro, e um mês fechado não pode se mexer.
+  const pagamentosDoMes = await Payment.find({
+    usuarioId: uid,
+    ativo: true,
+    honorarioId: { $in: feeIds },
+    data: { $gte: inicioDoMes, $lte: fimDoMes }
+  }).select("valor");
+
+  const estornosDoMes = await Reversal.find({
+    usuarioId: uid,
+    pagamentoId: { $in: pagamentosDoMes.map((p) => p._id) }
+  }).select("pagamentoId valor estornoAnuladoId");
+
+  // "Estorno ativo" = o que ninguém anulou. A regra tem UM dono
+  // (`reversalService`), e a forma é a mesma aqui: os de anulação não são
+  // débito, e o que eles apontam deixa de ser.
+  const anulados = new Set(
+    estornosDoMes.filter((e) => e.estornoAnuladoId).map((e) => String(e.estornoAnuladoId))
+  );
+  const estornadoPorPagamento = new Map();
+  for (const e of estornosDoMes) {
+    if (e.estornoAnuladoId) continue;
+    if (anulados.has(String(e._id))) continue;
+    const chave = String(e.pagamentoId);
+    estornadoPorPagamento.set(
+      chave,
+      emCentavos((estornadoPorPagamento.get(chave) ?? 0) + Number(e.valor))
+    );
+  }
+
+  const recebidoNoMes = emCentavos(
+    pagamentosDoMes.reduce(
+      (t, p) => t + Number(p.valor) - (estornadoPorPagamento.get(String(p._id)) ?? 0),
+      0
+    )
+  );
 
   const contratado = somar(honorarios, "valor");
+  // `recebido` continua sendo o ALOCADO líquido: `Installment.valorPago` é
+  // reescrito pelo recálculo a partir das alocações ativas (F-1a), então este
+  // número já é líquido de estorno sem precisar de segunda conta.
   const recebido = somar(parcelas, "valorPago");
+  // Dinheiro que entrou e ainda não achou parcela. Sai no resumo pelo mesmo
+  // motivo pelo qual sai na ficha — e porque sem ele `pendente` mentiria.
+  const saldoAdiantado = somar(honorarios, "saldoAdiantado");
 
   const noMes = linhas.filter(
     (l) => l.dataVencimento >= inicioDoMes && l.dataVencimento <= fimDoMes
@@ -256,14 +307,19 @@ export const getFinanceiroResumo = async (usuarioId) => {
     // mudou o que entra na conta, para fecharem com as fichas.
     valorContratado: contratado,
     recebido,
-    pendente: emCentavos(contratado - recebido),
+    // A invariante da F-1a, a mesma da ficha: o saldo adiantado abate o em
+    // aberto tanto quanto o alocado. Sem ele, `pendente` divergiria da soma
+    // das fichas no primeiro adiantamento — que é exatamente a divergência
+    // que a Fase 4.3 existiu para fechar.
+    pendente: emCentavos(contratado - recebido - saldoAdiantado),
+    saldoAdiantado,
     // Contagem de parcelas vencidas, como sempre. Agora acompanhada do valor.
     vencidas: vencidasLinhas.length,
 
     // ── DEC-028(d) ──────────────────────────────────────────────────────────
     mesReferencia,
     aReceberNoMes: somar(noMes, "emAberto"),
-    recebidoNoMes: emCentavos(recebidoNoMesRes[0]?.total ?? 0),
+    recebidoNoMes,
     valorVencido: somar(vencidasLinhas, "emAberto"),
     proximosVencimentos
   };

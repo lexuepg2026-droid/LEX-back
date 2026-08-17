@@ -107,10 +107,20 @@ export const CAMPOS_UPDATE = Object.freeze({
     "feeId", "numeroParcela", "valor", "dataVencimento", "status",
     "dataPagamento", "observacoes"
   ]),
-  payments: Object.freeze([
-    "installmentId", "valorPago", "dataPagamento", "formaPagamento",
-    "observacoes"
-  ]),
+  // ── DEC-032 (F-1): pagamento é IMUTÁVEL ─────────────────────────────────
+  //
+  // A lista tinha cinco campos e passou a ter UM. `valor`, `data`,
+  // `formaPagamento` e o vínculo com a parcela saíram: corrigir dinheiro
+  // gravado deixou de ser edição e virou estorno (DEC-033).
+  //
+  // O motivo é que um registro de pagamento que muda de valor não é registro,
+  // é rascunho — e a advogada precisa poder responder, meses depois, "quanto
+  // entrou, quando, e por que parte disso voltou". Um PATCH que reescreve o
+  // valor apaga exatamente essa pergunta, sem deixar rastro de que houve
+  // correção.
+  //
+  // `observacoes` fica porque é anotação sobre o fato, não o fato.
+  payments: Object.freeze(["observacoes"]),
   secoes: Object.freeze(["titulo", "tipo", "texto"]),
   // `ehModelo` fica na lista de propósito, como `clientePrincipalId` em
   // `processes`: é recusado logo depois com mensagem própria, que manda criar

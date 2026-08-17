@@ -17,15 +17,21 @@ import mongoose from "mongoose";
 // recálculo nunca sobrescreve — ver a guarda lá.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Vocabulário de tipo de honorário. PRECISA DE RATIFICAÇÃO DA ADVOGADA antes de
-// a Fase 5 documentar: é vocabulário jurídico da prática dela, não decisão
-// técnica. Os três valores são os que existiam desde a Fase 1 e não foram
-// alterados nesta fase — só passaram a ter regra condicional em cima.
-export const TIPOS_HONORARIO = Object.freeze(["fixo", "percentual", "custas"]);
+// Vocabulário de tipo de honorário. Mora em `config/tiposHonorario.js` desde a
+// Fase F-1 (DEC-039, PROVISÓRIA): valor gravado e rótulo de exibição separados,
+// num arquivo só, para que ratificar a lista com a advogada vire acrescentar
+// uma linha lá. Reexportado aqui porque é daqui que meio projeto importa desde
+// a Fase 1 — trocar todos os imports de uma vez seria churn sem ganho.
+//
+// **PRECISA DE RATIFICAÇÃO DA ADVOGADA.** É vocabulário jurídico da prática
+// dela, não decisão técnica, e esta fase não acrescentou nem tirou nenhum.
+import {
+  TIPOS_HONORARIO,
+  TIPO_PERCENTUAL,
+  rotuloDoTipo
+} from "../config/tiposHonorario.js";
 
-// O único tipo que implica percentagem. Isolado em constante porque três
-// arquivos precisam da mesma resposta para "este tipo admite percentual?".
-export const TIPO_PERCENTUAL = "percentual";
+export { TIPOS_HONORARIO, TIPO_PERCENTUAL };
 
 // DEC-028 (Fase 4.1). `parcialmente_pago` é novo, e o conjunto passa a ser
 // DERIVADO das parcelas por `recalcularStatusFee` (`paymentService.js`).
@@ -41,13 +47,9 @@ export const STATUS_CANCELADO = "cancelado";
 
 const ehVazio = (v) => v === undefined || v === null || v === "";
 
-// Rótulo do tipo para a mensagem de erro. A advogada lê "custas processuais",
-// não "custas".
-const ROTULO_TIPO = {
-  fixo: "fixo",
-  percentual: "percentual",
-  custas: "custas processuais"
-};
+// Rótulo do tipo para a mensagem de erro. A advogada lê "Custas processuais",
+// não "custas". O mapa local morreu na F-1: era a segunda lista de rótulos do
+// projeto, e `config/tiposHonorario.js` passou a ser a única (DEC-039).
 
 const feeSchema = new mongoose.Schema(
   {
@@ -105,6 +107,56 @@ const feeSchema = new mongoose.Schema(
       type: Date,
       required: true
     },
+    // ── DEC-036 (F-1) — dinheiro recebido que ainda não achou parcela ──────
+    //
+    // Alimentado por pagamento do tipo `adiantamento` (honorário sem parcelas)
+    // e pela SOBRA de um pagamento comum que cobriu tudo o que estava em
+    // aberto. Consumido automaticamente quando parcelas novas nascem, do
+    // primeiro vencimento em diante, virando `Allocation`s normais.
+    //
+    // Existe para que **nada se perca**: sem ele, o troco de um pagamento
+    // maior que o saldo teria de ser recusado (e a advogada registraria um
+    // valor que não foi o que entrou) ou descartado em silêncio (pior). Com
+    // ele, o dinheiro fica visível no extrato até encontrar destino.
+    //
+    // NUNCA negativo, e nunca escrito por rota: o ponto único de escrita é
+    // `allocationService`, pela mesma razão de `Installment.valorPago`.
+    saldoAdiantado: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    // ── DEC-038 (F-1) — histórico append-only de status ───────────────────
+    //
+    // `status` é derivado (DEC-028) e muda sozinho quando uma parcela é paga,
+    // estornada ou renegociada. Sem histórico, a advogada abre o honorário,
+    // vê `parcialmente_pago` e não tem como saber que ele esteve `pago` semana
+    // passada — nem por quê.
+    //
+    // **Append-only**: nunca editado, nunca podado. Quem escreve é o ponto
+    // único de mudança de status (`registrarStatus`, em `statusHistory.js`);
+    // não há rota que aceite este campo.
+    historicoStatus: {
+      type: [
+        new mongoose.Schema(
+          {
+            de: { type: String, default: null },
+            para: { type: String, required: true },
+            data: { type: Date, required: true, default: Date.now },
+            // `recalculo` (derivação normal da DEC-028), `cancelamento` e
+            // `reparcelamento` (escrita explícita). Saber a ORIGEM é o que
+            // distingue "o sistema derivou" de "alguém decidiu".
+            origem: {
+              type: String,
+              required: true,
+              enum: ["recalculo", "cancelamento", "reparcelamento", "criacao"]
+            }
+          },
+          { _id: false }
+        )
+      ],
+      default: []
+    },
     ativo: {
       type: Boolean,
       default: true
@@ -137,7 +189,7 @@ feeSchema.pre("validate", function validarPercentual() {
   } else if (!ehTipoPercentual && temPercentual) {
     this.invalidate(
       "percentual",
-      `Honorário do tipo ${ROTULO_TIPO[this.tipo] || this.tipo} não admite percentual. ` +
+      `Honorário do tipo ${rotuloDoTipo(this.tipo)} não admite percentual. ` +
       "Mude o tipo para percentual ou apague o campo."
     );
   } else if (temPercentual) {

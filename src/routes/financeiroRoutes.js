@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { getFinanceiro, getFichaFinanceiraDoProcesso } from "../controllers/dashboardController.js";
+import {
+  getFinanceiro,
+  getFichaFinanceiraDoProcesso,
+  getPagamentosDoProcesso
+} from "../controllers/dashboardController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 
 const router = Router();
@@ -18,5 +22,14 @@ router.get("/resumo", getFinanceiro);
 // financeira, e o sub-recurso em português segue a mesma exceção de `/secoes` e
 // `/clientes`.
 router.get("/processos/:processoId", getFichaFinanceiraDoProcesso);
+
+// Pagamentos do processo, com estornos e alocações resumidas (F-1a).
+//
+// Separado da ficha de propósito: a ficha é a árvore da COBRANÇA (honorário →
+// parcela → alocação) e não pagina; esta é a lista do DINHEIRO que entrou, na
+// ordem em que entrou, e pagina no padrão da regra central nº 4. São duas
+// perguntas diferentes, e enfiar as duas na ficha faria o objeto que já é
+// grande carregar uma listagem que a tela nem sempre mostra.
+router.get("/processos/:processoId/payments", getPagamentosDoProcesso);
 
 export default router;

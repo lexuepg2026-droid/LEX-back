@@ -56,7 +56,7 @@ describe("allowlist de PATCH — `ativo` fora do corpo em todas as entidades", (
     ]);
     const honorario = await criarHonorario(api, processo._id);
     const parcela = await criarParcela(api, honorario._id, 1);
-    const pagamento = await criarPagamento(api, parcela._id);
+    const { pagamento } = await criarPagamento(api, honorario._id);
     const secao = await criarSecao(api, { titulo: `Seção allowlist ${Date.now()}` });
     const modelo = await criarModelo(api);
 
@@ -107,7 +107,11 @@ describe("allowlist de PATCH — `ativo` fora do corpo em todas as entidades", (
     }
   });
 
-  test("PATCH { ativo: true } também é recusado — reativar tem rota própria", async () => {
+  test("PATCH { ativo: true } também é recusado", async () => {
+    // O título dizia "reativar tem rota própria" até a F-0. As duas rotas de
+    // reativação morreram na F-1a (DEC-034) e a recusa continua — agora sem
+    // caminho alternativo nenhum, o que a torna mais importante e não menos:
+    // é a única coisa entre a advogada e um registro desativado em silêncio.
     for (const { rota, id } of alvos) {
       const r = await api.patch(`/${rota}/${id}`, { ativo: true });
       assert.equal(r.status, 400, `${rota}: { ativo: true } também sai pela allowlist`);
@@ -179,7 +183,10 @@ describe("allowlist de PATCH — `ativo` fora do corpo em todas as entidades", (
       ["processes", { observacoes: "anotação de teste" }],
       ["fees", { descricao: "descrição nova" }],
       ["installments", { observacoes: "obs" }],
-      ["payments", { formaPagamento: "pix" }],
+      // `formaPagamento` era o update legítimo até a F-0. A allowlist de
+      // `payments` encolheu para UM campo (DEC-032): corrigir dinheiro
+      // gravado deixou de ser edição e virou estorno.
+      ["payments", { observacoes: "anotação sobre o pagamento" }],
       ["secoes", { titulo: `Título legítimo ${Date.now()}` }],
       ["documents", { descricao: "descrição do modelo" }]
     ];

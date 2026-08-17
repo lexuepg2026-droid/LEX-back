@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
+import Allocation from "../models/Allocation.js";
 import Fee from "../models/Fee.js";
 import Process from "../models/Process.js";
 import Client from "../models/Client.js";
@@ -23,6 +24,7 @@ import {
 import { valorPorExtenso } from "../utils/numeroPorExtenso.js";
 import { moeda, data as formatarData, dataExtenso } from "../utils/templateFormatters.js";
 import { formatarCPF, formatarCNPJ, somenteDigitos } from "../utils/documentos.js";
+import { carregarEstornos, valorLiquido } from "./reversalService.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RECIBO DE PAGAMENTO — PDF sob demanda (Fase 4.1)
@@ -112,18 +114,35 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     throw createError("Pagamento não encontrado", 404);
   }
 
-  const parcela = await Installment.findOne({
-    _id: pagamento.installmentId,
-    usuarioId,
-    ativo: true
-  });
-  if (!parcela) {
-    throw createError("A parcela deste pagamento não está mais ativa", 404);
-  }
-
-  const honorario = await Fee.findOne({ _id: parcela.feeId, usuarioId, ativo: true });
+  // ── A âncora do recibo virou o HONORÁRIO (F-1a) ──────────────────────────
+  //
+  // Até a F-0 o recibo saía de UMA parcela, porque o pagamento pertencia a uma.
+  // Agora um PIX pode atravessar duas, ou nenhuma (adiantamento), e a pergunta
+  // "de qual parcela é este recibo" deixou de ter resposta única. A referência
+  // do recibo passa a ser a cobrança — que é o que o cliente reconhece — e as
+  // parcelas cobertas entram como detalhamento.
+  const honorario = await Fee.findOne({ _id: pagamento.honorarioId, usuarioId, ativo: true });
   if (!honorario) {
     throw createError("O honorário deste pagamento não está mais ativo", 404);
+  }
+
+  // ── Estorno: o recibo é do LÍQUIDO, e some quando o líquido zera ─────────
+  //
+  // "Recebi de fulano a importância de X" precisa ser verdade no dia em que o
+  // papel é lido. Se 300 de 1.000 voltaram, recebi 700 — imprimir 1.000 daria
+  // ao cliente um comprovante de um valor que ele não pagou, e é justamente o
+  // documento que ele guardaria para provar o contrário.
+  //
+  // Estornado por inteiro, o recibo deixa de existir (404), pela mesma regra
+  // que já valia para pagamento desativado: recibo de pagamento que voltou é o
+  // papel que não pode existir.
+  const estornos = await carregarEstornos(pagamento._id, usuarioId);
+  const liquido = valorLiquido(pagamento, estornos);
+  if (liquido <= 0) {
+    throw createError(
+      "Este pagamento foi integralmente estornado e não gera recibo",
+      404
+    );
   }
 
   const processo = await Process.findOne({ _id: honorario.processoId, usuarioId, ativo: true });
@@ -131,17 +150,39 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     throw createError("O processo deste pagamento não está mais ativo", 404);
   }
 
-  const [usuario, cliente, totalDeParcelas] = await Promise.all([
+  const [usuario, cliente, totalDeParcelas, alocacoes] = await Promise.all([
     User.findById(usuarioId),
     resolverPagador(processo, usuarioId),
-    Installment.countDocuments({ feeId: honorario._id, usuarioId, ativo: true })
+    Installment.countDocuments({ feeId: honorario._id, usuarioId, ativo: true }),
+    // As parcelas que ESTE pagamento cobriu, ativas. Ordenadas por número para
+    // o recibo dizer "parcelas 2 e 3" na ordem em que a advogada as emitiu.
+    Allocation.find({ pagamentoId: pagamento._id, usuarioId, estornoId: null })
+      .populate("parcelaId", "numeroParcela")
+      .sort({ data: 1 })
   ]);
 
   if (!usuario) {
     throw createError("Usuário não encontrado", 404);
   }
 
-  return { pagamento, parcela, honorario, processo, cliente, usuario, totalDeParcelas };
+  const numerosDeParcela = [
+    ...new Set(
+      alocacoes
+        .map((a) => a.parcelaId?.numeroParcela)
+        .filter((n) => n !== undefined && n !== null)
+    )
+  ].sort((a, b) => a - b);
+
+  return {
+    pagamento,
+    honorario,
+    processo,
+    cliente,
+    usuario,
+    totalDeParcelas,
+    numerosDeParcela,
+    valorLiquido: liquido
+  };
 };
 
 // ── Montagem do PDF ─────────────────────────────────────────────────────────
@@ -165,19 +206,20 @@ const linhaAssinatura = () => ({
 
 export const montarPdfDoRecibo = ({
   pagamento,
-  parcela,
   honorario,
   processo,
   cliente,
   usuario,
-  totalDeParcelas
+  totalDeParcelas,
+  numerosDeParcela = [],
+  valorLiquido: liquido
 }) => {
   registrarFontes();
 
   const timbrado = montarTimbrado(usuario);
   const pagador = identificarPagador(cliente);
 
-  const valor = Number(pagamento.valorPago);
+  const valor = Number(liquido ?? pagamento.valor);
   const valorFormatado = moeda(valor);
   // O extenso vem de `numeroPorExtenso.js`, que existe e está coberto por teste
   // desde a Fase 2C. Num recibo, o extenso é o que prevalece quando diverge dos
@@ -188,9 +230,18 @@ export const montarPdfDoRecibo = ({
 
   const referencia = [
     honorario.descricao,
-    totalDeParcelas > 1
-      ? `parcela ${parcela.numeroParcela} de ${totalDeParcelas}`
-      : "pagamento único",
+    // Um pagamento pode cobrir DUAS parcelas, ou nenhuma (adiantamento). A
+    // frase acompanha o fato em vez de fingir que sempre há uma só.
+    // Honorário não parcelado continua sendo "pagamento único": escrever
+    // "parcela 1 de 1" é ruído, e era assim desde a 4.1.
+    totalDeParcelas <= 1
+      ? "pagamento único"
+      : numerosDeParcela.length === 0
+        ? "adiantamento"
+        : numerosDeParcela.length === 1
+          ? `parcela ${numerosDeParcela[0]} de ${totalDeParcelas}`
+          : `parcelas ${numerosDeParcela.slice(0, -1).join(", ")} e ` +
+            `${numerosDeParcela[numerosDeParcela.length - 1]} de ${totalDeParcelas}`,
     processo.numeroProcesso ? `processo nº ${processo.numeroProcesso}` : "",
     processo.titulo
   ]
@@ -217,7 +268,7 @@ export const montarPdfDoRecibo = ({
     },
     {
       style: "corpo",
-      text: `Data do pagamento: ${formatarData(pagamento.dataPagamento)}.`
+      text: `Data do pagamento: ${formatarData(pagamento.data)}.`
     },
     ...(pagamento.observacoes
       ? [{ style: "corpo", text: `Observações: ${pagamento.observacoes}` }]
@@ -277,7 +328,7 @@ export const emitirRecibo = async (pagamentoId, usuarioId) => {
       [
         "recibo",
         pagador.nome,
-        new Date(dados.pagamento.dataPagamento).toISOString().slice(0, 10)
+        new Date(dados.pagamento.data).toISOString().slice(0, 10)
       ],
       "pdf"
     )

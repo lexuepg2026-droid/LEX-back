@@ -54,7 +54,10 @@ describe("guardas de tipo nos filtros de listagem", () => {
     ]);
     const honorario = await criarHonorario(api, processo._id);
     parcela = await criarParcela(api, honorario._id, 1);
-    await criarPagamento(api, parcela._id);
+    // F-1a: o pagamento nasce contra o HONORÁRIO. `?installmentId=` continua
+    // existindo e continua filtrando pela parcela — agora POR ALOCAÇÃO
+    // ("pagamentos que tocaram esta parcela"), que é a mesma pergunta.
+    await criarPagamento(api, honorario._id);
 
     // Duas seções de tipos diferentes: sem isso o teste discriminante não
     // discrimina — `$ne` sobre um conjunto homogêneo devolve o mesmo total que
@@ -199,7 +202,10 @@ describe("F-0: id inválido, filtros compostos e paginação", () => {
     for (let n = 1; n <= 3; n += 1) {
       const parcela = await criarParcela(api, honorario._id, n);
       parcelas.push(parcela);
-      pagamentos.push(await criarPagamento(api, parcela._id));
+      // Uma parcela nasce, o pagamento seguinte a preenche: com `dadosParcela`
+      // e `dadosPagamento` no mesmo valor (1000), cada pagamento cabe exato na
+      // parcela mais antiga em aberto — que é a que acabou de nascer.
+      pagamentos.push((await criarPagamento(api, honorario._id)).pagamento);
     }
   });
 

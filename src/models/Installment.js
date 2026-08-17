@@ -33,14 +33,31 @@ const installmentSchema = new mongoose.Schema(
       type: Date,
       required: true
     },
+    // `cancelado` entrou na Fase F-1 (DEC-037): é o estado da parcela que um
+    // reparcelamento tirou de circulação. Não é exclusão — a parcela continua
+    // legível, com `reparcelamentoId` apontando a operação que a substituiu.
     status: {
       type: String,
       required: true,
-      enum: ["pendente", "pago", "vencido", "parcial"],
+      enum: ["pendente", "pago", "vencido", "parcial", "cancelado"],
       default: "pendente"
     },
-    // Soma dos pagamentos ATIVOS desta parcela, desnormalizada (Fase 4.1).
-    // Pagamento desativado sai da soma.
+    // A operação de reparcelamento que cancelou esta parcela, ou que a criou.
+    // `null` na parcela comum. É o vínculo que faz o histórico contar a
+    // história — "estas cinco viraram aquelas três" — em vez de as antigas
+    // simplesmente sumirem (DEC-037).
+    reparcelamentoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Renegotiation",
+      default: null,
+      index: true
+    },
+    // Soma das ALOCAÇÕES ATIVAS desta parcela (Fase F-1, DEC-035).
+    //
+    // Era a soma dos pagamentos ativos até a F-0, quando pagamento pertencia a
+    // uma parcela. Agora o dinheiro chega por alocação, e alocação desfeita por
+    // estorno (`estornoId` preenchido) sai da soma — a parcela volta a
+    // `parcial` ou `pendente` pelo recálculo normal.
     //
     // NUNCA é escrito por rota: `installmentService` recusa com 400 quem o
     // mandar no corpo, e o único ponto de escrita é
