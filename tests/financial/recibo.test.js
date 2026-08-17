@@ -18,7 +18,7 @@ import { subirApp, derrubarApp } from "../helpers/server.js";
 import { limparColecoes, TODAS_AS_COLECOES, desconectar } from "../helpers/db.js";
 import {
   registrarUsuario, criarClientePF, criarClientePJ, criarProcesso,
-  criarHonorario, criarParcela, criarPagamento, esperado
+  criarHonorario, criarParcela, criarPagamento, criarEstorno, esperado
 } from "../helpers/setup.js";
 import { extrairTextoDoPdf } from "../helpers/pdfText.js";
 import { valorPorExtenso } from "../../src/utils/numeroPorExtenso.js";
@@ -51,12 +51,12 @@ describe("recibo de pagamento", () => {
     parcela = await criarParcela(api, honorario._id, 1, { valor: 6172.83, dataVencimento: AMANHA });
     await criarParcela(api, honorario._id, 2, { valor: 6172.84, dataVencimento: AMANHA });
 
-    pagamento = await criarPagamento(api, parcela._id, {
-      valorPago: 6172.83,
-      dataPagamento: "2026-03-08",
+    ({ pagamento } = await criarPagamento(api, honorario._id, {
+      valor: 6172.83,
+      data: "2026-03-08",
       formaPagamento: "pix",
       observacoes: "Sinal da ação de inventário"
-    });
+    }));
   });
 
   after(async () => {
@@ -140,8 +140,10 @@ describe("recibo de pagamento", () => {
 
   test("honorário SEM parcelamento é descrito como pagamento único", async () => {
     const unico = await criarHonorario(api, processo._id, { valor: 500, descricao: "Honorário único" });
-    const p = await criarParcela(api, unico._id, 1, { valor: 500, dataVencimento: AMANHA });
-    const pg = await criarPagamento(api, p._id, { valorPago: 500, dataPagamento: "2026-04-01" });
+    await criarParcela(api, unico._id, 1, { valor: 500, dataVencimento: AMANHA });
+    const { pagamento: pg } = await criarPagamento(api, unico._id, {
+      valor: 500, data: "2026-04-01"
+    });
 
     const texto = extrairTextoDoPdf((await api.get(`/payments/${pg._id}/recibo`)).bytes);
     assert.ok(texto.includes("pagamento único"), "com uma parcela só, não se escreve 'parcela 1 de 1'");
@@ -153,8 +155,10 @@ describe("recibo de pagamento", () => {
       { clienteId: pj._id, papel: "autor", principal: true }
     ]);
     const fee = await criarHonorario(api, procPj._id, { valor: 1000000, descricao: "Honorários" });
-    const p = await criarParcela(api, fee._id, 1, { valor: 1000000, dataVencimento: AMANHA });
-    const pg = await criarPagamento(api, p._id, { valorPago: 1000000, dataPagamento: "2026-05-02" });
+    await criarParcela(api, fee._id, 1, { valor: 1000000, dataVencimento: AMANHA });
+    const { pagamento: pg } = await criarPagamento(api, fee._id, {
+      valor: 1000000, data: "2026-05-02"
+    });
 
     const r = await api.get(`/payments/${pg._id}/recibo`);
     const texto = extrairTextoDoPdf(r.bytes);
@@ -170,17 +174,59 @@ describe("recibo de pagamento", () => {
     );
   });
 
-  test("pagamento DESATIVADO → 404", async () => {
+  test("pagamento integralmente ESTORNADO → 404", async () => {
+    // Era "pagamento desativado" até a F-0, e o comentário já dizia "recibo de
+    // pagamento estornado é o papel que não pode existir". Na F-1a o estorno
+    // deixou de ser uma metáfora para o soft delete e virou registro próprio —
+    // a asserção é a mesma, agora pelo caminho de verdade.
     const fee = await criarHonorario(api, processo._id, { valor: 300 });
-    const p = await criarParcela(api, fee._id, 1, { valor: 300, dataVencimento: AMANHA });
-    const pg = await criarPagamento(api, p._id, { valorPago: 300 });
+    await criarParcela(api, fee._id, 1, { valor: 300, dataVencimento: AMANHA });
+    const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 300 });
 
-    esperado(await api.get(`/payments/${pg._id}/recibo`), 200, "recibo do pagamento ativo");
+    esperado(await api.get(`/payments/${pg._id}/recibo`), 200, "recibo do pagamento íntegro");
 
-    esperado(await api.delete(`/payments/${pg._id}`), 200, "desativação do pagamento");
+    await criarEstorno(api, pg._id, { valor: 300, motivo: "Estorno integral" });
 
     const r = await api.get(`/payments/${pg._id}/recibo`);
-    assert.equal(r.status, 404, `recibo de pagamento estornado é o papel que não pode existir — ${JSON.stringify(r.body)}`);
+    assert.equal(
+      r.status, 404,
+      `recibo de pagamento estornado é o papel que não pode existir — ${JSON.stringify(r.body)}`
+    );
+  });
+
+  test("pagamento PARCIALMENTE estornado emite recibo do valor LÍQUIDO", async () => {
+    // "Recebi de fulano a importância de X" precisa ser verdade no dia em que
+    // o papel é lido. Imprimir o bruto daria ao cliente um comprovante de um
+    // valor que ele não pagou — justamente o documento que ele guardaria para
+    // provar o contrário.
+    const fee = await criarHonorario(api, processo._id, { valor: 1000 });
+    await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
+    const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 1000 });
+
+    await criarEstorno(api, pg._id, { valor: 400, motivo: "Devolução parcial acordada" });
+
+    // `esperado` devolve o CORPO, que num PDF é null — aqui é a resposta
+    // inteira que interessa, por causa de `bytes`.
+    const r = await api.get(`/payments/${pg._id}/recibo`);
+    assert.equal(r.status, 200, `recibo do líquido — ${JSON.stringify(r.body)}`);
+    const texto = extrairTextoDoPdf(r.bytes);
+
+    assert.ok(texto.includes("600,00"), "o recibo deveria trazer o valor líquido");
+    assert.ok(texto.includes("seiscentos reais"), "e o extenso do líquido");
+    assert.ok(!texto.includes("1.000,00"), "o valor bruto não pode aparecer");
+  });
+
+  test("um pagamento que cobre DUAS parcelas as nomeia no recibo", async () => {
+    const fee = await criarHonorario(api, processo._id, { valor: 900, descricao: "Honorário em duas" });
+    await criarParcela(api, fee._id, 1, { valor: 400, dataVencimento: AMANHA });
+    await criarParcela(api, fee._id, 2, { valor: 500, dataVencimento: AMANHA });
+    const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 900 });
+
+    const texto = extrairTextoDoPdf((await api.get(`/payments/${pg._id}/recibo`)).bytes);
+    assert.ok(
+      texto.includes("parcelas 1 e 2 de 2"),
+      "o recibo precisa dizer as duas parcelas — a frase antiga só sabia falar de uma"
+    );
   });
 
   test("id inexistente → 404; id malformado → 400", async () => {

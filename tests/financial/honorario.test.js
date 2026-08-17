@@ -309,10 +309,12 @@ describe("honorário — DEC-027", () => {
         }),
         201, "parcela"
       );
-      const pagamento = esperado(
+      // F-1a: o pagamento nasce contra o HONORÁRIO, e o 201 devolve o
+      // envelope do motor de alocação (`{ pagamento, alocacoes, ... }`).
+      const { pagamento } = esperado(
         await api.post("/payments", {
-          installmentId: parcela._id, valorPago: 100,
-          dataPagamento: "2026-02-10", formaPagamento: "pix"
+          honorarioId: fee._id, valor: 100,
+          data: "2026-02-10", formaPagamento: "pix"
         }),
         201, "pagamento"
       );

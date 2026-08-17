@@ -207,7 +207,7 @@ describe("portal: consulta", () => {
         tipo: "percentual", percentual: 42, valorBase: 987654,
         descricao: "VALOR SECRETO"
       });
-      const parcela = esperado(
+      esperado(
         await adv.post("/installments", {
           feeId: honorario._id, numeroParcela: 1,
           valor: 100, dataVencimento: "2099-12-31"
@@ -216,8 +216,8 @@ describe("portal: consulta", () => {
       );
       esperado(
         await adv.post("/payments", {
-          installmentId: parcela._id, valorPago: 77,
-          dataPagamento: "2026-02-10", formaPagamento: "pix"
+          honorarioId: honorario._id, valor: 77,
+          data: "2026-02-10", formaPagamento: "pix"
         }),
         201, "pagamento do cenário"
       );
@@ -240,7 +240,12 @@ describe("portal: consulta", () => {
         "987654", "VALOR SECRETO",
         "honorario", "valor", "parcela", "pagamento",
         "percentual", "valorBase", "valorPago", "saldoDisponivel",
-        "valorParcela", "contratado", "emAberto", "parcialmente_pago"
+        "valorParcela", "contratado", "emAberto", "parcialmente_pago",
+        // Os nomes do Financeiro 2.0 (F-1a) entram na mesma rede. A decisão de
+        // manter o portal SEM nada financeiro não foi reaberta, e agora há
+        // três coleções novas de dinheiro para vazar por descuido.
+        "alocacao", "alocacoes", "estorno", "estornos", "reparcelamento",
+        "saldoadiantado", "pagoliquidoalocado", "valorliquido", "totalestornado"
       ];
 
       for (const [rotulo, r] of respostas) {

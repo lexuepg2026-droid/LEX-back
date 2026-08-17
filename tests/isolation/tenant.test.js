@@ -104,7 +104,7 @@ describe("isolamento por usuarioId", () => {
     ]);
     a.honorario = await criarHonorario(A, a.processo._id);
     a.parcela = await criarParcela(A, a.honorario._id, 1);
-    a.pagamento = await criarPagamento(A, a.parcela._id);
+    ({ pagamento: a.pagamento } = await criarPagamento(A, a.honorario._id));
     a.secao = await criarSecao(A, {
       texto:
         "{{nomeCliente}}, {{profissaoCliente}}, CPF {{cpfCliente}}, no processo " +
@@ -247,10 +247,49 @@ describe("isolamento por usuarioId", () => {
     });
 
     test("pagamento de A", async () => {
+      // `observacoes` é o único campo que a allowlist aceita desde a F-1a
+      // (DEC-032). Usá-lo aqui é o que faz o teste medir ISOLAMENTO: com um
+      // campo recusado pela allowlist, o 400 viria antes do filtro por
+      // `usuarioId` e a negação passaria pelo motivo errado.
       await negado(await B.get(`/payments/${a.pagamento._id}`), "GET /payments/:id de A");
-      await negado(await B.patch(`/payments/${a.pagamento._id}`, { valorPago: 1 }), "PATCH /payments/:id de A");
-      await negado(await B.put(`/payments/${a.pagamento._id}`, { valorPago: 1 }), "PUT /payments/:id de A");
-      await negado(await B.delete(`/payments/${a.pagamento._id}`), "DELETE /payments/:id de A");
+      await negado(
+        await B.patch(`/payments/${a.pagamento._id}`, { observacoes: "invadido" }),
+        "PATCH /payments/:id de A"
+      );
+      await negado(
+        await B.put(`/payments/${a.pagamento._id}`, { observacoes: "invadido" }),
+        "PUT /payments/:id de A"
+      );
+    });
+
+    test("estorno e extrato de A", async () => {
+      // As superfícies NOVAS da F-1a. Sem elas na varredura, três rotas de
+      // dinheiro nasceriam sem teste de isolamento — e o extrato devolve a
+      // linha do tempo financeira inteira de um honorário.
+      await negado(
+        await B.post(`/payments/${a.pagamento._id}/reversals`, {
+          valor: 1, motivo: "tentativa de estorno cruzado"
+        }),
+        "POST /payments/:id/reversals de A"
+      );
+      await negado(
+        await B.get(`/payments/${a.pagamento._id}/reversals`),
+        "GET /payments/:id/reversals de A"
+      );
+      await negado(
+        await B.get(`/fees/${a.honorario._id}/statement`),
+        "GET /fees/:id/statement de A"
+      );
+      await negado(
+        await B.post(`/fees/${a.honorario._id}/renegotiations`, {
+          parcelas: [{ valor: 10, dataVencimento: "2099-12-31" }]
+        }),
+        "POST /fees/:id/renegotiations de A"
+      );
+      await negado(
+        await B.get(`/financeiro/processos/${a.processo._id}/payments`),
+        "GET /financeiro/processos/:id/payments de A"
+      );
     });
 
     // ── As duas rotas novas da Fase 4.1 ────────────────────────────────────
@@ -586,10 +625,10 @@ describe("isolamento por usuarioId", () => {
       );
     });
 
-    test("pagamento de B sobre parcela de A", async () => {
+    test("pagamento de B sobre honorário de A", async () => {
       await recusado(
-        await B.post("/payments", dadosPagamento(a.parcela._id)),
-        "POST /payments de B com installmentId de A"
+        await B.post("/payments", dadosPagamento(a.honorario._id)),
+        "POST /payments de B com honorarioId de A"
       );
     });
 

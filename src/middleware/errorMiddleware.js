@@ -85,9 +85,14 @@ const CHAVES_ESTRUTURADAS = [
   "campo", // input do formulário a destacar (409 de duplicidade)
   "dependencia", // 409 de integridade: coleção que bloqueia a exclusão
   "quantidade", // 409 de integridade: quantos dependentes ativos existem
-  "regra", // 409 de regra de negócio que não é contagem de dependente
-  "saldoDisponivel", // regra `pagamentoExcedeParcela`
-  "valorParcela", // regra `pagamentoExcedeParcela`
+  "regra", // 409/422 de regra de negócio que não é contagem de dependente
+  // `saldoDisponivel` e `valorParcela` SAÍRAM na Fase F-1a, junto com a regra
+  // `pagamentoExcedeParcela` que as carregava (ver `integrityConflicts.js`).
+  //
+  // As regras novas do Financeiro 2.0 levam os números dentro de `errors`
+  // (`estornavel`, `saldoEsperado`, `somaInformada`), que já é repassado como
+  // um todo. Chave solta por número é o formato que faz a allowlist crescer
+  // uma linha por regra até ninguém saber quais ainda têm dono.
   "visivelPortal", // regeração: avisa que o documento novo nasce fora do portal
 ];
 

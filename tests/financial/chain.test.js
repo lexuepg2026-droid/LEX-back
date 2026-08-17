@@ -16,7 +16,19 @@
 // arquivo em `tests/financial/`.
 //
 // `Installment.status` continua derivado por `recalcularStatusInstallment`
-// (`paymentService.js`), nos 4 estados do enum, e é o recálculo testado aqui.
+// (`paymentService.js`), e é o recálculo testado aqui.
+//
+// ── A Fase F-1a mexeu em duas das quatro seções, e não nas outras duas ────
+// 4.1 e 4.2 mudaram porque o modelo embaixo mudou: o pagamento nasce contra o
+// HONORÁRIO, o vínculo com a parcela virou `Allocation`, e desfazer dinheiro
+// virou ESTORNO. O bloco 4.2 era o 409 de excedente — regra REVOGADA pela
+// DEC-035 — e foi invertido no lugar, no mesmo padrão do teste que a 4.1
+// inverteu aqui: o histórico do Git mostra a transição, não um teste que sumiu.
+//
+// 4.3 e 4.4 continuam quase intactas: o contrato do 409 de integridade
+// (`dependencia` + `quantidade`) NÃO mudou. O que mudou é quem é o dependente
+// de uma parcela — antes pagamentos, agora alocações ativas — e o número que
+// sai continua sendo de PAGAMENTOS distintos.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { test, describe, before, after } from "node:test";
@@ -26,15 +38,15 @@ import { subirApp, derrubarApp } from "../helpers/server.js";
 import { limparColecoes, TODAS_AS_COLECOES, desconectar } from "../helpers/db.js";
 import {
   registrarUsuario, criarClientePF, criarProcesso, criarHonorario,
-  criarParcela, criarPagamento, criarSecao, criarModelo, vincularSecao, esperado
+  criarParcela, criarPagamento, criarEstorno, criarSecao, criarModelo,
+  vincularSecao, esperado
 } from "../helpers/setup.js";
-import { dadosParcela, dadosPagamento } from "../helpers/factories.js";
 
 // O vocabulário é IMPORTADO, nunca reescrito à mão no teste. É isso que impede
 // `parcelas`, `parcela` e `installments` de coexistirem em três fases: quem
 // renomear um valor quebra o teste na hora, em vez de o frontend descobrir
 // depois que passou a receber uma palavra que não conhece.
-import { DEPENDENCIA, DEPENDENCIAS, REGRA_CONFLITO } from "../../src/config/integrityConflicts.js";
+import { DEPENDENCIA, DEPENDENCIAS, REGRAS_CONFLITO } from "../../src/config/integrityConflicts.js";
 
 const ONTEM = "2020-01-10";     // vencida com folga
 const AMANHA = "2099-12-31";    // longe de vencer
@@ -81,12 +93,20 @@ describe("cadeia financeira", () => {
       const vencida = await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: ONTEM });
       assert.equal(vencida.status, "vencido", "parcela sem pagamento e vencida deveria ser vencido");
 
-      // parcial — pagamento menor que o valor
-      await criarPagamento(api, pendente._id, { valorPago: 400 });
+      // parcial — pagamento menor que o valor.
+      //
+      // O pagamento nasce contra o HONORÁRIO (F-1a) e o motor aloca no
+      // vencimento mais ANTIGO. Aqui a vencida (parcela 2, ONTEM) vem antes da
+      // pendente, então ela é quitada primeiro: são precisos 1000 para
+      // atravessá-la e só então encostar na parcela 1.
+      await criarPagamento(api, fee._id, { valor: 1000 });
+      assert.equal((await lerParcela(vencida._id)).status, "pago", "a vencida recebe primeiro");
+
+      await criarPagamento(api, fee._id, { valor: 400 });
       assert.equal((await lerParcela(pendente._id)).status, "parcial");
 
-      // pago — a soma dos pagamentos alcança o valor
-      await criarPagamento(api, pendente._id, { valorPago: 600 });
+      // pago — a soma das alocações alcança o valor
+      await criarPagamento(api, fee._id, { valor: 600 });
       const paga = await lerParcela(pendente._id);
       assert.equal(paga.status, "pago");
       assert.ok(paga.dataPagamento, "parcela paga deveria registrar dataPagamento");
@@ -99,36 +119,40 @@ describe("cadeia financeira", () => {
       const parcela = await criarParcela(api, fee._id, 1, { valor: 500, dataVencimento: ONTEM });
       assert.equal(parcela.status, "vencido");
 
-      await criarPagamento(api, parcela._id, { valorPago: 500 });
+      await criarPagamento(api, fee._id, { valor: 500 });
       assert.equal((await lerParcela(parcela._id)).status, "pago");
     });
 
-    test("desativar o pagamento devolve a parcela ao estado anterior", async () => {
+    test("ESTORNAR o pagamento devolve a parcela ao estado anterior", async () => {
+      // Era "desativar o pagamento" até a F-0. `DELETE /payments/:id` morreu
+      // (DEC-032) e o caminho passou a ser o estorno. A propriedade sob teste
+      // não mudou: o recálculo é REFEITO a partir das alocações ativas, e por
+      // isso a parcela desce de volta estado a estado.
       const fee = await novoHonorario();
       const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
 
-      const p1 = await criarPagamento(api, parcela._id, { valorPago: 400 });
-      const p2 = await criarPagamento(api, parcela._id, { valorPago: 600 });
+      const { pagamento: p1 } = await criarPagamento(api, fee._id, { valor: 400 });
+      const { pagamento: p2 } = await criarPagamento(api, fee._id, { valor: 600 });
       assert.equal((await lerParcela(parcela._id)).status, "pago");
 
-      // Volta 1: some o segundo pagamento → parcial (400 de 1000).
-      esperado(await api.delete(`/payments/${p2._id}`), 200, "exclusão do 2º pagamento");
+      // Volta 1: estorna o segundo pagamento → parcial (400 de 1000).
+      await criarEstorno(api, p2._id, { valor: 600, motivo: "Estorno do segundo pagamento" });
       const depoisDeUm = await lerParcela(parcela._id);
       assert.equal(depoisDeUm.status, "parcial", "com 400 de 1000 a parcela é parcial");
       assert.equal(depoisDeUm.dataPagamento, null, "parcela não-paga não guarda dataPagamento");
 
-      // Volta 2: some o primeiro também → pendente (vencimento no futuro).
-      esperado(await api.delete(`/payments/${p1._id}`), 200, "exclusão do 1º pagamento");
+      // Volta 2: estorna o primeiro também → pendente (vencimento no futuro).
+      await criarEstorno(api, p1._id, { valor: 400, motivo: "Estorno do primeiro pagamento" });
       assert.equal((await lerParcela(parcela._id)).status, "pendente");
     });
 
-    test("desativar o pagamento de parcela VENCIDA devolve `vencido`, não `pendente`", async () => {
+    test("estornar o pagamento de parcela VENCIDA devolve `vencido`, não `pendente`", async () => {
       const fee = await novoHonorario();
       const parcela = await criarParcela(api, fee._id, 1, { valor: 300, dataVencimento: ONTEM });
-      const pg = await criarPagamento(api, parcela._id, { valorPago: 300 });
+      const { pagamento: pg } = await criarPagamento(api, fee._id, { valor: 300 });
       assert.equal((await lerParcela(parcela._id)).status, "pago");
 
-      esperado(await api.delete(`/payments/${pg._id}`), 200, "exclusão do pagamento");
+      await criarEstorno(api, pg._id, { valor: 300, motivo: "Estorno integral" });
       assert.equal(
         (await lerParcela(parcela._id)).status,
         "vencido",
@@ -148,7 +172,7 @@ describe("cadeia financeira", () => {
     test("DEC-028: `Fee.status` É derivado das parcelas", async () => {
       const fee = await novoHonorario({ status: "pendente" });
       const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
-      await criarPagamento(api, parcela._id, { valorPago: 1000 });
+      await criarPagamento(api, fee._id, { valor: 1000 });
 
       assert.equal((await lerParcela(parcela._id)).status, "pago", "a parcela foi quitada");
       assert.equal(
@@ -163,61 +187,74 @@ describe("cadeia financeira", () => {
   // 4.2 — 409 de excedente, com a forma exata
   // ═════════════════════════════════════════════════════════════════════════
 
-  describe("4.2 409 de pagamento que excede a parcela", () => {
-    test("as 4 chaves, com `saldoDisponivel` numericamente certo", async () => {
+  describe("4.2 o excedente virou alocação — a regra 409 foi REVOGADA", () => {
+    // ── INVERTIDO na Fase F-1a, no mesmo padrão do teste da DEC-028 acima ──
+    //
+    // Este bloco travava o 409 `pagamentoExcedeParcela` com as quatro chaves
+    // (`regra`, `campo`, `saldoDisponivel`, `valorParcela`). A regra caiu com a
+    // DEC-035, e caiu porque recusava um fato: o cliente depositou mais do que
+    // a parcela comportava, e o sistema mandava a advogada registrar outra
+    // coisa — o depósito real não existia em lugar nenhum do sistema.
+    //
+    // Não foi apagado. Passou a travar o comportamento que o substituiu, e a
+    // AUSÊNCIA da regra antiga: sem isso, alguém poderia reintroduzir a guarda
+    // sem nada acusar, quebrando o caso que a DEC-036 existe para atender.
+
+    test("o valor atravessa as parcelas, do vencimento mais antigo em diante", async () => {
       const fee = await novoHonorario();
-      const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
-      await criarPagamento(api, parcela._id, { valorPago: 700 });
+      const p1 = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: ONTEM });
+      const p2 = await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: AMANHA });
 
-      // Restam 300. Tentar 350 excede em 50.
-      const r = await api.post("/payments", dadosPagamento(parcela._id, { valorPago: 350 }));
+      // 1500 num pagamento só: quita a vencida e abate metade da futura. Antes
+      // isto exigiria DOIS pagamentos e dois recibos para um depósito único.
+      const { alocacoes } = await criarPagamento(api, fee._id, { valor: 1500 });
 
-      assert.equal(r.status, 409, `esperado 409, veio ${r.status} — ${JSON.stringify(r.body)}`);
-
-      // Este é o ÚNICO 409 do módulo que carrega `campo`, porque é o único com
-      // input em conflito de verdade — o valor que ela acabou de digitar. As 4
-      // asserções abaixo protegem essa distinção de ser apagada por uma
-      // uniformização futura que resolvesse "todo 409 tem dependencia".
-      assert.equal(r.body.regra, REGRA_CONFLITO.PAGAMENTO_EXCEDE_PARCELA);
-      assert.equal(r.body.regra, "pagamentoExcedeParcela");
-      assert.equal(r.body.campo, "valorPago");
-      assert.equal(r.body.saldoDisponivel, 300, "1000 de parcela menos 700 já pagos = 300");
-      assert.equal(r.body.valorParcela, 1000);
-
-      assert.equal(typeof r.body.saldoDisponivel, "number", "saldoDisponivel tem de ser número, não string");
-      assert.equal(typeof r.body.valorParcela, "number");
-
-      // E NÃO leva as chaves de integridade: não é contagem de dependente.
-      assert.equal(r.body.dependencia, undefined, "409 de regra não carrega `dependencia`");
-      assert.equal(r.body.quantidade, undefined, "409 de regra não carrega `quantidade`");
+      assert.equal(alocacoes.length, 2, "uma alocação por parcela tocada");
+      assert.equal((await lerParcela(p1._id)).status, "pago", "a vencida primeiro");
+      assert.equal((await lerParcela(p2._id)).valorPago, 500, "e o resto na seguinte");
+      assert.equal((await lerParcela(p2._id)).status, "parcial");
     });
 
-    test("pagar exatamente o saldo é aceito; um centavo a mais não", async () => {
+    test("o que passa de TODAS as parcelas vira `saldoAdiantado`", async () => {
       const fee = await novoHonorario();
       const parcela = await criarParcela(api, fee._id, 1, { valor: 100, dataVencimento: AMANHA });
-      await criarPagamento(api, parcela._id, { valorPago: 99.5 });
 
-      const excedente = await api.post("/payments", dadosPagamento(parcela._id, { valorPago: 0.51 }));
-      assert.equal(excedente.status, 409);
-      assert.equal(excedente.body.saldoDisponivel, 0.5);
+      const { sobra, saldoAdiantado } = await criarPagamento(api, fee._id, { valor: 250 });
 
-      const exato = await api.post("/payments", dadosPagamento(parcela._id, { valorPago: 0.5 }));
-      assert.equal(exato.status, 201, `pagar o saldo exato deveria ser aceito — ${JSON.stringify(exato.body)}`);
       assert.equal((await lerParcela(parcela._id)).status, "pago");
+      assert.equal(sobra, 150, "250 − 100");
+      assert.equal(saldoAdiantado, 150, "e fica visível no honorário, não some");
     });
 
-    test("o saldo desconta apenas pagamentos ATIVOS", async () => {
+    test("nenhuma resposta carrega mais a regra nem as chaves que ela levava", async () => {
       const fee = await novoHonorario();
-      const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
-      const pg = await criarPagamento(api, parcela._id, { valorPago: 900 });
+      await criarParcela(api, fee._id, 1, { valor: 100, dataVencimento: AMANHA });
+      await criarPagamento(api, fee._id, { valor: 99.5 });
 
-      // Com o pagamento ativo, 200 excede.
-      assert.equal((await api.post("/payments", dadosPagamento(parcela._id, { valorPago: 200 }))).status, 409);
+      // O caso exato que dava 409: 0,51 sobre um saldo de 0,50.
+      const r = await api.post("/payments", {
+        honorarioId: fee._id,
+        valor: 0.51,
+        data: "2026-05-10",
+        formaPagamento: "pix"
+      });
 
-      // Desativado, o saldo volta a ser o valor cheio.
-      esperado(await api.delete(`/payments/${pg._id}`), 200, "exclusão do pagamento");
-      const agora = await api.post("/payments", dadosPagamento(parcela._id, { valorPago: 200 }));
-      assert.equal(agora.status, 201, "pagamento desativado não deveria mais consumir saldo");
+      assert.equal(r.status, 201, `esperado 201 — ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.saldoAdiantado, 0.01, "o centavo excedente vira saldo");
+
+      // E as chaves da regra revogada não voltam por nenhum caminho.
+      assert.equal(r.body.regra, undefined);
+      assert.equal(r.body.saldoDisponivel, undefined);
+      assert.equal(r.body.valorParcela, undefined);
+    });
+
+    test("`pagamentoExcedeParcela` saiu do vocabulário fechado de regras", () => {
+      // Vocabulário fechado com entrada morta é como, em duas fases, alguém
+      // volta a emitir a regra achando que ela ainda vale.
+      assert.ok(
+        !REGRAS_CONFLITO.includes("pagamentoExcedeParcela"),
+        "a regra revogada continua no vocabulário — remova a entrada"
+      );
     });
   });
 
@@ -267,15 +304,34 @@ describe("cadeia financeira", () => {
       assertIntegridade(com2, DEPENDENCIA.PARCELAS, 2, "honorário com 2 parcelas");
     });
 
-    test("parcela com pagamentos ativos → `pagamentos`", async () => {
+    test("parcela com alocações ativas → `pagamentos`, contando PAGAMENTOS distintos", async () => {
+      // O contrato do 409 não mudou na F-1a: `dependencia: "pagamentos"` +
+      // `quantidade`. O que mudou é a consulta por trás — antes contava
+      // `Payment.installmentId`, agora conta alocações ativas — e a contagem
+      // continua sendo de PAGAMENTOS distintos, não de linhas de alocação: um
+      // pagamento parcialmente estornado deixa a linha carimbada e uma
+      // substituta, e contar linhas diria "2 pagamentos" onde há um.
       const fee = await novoHonorario();
       const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
-      await criarPagamento(api, parcela._id, { valorPago: 300 });
-      await criarPagamento(api, parcela._id, { valorPago: 200 });
+      await criarPagamento(api, fee._id, { valor: 300 });
+      await criarPagamento(api, fee._id, { valor: 200 });
 
       const r = await api.delete(`/installments/${parcela._id}`);
       assertIntegridade(r, DEPENDENCIA.PAGAMENTOS, 2, "parcela com 2 pagamentos");
       assert.equal(r.body.dependencia, "pagamentos");
+    });
+
+    test("pagamento parcialmente estornado continua contando como UM", async () => {
+      // A linha original é carimbada com o `estornoId` e uma substituta toma o
+      // lugar dela (decisão intocável da fundação). São duas linhas de
+      // alocação, uma ativa — e um pagamento só.
+      const fee = await novoHonorario();
+      const parcela = await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: AMANHA });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 800 });
+      await criarEstorno(api, pagamento._id, { valor: 300, motivo: "Devolução parcial" });
+
+      const r = await api.delete(`/installments/${parcela._id}`);
+      assertIntegridade(r, DEPENDENCIA.PAGAMENTOS, 1, "parcela com 1 pagamento parcialmente estornado");
     });
 
     test("cliente que participa de processo ativo → `processos`", async () => {
@@ -311,9 +367,16 @@ describe("cadeia financeira", () => {
       ]);
       const fee = await criarHonorario(api, proc._id);
       const parcela = await criarParcela(api, fee._id, 1, { valor: 500, dataVencimento: AMANHA });
-      const pagamento = await criarPagamento(api, parcela._id, { valorPago: 500 });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 500 });
 
-      esperado(await api.delete(`/payments/${pagamento._id}`), 200, "exclusão do pagamento");
+      // O pagamento não se apaga (DEC-032): ele se ESTORNA. Estornado por
+      // inteiro, não há mais alocação ativa segurando a parcela, e a cadeia
+      // volta a poder ser desmontada de baixo para cima.
+      await criarEstorno(api, pagamento._id, { valor: 500, motivo: "Estorno para desmontar a cadeia" });
+      assert.equal(
+        (await api.delete(`/payments/${pagamento._id}`)).status, 404,
+        "DELETE de pagamento morreu na F-1a"
+      );
       esperado(await api.delete(`/installments/${parcela._id}`), 200, "exclusão da parcela");
       esperado(await api.delete(`/fees/${fee._id}`), 200, "exclusão do honorário");
       esperado(await api.delete(`/processes/${proc._id}`), 200, "exclusão do processo");
@@ -348,14 +411,21 @@ describe("cadeia financeira", () => {
       esperado(await api.delete(`/fees/${fee._id}`), 200, "com as 2 parcelas desativadas, exclui");
     });
 
-    test("parcela cujos pagamentos foram todos desativados exclui com 200", async () => {
+    test("parcela cujas alocações foram todas estornadas exclui com 200", async () => {
+      // Era "pagamentos desativados" até a F-0. O dependente virou a ALOCAÇÃO
+      // ativa, e o jeito de desfazê-la é o estorno. A propriedade é a mesma:
+      // dependente que não vale mais não pode prender a exclusão para sempre.
       const fee = await novoHonorario();
       const parcela = await criarParcela(api, fee._id, 1, { valor: 800, dataVencimento: AMANHA });
-      const pg = await criarPagamento(api, parcela._id, { valorPago: 800 });
+      const { pagamento } = await criarPagamento(api, fee._id, { valor: 800 });
 
       assert.equal((await api.delete(`/installments/${parcela._id}`)).status, 409);
-      esperado(await api.delete(`/payments/${pg._id}`), 200, "exclusão do pagamento");
-      esperado(await api.delete(`/installments/${parcela._id}`), 200, "parcela sem pagamento ativo exclui");
+
+      await criarEstorno(api, pagamento._id, { valor: 800, motivo: "Estorno integral" });
+      esperado(
+        await api.delete(`/installments/${parcela._id}`),
+        200, "parcela sem alocação ativa exclui"
+      );
     });
 
     test("cliente cujo único processo foi excluído exclui com 200", async () => {

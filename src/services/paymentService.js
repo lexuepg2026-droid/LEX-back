@@ -5,7 +5,7 @@ import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Allocation from "../models/Allocation.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
-import { validateCreatePayment } from "../validations/paymentValidation.js";
+import { validateCreatePayment, validateUpdatePayment } from "../validations/paymentValidation.js";
 import { registrarStatus, ORIGEM_STATUS } from "./statusHistory.js";
 import {
   alocarPagamento,
@@ -379,6 +379,17 @@ export const update = async (id, data, usuarioId) => {
   const recusado = checarUpdate("payments", data);
   if (recusado) {
     throw criarErro(400, recusado.mensagem, recusado.campo ? { campo: recusado.campo } : {});
+  }
+
+  // A allowlist recusou o que não pertence ao corpo; esta valida o CONTEÚDO do
+  // que passou — tipo e tamanho de `observacoes`. As duas são necessárias e na
+  // ordem: rodando antes da allowlist, esta engoliria a recusa de campo
+  // desconhecido e devolveria "informe ao menos um campo válido", sem `campo`.
+  // Foi exatamente o defeito que a Fase 4.5 corrigiu ao mover a validação do
+  // controller para cá, e `tests/integrity/allowlist.test.js` o trava.
+  const erros = validateUpdatePayment(data);
+  if (erros.length > 0) {
+    throw criarErro(400, erros[0], { errors: erros, campo: "observacoes" });
   }
 
   validarObjectId(id, "paymentId");

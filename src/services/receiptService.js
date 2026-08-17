@@ -232,12 +232,16 @@ export const montarPdfDoRecibo = ({
     honorario.descricao,
     // Um pagamento pode cobrir DUAS parcelas, ou nenhuma (adiantamento). A
     // frase acompanha o fato em vez de fingir que sempre há uma só.
-    numerosDeParcela.length === 0
-      ? (totalDeParcelas > 0 ? "adiantamento" : "pagamento único")
-      : numerosDeParcela.length === 1
-        ? `parcela ${numerosDeParcela[0]} de ${totalDeParcelas}`
-        : `parcelas ${numerosDeParcela.slice(0, -1).join(", ")} e ` +
-          `${numerosDeParcela[numerosDeParcela.length - 1]} de ${totalDeParcelas}`,
+    // Honorário não parcelado continua sendo "pagamento único": escrever
+    // "parcela 1 de 1" é ruído, e era assim desde a 4.1.
+    totalDeParcelas <= 1
+      ? "pagamento único"
+      : numerosDeParcela.length === 0
+        ? "adiantamento"
+        : numerosDeParcela.length === 1
+          ? `parcela ${numerosDeParcela[0]} de ${totalDeParcelas}`
+          : `parcelas ${numerosDeParcela.slice(0, -1).join(", ")} e ` +
+            `${numerosDeParcela[numerosDeParcela.length - 1]} de ${totalDeParcelas}`,
     processo.numeroProcesso ? `processo nº ${processo.numeroProcesso}` : "",
     processo.titulo
   ]

@@ -34,10 +34,39 @@ export const DEPENDENCIAS = Object.freeze(Object.values(DEPENDENCIA));
 // dependente. `dependencia`/`quantidade` não descreveriam nada nelas, então
 // cada uma declara as chaves que descrevem a própria regra. Ver o contrato de
 // cada uma no CLAUDE.md.
+// ── `pagamentoExcedeParcela` FOI REVOGADA na Fase F-1a ─────────────────────
+//
+// Ela recusava um FATO: o cliente depositou mais do que a parcela comportava, e
+// o sistema mandava a advogada registrar outra coisa. Com a DEC-035 o valor
+// atravessa as parcelas seguintes, e com a DEC-036 o que sobra vira
+// `saldoAdiantado` — nada se perde e nada é inventado.
+//
+// Não fica como valor "depreciado" na lista: vocabulário fechado com entrada
+// morta é como, em duas fases, alguém volta a emitir a regra achando que ela
+// ainda vale. `tests/financial/derivacao.test.js` trava a ausência dela em
+// resposta nenhuma.
 export const REGRA_CONFLITO = Object.freeze({
-  // Pagamento cujo valor ultrapassa o saldo em aberto da parcela.
-  // Acompanha `saldoDisponivel` e `valorParcela`, ambos números.
-  PAGAMENTO_EXCEDE_PARCELA: "pagamentoExcedeParcela"
+  // ── Regras do Financeiro 2.0 (F-1a) ────────────────────────────────────
+  //
+  // Todas levam os números dentro de `errors`, e não em chave solta: é o que
+  // impede a allowlist do `errorHandler` de crescer uma linha por regra.
+
+  // 409 — pagamento ou reparcelamento contra honorário cancelado.
+  HONORARIO_CANCELADO: "honorarioCancelado",
+
+  // 422 — estorno acima do líquido. `errors.estornavel` diz o teto.
+  ESTORNO_ACIMA_DO_LIQUIDO: "estornoAcimaDoLiquido",
+  // 422 — não há mais nada a estornar. `errors.estornavel` sai 0.
+  PAGAMENTO_TOTALMENTE_ESTORNADO: "pagamentoTotalmenteEstornado",
+
+  // 409 — a cadeia de anulação de estorno.
+  ESTORNO_JA_ANULADO: "estornoJaAnulado",
+  ANULACAO_DE_ANULACAO: "anulacaoDeAnulacao",
+  ESTORNO_INEXISTENTE: "estornoInexistente",
+
+  // 422 — reparcelamento. `errors.saldoEsperado` e `errors.somaInformada`.
+  SOMA_DIVERGE_DO_SALDO: "somaDivergeDoSaldo",
+  SEM_SALDO_PARA_REPARCELAR: "semSaldoParaReparcelar"
 });
 
 export const REGRAS_CONFLITO = Object.freeze(Object.values(REGRA_CONFLITO));
