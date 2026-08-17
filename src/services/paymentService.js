@@ -2,10 +2,36 @@ import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
-import { REGRA_CONFLITO } from "../config/integrityConflicts.js";
-import { validateUpdatePayment } from "../validations/paymentValidation.js";
+import Allocation from "../models/Allocation.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
+import { validateCreatePayment } from "../validations/paymentValidation.js";
+import { registrarStatus, ORIGEM_STATUS } from "./statusHistory.js";
+import {
+  alocarPagamento,
+  autoAlocarSaldo,
+  planejarAlocacao,
+  listarAlocaveis,
+  mapaDeAlocado,
+  emCentavos
+} from "./allocationService.js";
+import { carregarEstornos, totalEstornado } from "./reversalService.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGAMENTO — reescrito na Fase F-1 sobre o modelo imutável
+//
+// O que saiu daqui, e para onde foi:
+//   • `update` de valor/data/parcela  → morreu (DEC-032). Estorno é o caminho.
+//   • `reativar`                      → morreu (DEC-034). Anulação de estorno.
+//   • `remove`                        → morreu (DEC-032). Estorno.
+//   • guarda de excedente por parcela → virou o motor de alocação (DEC-035).
+//     Não existe mais "pagamento maior que a parcela": existe pagamento que
+//     atravessa parcelas e, no fim, vira saldo adiantado.
+//
+// O que ficou: a cadeia de recálculo da 4.1, que continua sendo o ponto único
+// de escrita de `Installment.valorPago` e `Fee.status`. Mudou a FONTE do
+// número — antes somava pagamentos da parcela, agora soma alocações ativas.
+// ═══════════════════════════════════════════════════════════════════════════
 
 const criarErro = (statusCode, message, extra = {}) => {
   const error = new Error(message);
@@ -14,58 +40,29 @@ const criarErro = (statusCode, message, extra = {}) => {
   return error;
 };
 
-const validarObjectId = (id, nomeCampo) => {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw criarErro(400, `${nomeCampo} inválido`);
+const validarObjectId = (id, campo) => {
+  if (typeof id !== "string" || !mongoose.Types.ObjectId.isValid(id)) {
+    throw criarErro(400, `${campo} inválido`, { campo });
   }
 };
 
-const validarInstallmentDoUsuario = async (installmentId, usuarioId) => {
-  validarObjectId(installmentId, "installmentId");
-
-  const installment = await Installment.findOne({
-    _id: installmentId,
-    usuarioId,
-    ativo: true
-  });
-
-  if (!installment) {
-    throw criarErro(404, "Parcela não encontrada");
-  }
-
-  return installment;
+const PAYMENT_POPULATE = {
+  path: "honorarioId",
+  select: "descricao valor tipo status processoId",
+  populate: { path: "processoId", select: "titulo numeroProcesso" }
 };
 
-const calcularTotalPagoExcluindo = async (installmentId, usuarioId, excludePaymentId = null) => {
-  const filtro = { installmentId, usuarioId, ativo: true };
-  if (excludePaymentId) filtro._id = { $ne: excludePaymentId };
-  const pagamentos = await Payment.find(filtro);
-  return pagamentos.reduce((acc, p) => acc + Number(p.valorPago), 0);
-};
+// ═══════════════════════════════════════════════════════════════════════════
+// RECÁLCULO — a cadeia da 4.1, agora sobre alocações
+// ═══════════════════════════════════════════════════════════════════════════
 
-const validarOverpayment = async (installment, novoValorPago, usuarioId, excludePaymentId = null) => {
-  const totalExistente = await calcularTotalPagoExcluindo(installment._id, usuarioId, excludePaymentId);
-  if (totalExistente + novoValorPago > installment.valor) {
-    const saldo = installment.valor - totalExistente;
-    const saldoFormatado = saldo.toFixed(2).replace(".", ",");
-    // Não é contagem de dependente: `dependencia`/`quantidade` não descreveriam
-    // nada aqui. As chaves descrevem a regra — `saldoDisponivel` é o número que
-    // a tela precisa para oferecer "pagar o saldo" sem extrair "R$ 1.234,56" da
-    // prosa por regex.
-    // Este 409, ao contrário dos de integridade, TEM input em conflito: é o
-    // valor que ela acabou de digitar. Por isso leva `campo` também.
-    throw criarErro(409, `Pagamento excede o valor da parcela. Saldo disponível: R$ ${saldoFormatado}`, {
-      campo: "valorPago",
-      regra: REGRA_CONFLITO.PAGAMENTO_EXCEDE_PARCELA,
-      saldoDisponivel: Number(saldo.toFixed(2)),
-      valorParcela: Number(installment.valor)
-    });
-  }
-};
-
-const definirStatusInstallment = (installment, totalPago) => {
-  if (totalPago >= installment.valor) return "pago";
-  if (totalPago > 0) return "parcial";
+// Status derivado da parcela. Inalterado desde a 4.1, exceto por `cancelado`:
+// parcela cancelada por reparcelamento não é derivada — o estado dela é
+// decisão registrada, não conta.
+const definirStatusInstallment = (installment, totalAlocado) => {
+  if (installment.status === "cancelado") return "cancelado";
+  if (totalAlocado >= installment.valor) return "pago";
+  if (totalAlocado > 0) return "parcial";
 
   const hoje = new Date();
   if (new Date(installment.dataVencimento) < hoje) return "vencido";
@@ -73,58 +70,34 @@ const definirStatusInstallment = (installment, totalPago) => {
   return "pendente";
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DEC-028 — STATUS DO HONORÁRIO DERIVADO DAS PARCELAS (Fase 4.1)
+// Honorário SEM parcela nenhuma é `pendente`, nunca `pago` — a leitura da
+// Fase 2C levada até o fim: a parcela única implícita existe e não foi paga.
 //
-// Antes desta fase `Fee.status` só mudava por escrita explícita, e a Fase 2E.2
-// deixou um teste travando esse comportamento. O teste foi INVERTIDO, no mesmo
-// arquivo, para o histórico do Git mostrar a transição deliberada.
-//
-// O recálculo se pendura na MESMA cadeia que já recalcula a parcela — pagamento
-// gravado ou desativado → recalcula a parcela → recalcula o honorário. Não há
-// caminho paralelo: `recalcularStatusInstallment` chama este daqui no fim, e
-// quem mexe em pagamento já chamava aquele.
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Honorário SEM parcela nenhuma é `pendente`, nunca `pago`.
-//
-// A Fase 2C decidiu que, para as variáveis de template, honorário sem parcela
-// vale como pagamento único — uma parcela do valor cheio. A leitura aqui é a
-// mesma, levada até o fim: essa parcela única existe e NÃO foi paga, porque
-// pagamento pendura em parcela e não há nenhuma. Chamar de `pago` um honorário
-// que nunca recebeu um centavo seria o pior erro possível neste módulo.
-//
-// A conta é feita sobre `Installment.status`, que `definirStatusInstallment`
-// acima já derivou — e não sobre uma segunda soma de pagamentos. `pago` é
-// exatamente "totalPago >= valor" e `parcial` é exatamente
-// "0 < totalPago < valor": recomputar daria duas fórmulas para a mesma
-// pergunta, livres para divergir.
+// Parcelas `cancelado` ficam fora do conjunto: um honorário cujas parcelas
+// foram todas reparceladas não é "pago", é o que as parcelas NOVAS disserem.
 const derivarStatusFee = (parcelas) => {
-  if (parcelas.length === 0) return "pendente";
+  const vigentes = parcelas.filter((p) => p.status !== "cancelado");
+  if (vigentes.length === 0) return "pendente";
 
-  const quitadas = parcelas.filter((p) => p.status === "pago");
-  if (quitadas.length === parcelas.length) return "pago";
+  const quitadas = vigentes.filter((p) => p.status === "pago");
+  if (quitadas.length === vigentes.length) return "pago";
 
-  const comPagamento = parcelas.filter((p) => p.status === "pago" || p.status === "parcial");
+  const comPagamento = vigentes.filter((p) => p.status === "pago" || p.status === "parcial");
   if (comPagamento.length > 0) return "parcialmente_pago";
 
   return "pendente";
 };
 
-export const recalcularStatusFee = async (feeId, usuarioId) => {
+export const recalcularStatusFee = async (feeId, usuarioId, origem = ORIGEM_STATUS.RECALCULO) => {
   if (!feeId) return null;
 
   const fee = await Fee.findOne({ _id: feeId, usuarioId, ativo: true });
   if (!fee) return null;
 
-  // ── GUARDA: `cancelado` NUNCA é sobrescrito pelo recálculo ───────────────
-  // Escrita explícita, e só. Honorário cancelado não vira "pago" porque alguém
-  // quitou uma parcela antiga — a cobrança foi desfeita, e o dinheiro que
-  // entrou depois é outro assunto.
-  //
-  // Isto é um `return` próprio, e NÃO a ordem dos `if` de `derivarStatusFee`:
-  // efeito colateral de ordenação some na primeira vez que alguém reordena as
-  // condições "para ficar mais legível", e some em silêncio.
+  // ── GUARDA: `cancelado` NUNCA é sobrescrito pelo recálculo (DEC-028) ─────
+  // `return` próprio, e não ordem de `if`: efeito colateral de ordenação some
+  // na primeira vez que alguém reorganiza as condições "para ficar mais
+  // legível", e some em silêncio. Preservada intacta na F-1.
   if (fee.status === STATUS_CANCELADO) return fee;
 
   const parcelas = await Installment.find({
@@ -133,178 +106,271 @@ export const recalcularStatusFee = async (feeId, usuarioId) => {
     ativo: true
   }).select("status");
 
-  const novoStatus = derivarStatusFee(parcelas);
-
-  if (fee.status !== novoStatus) {
-    fee.status = novoStatus;
+  if (registrarStatus(fee, derivarStatusFee(parcelas), origem)) {
     await fee.save();
   }
 
   return fee;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// O HONORÁRIO MENTIROSO (achado 2.5b — corrigido na Fase 4.5)
+// Recalcula uma parcela a partir das ALOCAÇÕES ativas dela.
 //
-// A busca da parcela exigia `ativo: true`. Desativada a parcela, esta função
-// devolvia `null` na primeira linha e a cadeia MORRIA ali: `recalcularStatusFee`
-// no fim nunca era alcançado, e o honorário ficava com o status derivado de um
-// mundo que não existe mais — tipicamente `pago`, com o pagamento removido.
-//
-// A correção é na CAUSA: para fins de RECÁLCULO a parcela é carregada sem o
-// filtro de `ativo`. Recalcular é leitura de fato consumado; o filtro ali não
-// protegia nada, só escondia a parcela de si mesma.
-//
-// As GUARDAS DE ESCRITA continuam: só parcela ATIVA tem os campos derivados
-// regravados. Regravar status e `valorPago` de uma parcela desativada seria
-// ressuscitá-la pela metade, e `derivarStatusFee` já a exclui do conjunto do
-// honorário (ele filtra `ativo: true`, corretamente).
-//
-// O honorário é recalculado nos DOIS casos — é esse o ponto do achado.
-// ═══════════════════════════════════════════════════════════════════════════
+// A parcela é carregada SEM o filtro de `ativo` de propósito (correção da
+// 4.5): recalcular é leitura de fato consumado, e o filtro só escondia a
+// parcela de si mesma, matando a cadeia antes de o honorário ser recalculado.
 export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
-  const installment = await Installment.findOne({
-    _id: installmentId,
-    usuarioId
-  });
-
+  const installment = await Installment.findOne({ _id: installmentId, usuarioId });
   if (!installment) return null;
 
-  // Parcela desativada: nada a regravar nela, mas o honorário acima precisa
-  // saber que o conjunto mudou.
   if (installment.ativo !== true) {
     await recalcularStatusFee(installment.feeId, usuarioId);
     return null;
   }
 
-  const pagamentos = await Payment.find({
-    installmentId,
+  const alocacoes = await Allocation.find({
+    parcelaId: installmentId,
     usuarioId,
-    ativo: true
-  }).sort({ dataPagamento: -1, createdAt: -1 });
+    estornoId: null
+  }).sort({ data: -1, createdAt: -1 });
 
-  const totalPago = pagamentos.reduce(
-    (total, payment) => total + Number(payment.valorPago),
-    0
-  );
+  const totalAlocado = emCentavos(alocacoes.reduce((t, a) => t + Number(a.valor), 0));
 
-  const statusFinal = definirStatusInstallment(installment, totalPago);
-
-  installment.status = statusFinal;
-  // Soma dos pagamentos ATIVOS, desnormalizada (Fase 4.1). Este é o ÚNICO
-  // ponto de escrita do campo. Arredondada em centavos na gravação para a soma
-  // de floats não deixar 0,30000000000000004 na ficha financeira.
-  installment.valorPago = Math.round(totalPago * 100) / 100;
+  installment.status = definirStatusInstallment(installment, totalAlocado);
+  installment.valorPago = totalAlocado;
   installment.dataPagamento =
-    statusFinal === "pago" && pagamentos.length > 0
-      ? pagamentos[0].dataPagamento
-      : null;
+    installment.status === "pago" && alocacoes.length > 0 ? alocacoes[0].data : null;
 
   await installment.save();
 
-  // A cadeia continua para cima: parcela recalculada → honorário recalculado.
   await recalcularStatusFee(installment.feeId, usuarioId);
 
   return installment;
 };
 
-export const create = async (data, usuarioId) => {
-  const installment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
-
-  await validarOverpayment(installment, Number(data.valorPago), usuarioId);
-
-  const novoPagamento = await Payment.create({
-    usuarioId,
-    installmentId: installment._id,
-    processoId: installment.processoId,
-    valorPago: Number(data.valorPago),
-    dataPagamento: new Date(data.dataPagamento),
-    formaPagamento: data.formaPagamento,
-    observacoes: data.observacoes?.trim() || "",
-    ativo: data.ativo !== undefined ? data.ativo : true
-  });
-
-  await recalcularStatusInstallment(installment._id, usuarioId);
-
-  return Payment.findById(novoPagamento._id).populate("installmentId");
-};
-
-const PAYMENT_POPULATE = {
-  path: "installmentId",
-  populate: {
-    path: "feeId",
-    select: "descricao processoId",
-    populate: { path: "processoId", select: "titulo numeroProcesso" }
+// Recalcula tudo o que uma operação tocou. Uma parcela por vez, porque o
+// recálculo do honorário no fim de cada uma é idempotente e barato — e porque
+// tentar recalcular em lote reintroduziria uma segunda fórmula.
+export const recalcularParcelas = async (parcelaIds, usuarioId) => {
+  for (const id of new Set(parcelaIds.map(String))) {
+    await recalcularStatusInstallment(id, usuarioId);
   }
 };
 
-export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, processoId, formaPagamento, inativos } = {}) => {
-  // ── `?inativos=true` — a listagem do desativado (Fase 4.5) ────────────────
-  //
-  // Existe para a tela poder oferecer "Reativar". Sem ela, o registro
-  // desativado é invisível na interface e a rota de reativação só seria
-  // alcançável por curl — a funcionalidade existiria sem porta de entrada.
-  //
-  // É um MODO, não um "incluir": `?inativos=true` lista SÓ os desativados. Um
-  // parâmetro que misturasse os dois conjuntos mudaria o significado da
-  // listagem padrão conforme uma caixa de seleção, e as somas da tela passariam
-  // a incluir o que foi removido sem nada dizendo isso na linha.
-  //
-  // O default não muda: sem o parâmetro, `ativo: true`, como sempre.
-  const somenteInativos = inativos === true || inativos === "true";
-  const filter = { usuarioId, ativo: !somenteInativos };
+// ═══════════════════════════════════════════════════════════════════════════
+// CRIAÇÃO — nasce contra o honorário e aloca no ato
+// ═══════════════════════════════════════════════════════════════════════════
+
+const carregarFeeParaPagamento = async (honorarioId, usuarioId) => {
+  const fee = await Fee.findOne({ _id: honorarioId, usuarioId, ativo: true });
+
+  if (!fee) {
+    throw criarErro(404, "Honorário não encontrado");
+  }
+
+  // Honorário cancelado não recebe dinheiro: a cobrança foi desfeita, e
+  // registrar pagamento contra ela deixaria um valor recebido pendurado numa
+  // dívida que não existe. A mensagem diz o que fazer — descancelar é escrita
+  // explícita e a derivação volta a valer (DEC-028).
+  if (fee.status === STATUS_CANCELADO) {
+    throw criarErro(
+      409,
+      "Este honorário está cancelado e não recebe pagamento. " +
+        "Se a cobrança voltou a valer, mude o status do honorário antes de registrar o pagamento.",
+      { regra: "honorarioCancelado" }
+    );
+  }
+
+  return fee;
+};
+
+// Preview: o que ACONTECERIA. Mesma função de planejamento que a criação usa —
+// é isso que impede o preview de mentir.
+export const preverAlocacao = async (dados, usuarioId) => {
+  validarObjectId(String(dados.honorarioId ?? ""), "honorarioId");
+  const fee = await carregarFeeParaPagamento(dados.honorarioId, usuarioId);
+
+  const valor = Number(dados.valor);
+  if (!Number.isFinite(valor) || valor <= 0) {
+    throw criarErro(400, "O valor do pagamento deve ser maior que zero", { campo: "valor" });
+  }
+
+  if (dados.tipo === "adiantamento") {
+    return {
+      honorarioId: fee._id,
+      tipo: "adiantamento",
+      destinos: [],
+      sobra: emCentavos(valor),
+      saldoAdiantadoAtual: emCentavos(fee.saldoAdiantado || 0),
+      saldoAdiantadoDepois: emCentavos(Number(fee.saldoAdiantado || 0) + valor)
+    };
+  }
+
+  const parcelas = await listarAlocaveis(fee._id, usuarioId);
+  const alocado = await mapaDeAlocado(fee._id, usuarioId);
+  const { destinos, sobra } = planejarAlocacao(valor, parcelas, alocado);
+
+  return {
+    honorarioId: fee._id,
+    tipo: "comum",
+    destinos,
+    sobra,
+    saldoAdiantadoAtual: emCentavos(fee.saldoAdiantado || 0),
+    saldoAdiantadoDepois: emCentavos(Number(fee.saldoAdiantado || 0) + sobra)
+  };
+};
+
+export const create = async (data, usuarioId) => {
+  const validacao = validateCreatePayment(data);
+  if (!validacao.isValid) {
+    throw criarErro(400, validacao.errors.join("; "), {
+      errors: [...validacao.errors],
+      ...(validacao.campos.length === 1 ? { campo: validacao.campos[0] } : {})
+    });
+  }
+
+  const fee = await carregarFeeParaPagamento(data.honorarioId, usuarioId);
+
+  const [pagamento] = await Payment.create([
+    {
+      usuarioId,
+      honorarioId: fee._id,
+      processoId: fee.processoId,
+      valor: emCentavos(data.valor),
+      data: new Date(data.data),
+      tipo: data.tipo || "comum",
+      formaPagamento: data.formaPagamento,
+      observacoes: data.observacoes?.trim() || ""
+    }
+  ]);
+
+  const { alocacoes, sobra } = await alocarPagamento({ pagamento, fee, usuarioId });
+
+  await recalcularParcelas(
+    alocacoes.map((a) => a.parcelaId),
+    usuarioId
+  );
+
+  const feeAtual = await Fee.findById(fee._id);
+
+  return {
+    pagamento: await Payment.findById(pagamento._id).populate(PAYMENT_POPULATE),
+    alocacoes,
+    sobra,
+    saldoAdiantado: emCentavos(feeAtual?.saldoAdiantado || 0)
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEITURA
+// ═══════════════════════════════════════════════════════════════════════════
+
+// `?installmentId=` continua existindo e continua em inglês (convenção de
+// rota), mas agora filtra POR ALOCAÇÃO: "pagamentos que tocaram esta parcela".
+// É a mesma pergunta de antes; o que mudou é que a resposta pode incluir um
+// pagamento que também tocou outras.
+const idsDePagamentoPorParcela = async (parcelaId, usuarioId) => {
+  const alocacoes = await Allocation.find({
+    parcelaId,
+    usuarioId,
+    estornoId: null
+  }).select("pagamentoId");
+  return alocacoes.map((a) => a.pagamentoId);
+};
+
+export const findAll = async (
+  usuarioId,
+  { page = 1, limit = 20, installmentId, honorarioId, processoId, formaPagamento, tipo } = {}
+) => {
+  const filter = { usuarioId, ativo: true };
 
   const formaFiltro = filtroTexto(formaPagamento);
   if (formaFiltro) filter.formaPagamento = formaFiltro;
 
-  // ── Fase F-0: os dois filtros passam a COMPOR ─────────────────────────────
-  //
-  // Havia aqui um `return` antecipado sob `if (processoId)`, e ele ficava
-  // ANTES da linha que aplica `installmentId`. Consequência medida na
-  // auditoria de retomada, contra o seed:
-  //
-  //     ?installmentId=Y               → total 1
-  //     ?processoId=X&installmentId=Y  → total 3   ← o segundo filtro sumia
-  //
-  // Combinar dois filtros devolvia MAIS linhas do que um só, em silêncio.
-  // Agora os dois entram no mesmo `filter` e compõem por AND, que é o que
-  // qualquer um espera de dois parâmetros na mesma query string.
-  //
-  // O mesmo `return` também pulava `skip`/`limit` (regra central nº 4) e
-  // devolvia lista vazia para id malformado. As três coisas eram o mesmo
-  // atalho, e saíram juntas.
+  const tipoFiltro = filtroTexto(tipo);
+  if (tipoFiltro) filter.tipo = tipoFiltro;
+
   const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
 
-  const installmentFiltro = filtroObjectIdExigido(installmentId, "installmentId");
-  if (installmentFiltro) filter.installmentId = installmentFiltro;
+  const honorarioFiltro = filtroObjectIdExigido(honorarioId, "honorarioId");
+  if (honorarioFiltro) filter.honorarioId = honorarioFiltro;
+
+  const parcelaFiltro = filtroObjectIdExigido(installmentId, "installmentId");
+  if (parcelaFiltro) {
+    filter._id = { $in: await idsDePagamentoPorParcela(parcelaFiltro, usuarioId) };
+  }
 
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
-    Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Payment.find(filter).populate(PAYMENT_POPULATE).sort({ data: -1, createdAt: -1 }).skip(skip).limit(limit),
     Payment.countDocuments(filter)
   ]);
-  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+  // Cada linha vem com o líquido e as alocações resumidas: a listagem precisa
+  // mostrar quanto do pagamento ainda vale, e sem isso a tela faria N chamadas.
+  const enriquecidos = await Promise.all(data.map((p) => comEstornosEAlocacoes(p, usuarioId)));
+
+  return { data: enriquecidos, total, page, limit, totalPages: Math.ceil(total / limit) };
+};
+
+// Monta a visão de um pagamento com o que a tela precisa para decidir o que
+// oferecer: líquido restante (o default do estorno) e para onde o dinheiro foi.
+export const comEstornosEAlocacoes = async (pagamento, usuarioId) => {
+  const estornos = await carregarEstornos(pagamento._id, usuarioId);
+  const estornado = totalEstornado(estornos);
+
+  const alocacoes = await Allocation.find({ pagamentoId: pagamento._id, usuarioId })
+    .populate("parcelaId", "numeroParcela valor dataVencimento status")
+    .sort({ data: 1 });
+
+  const bruto = pagamento.toObject ? pagamento.toObject() : pagamento;
+
+  return {
+    ...bruto,
+    valorLiquido: emCentavos(Number(pagamento.valor) - estornado),
+    totalEstornado: estornado,
+    estornos: estornos.map((e) => ({
+      _id: e.doc._id,
+      valor: e.doc.valor,
+      motivo: e.doc.motivo,
+      data: e.doc.data,
+      tipo: e.doc.tipo,
+      estornoAnuladoId: e.doc.estornoAnuladoId,
+      anulado: e.anulado
+    })),
+    alocacoes: alocacoes.map((a) => ({
+      _id: a._id,
+      parcelaId: a.parcelaId?._id ?? a.parcelaId,
+      numeroParcela: a.parcelaId?.numeroParcela ?? null,
+      dataVencimento: a.parcelaId?.dataVencimento ?? null,
+      valor: a.valor,
+      data: a.data,
+      origem: a.origem,
+      estornoId: a.estornoId,
+      desalocadoEm: a.desalocadoEm,
+      ativa: a.estornoId === null
+    }))
+  };
 };
 
 export const findById = async (id, usuarioId) => {
   validarObjectId(id, "paymentId");
 
-  const payment = await Payment.findOne({
-    _id: id,
-    usuarioId,
-    ativo: true
-  }).populate("installmentId");
-
+  const payment = await Payment.findOne({ _id: id, usuarioId, ativo: true }).populate(
+    PAYMENT_POPULATE
+  );
   if (!payment) throw criarErro(404, "Pagamento não encontrado");
 
-  return payment;
+  return comEstornosEAlocacoes(payment, usuarioId);
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// UPDATE — um campo só (DEC-032)
+// ═══════════════════════════════════════════════════════════════════════════
 export const update = async (id, data, usuarioId) => {
-  // Allowlist da Fase 4.5. `payments` era o unico modulo em que `ativo` no
-  // corpo NAO era descuido: estava em `CAMPOS_PERMITIDOS_UPDATE` e era
-  // aplicado por uma linha explicita. Mudanca de contrato consciente.
+  // A allowlist de `payments` encolheu para `["observacoes"]` na F-1. Qualquer
+  // outro campo cai aqui com 400 e `campo` — inclusive `valor` e `data`, que
+  // eram editáveis até a F-0. Corrigir dinheiro é estornar, não reescrever.
   const recusado = checarUpdate("payments", data);
   if (recusado) {
     throw criarErro(400, recusado.mensagem, recusado.campo ? { campo: recusado.campo } : {});
@@ -312,126 +378,29 @@ export const update = async (id, data, usuarioId) => {
 
   validarObjectId(id, "paymentId");
 
-  // A validação de payload veio do controller nesta fase. Estava lá desde a
-  // Fase 1 e era o único módulo financeiro fora da convenção do projeto
-  // ("validação sempre no service, nunca no controller" — sessão de 09/05).
-  // Rodando antes do service, ela engolia a recusa da allowlist: `ativo` deixou
-  // de ser campo conhecido, `camposValidosEnviados` ficava vazio, e a resposta
-  // era "Informe ao menos um campo válido" — sem `campo` e sem dizer o que
-  // estava errado.
-  const errosDePayload = validateUpdatePayment(data);
-  if (errosDePayload.length > 0) {
-    throw criarErro(400, errosDePayload[0], { errors: errosDePayload });
-  }
-
   const payment = await Payment.findOne({ _id: id, usuarioId, ativo: true });
-
   if (!payment) throw criarErro(404, "Pagamento não encontrado");
 
-  const installmentOriginalId = payment.installmentId.toString();
-
-  let targetInstallment = null;
-  if (data.installmentId !== undefined) {
-    targetInstallment = await validarInstallmentDoUsuario(data.installmentId, usuarioId);
-    payment.installmentId = targetInstallment._id;
-    payment.processoId = targetInstallment.processoId;
-  }
-
-  if (data.valorPago !== undefined) payment.valorPago = Number(data.valorPago);
-  if (data.dataPagamento !== undefined) payment.dataPagamento = new Date(data.dataPagamento);
-  if (data.formaPagamento !== undefined) payment.formaPagamento = data.formaPagamento;
-  if (data.observacoes !== undefined) payment.observacoes = data.observacoes?.trim() || "";
-  // `data.ativo` era aplicado aqui até a Fase 4.5. Removido junto com a entrada
-  // na allowlist: desativar é o DELETE, reativar é `PATCH /:id/reativar`.
-
-  if (!targetInstallment) {
-    targetInstallment = await Installment.findOne({
-      _id: payment.installmentId,
-      usuarioId,
-      ativo: true
-    });
-  }
-
-  if (targetInstallment) {
-    await validarOverpayment(targetInstallment, payment.valorPago, usuarioId, id);
+  if (data.observacoes !== undefined) {
+    payment.observacoes = data.observacoes === null ? "" : String(data.observacoes).trim();
   }
 
   await payment.save();
 
-  await recalcularStatusInstallment(installmentOriginalId, usuarioId);
-
-  if (payment.installmentId.toString() !== installmentOriginalId) {
-    await recalcularStatusInstallment(payment.installmentId.toString(), usuarioId);
-  }
-
-  return Payment.findById(payment._id).populate("installmentId");
+  return comEstornosEAlocacoes(
+    await Payment.findById(payment._id).populate(PAYMENT_POPULATE),
+    usuarioId
+  );
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// REATIVAÇÃO DE PAGAMENTO (achado 2.2c — Fase 4.5)
-//
-// Rota deliberada, e não `PATCH { ativo: true }`: reativar tem guarda de
-// integridade PRÓPRIA, e um campo no corpo de um update genérico não tem onde
-// pendurá-la. Foi exatamente por não existir este caminho que o `ativo` no
-// corpo parecia necessário.
-//
-// A guarda: um pagamento só volta se a PARCELA dele estiver ativa. Sem isso o
-// pagamento reapareceria pendurado numa parcela que não existe mais para o
-// sistema, e `recalcularStatusInstallment` o ignoraria para sempre — dinheiro
-// registrado que não conta em lugar nenhum.
-//
-// O excedente é reconferido: enquanto o pagamento estava fora, outros podem ter
-// ocupado o saldo. Reativar sem checar estouraria o valor da parcela por um
-// caminho que o 409 de `create`/`update` nunca vê.
-// ═══════════════════════════════════════════════════════════════════════════
-export const reativar = async (id, usuarioId) => {
-  validarObjectId(id, "paymentId");
-
-  const payment = await Payment.findOne({ _id: id, usuarioId });
-  if (!payment) throw criarErro(404, "Pagamento não encontrado");
-
-  if (payment.ativo === true) {
-    return Payment.findById(payment._id).populate("installmentId");
-  }
-
-  const installment = await Installment.findOne({
-    _id: payment.installmentId,
-    usuarioId,
-    ativo: true
-  });
-
-  if (!installment) {
-    throw criarErro(
-      409,
-      "Não é possível reativar este pagamento: a parcela dele está desativada. " +
-      "Reative a parcela antes.",
-      { dependencia: "parcela" }
-    );
-  }
-
-  await validarOverpayment(installment, Number(payment.valorPago), usuarioId, payment._id);
-
-  payment.ativo = true;
-  await payment.save();
-
-  await recalcularStatusInstallment(payment.installmentId.toString(), usuarioId);
-
-  return Payment.findById(payment._id).populate("installmentId");
+export default {
+  create,
+  preverAlocacao,
+  findAll,
+  findById,
+  update,
+  recalcularStatusInstallment,
+  recalcularStatusFee,
+  recalcularParcelas,
+  autoAlocarSaldo
 };
-
-export const remove = async (id, usuarioId) => {
-  validarObjectId(id, "paymentId");
-
-  const payment = await Payment.findOne({ _id: id, usuarioId, ativo: true });
-
-  if (!payment) throw criarErro(404, "Pagamento não encontrado");
-
-  payment.ativo = false;
-  await payment.save();
-
-  await recalcularStatusInstallment(payment.installmentId.toString(), usuarioId);
-
-  return { message: "Pagamento removido com sucesso" };
-};
-
-export default { create, findAll, findById, update, reativar, remove };
