@@ -56,4 +56,27 @@ export const registrarStatus = (fee, novoStatus, origem) => {
   return true;
 };
 
-export default { registrarStatus, ORIGEM_STATUS };
+// A linha de NASCIMENTO do honorário. Separada de `registrarStatus` porque a
+// criação não é uma transição: não há `de`, e `registrarStatus` recusaria o
+// caso justamente por comparar anterior com novo (num honorário recém-criado os
+// dois são `pendente`, e ele devolveria `false`).
+//
+// Sem esta linha o histórico começaria no primeiro pagamento, e a advogada
+// leria "pendente → parcialmente_pago" sem nada dizendo desde quando o
+// honorário existia. Também mantém verdadeira a invariante de que
+// `historicoStatus[0].de === null` — o começo da cadeia é reconhecível.
+export const registrarCriacao = (fee) => {
+  if (!fee) return false;
+  if (fee.historicoStatus?.length > 0) return false;
+
+  fee.historicoStatus.push({
+    de: null,
+    para: fee.status,
+    data: new Date(),
+    origem: ORIGEM_STATUS.CRIACAO
+  });
+
+  return true;
+};
+
+export default { registrarStatus, registrarCriacao, ORIGEM_STATUS };

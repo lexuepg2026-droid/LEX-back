@@ -118,12 +118,21 @@ export const recalcularStatusFee = async (feeId, usuarioId, origem = ORIGEM_STAT
 // A parcela é carregada SEM o filtro de `ativo` de propósito (correção da
 // 4.5): recalcular é leitura de fato consumado, e o filtro só escondia a
 // parcela de si mesma, matando a cadeia antes de o honorário ser recalculado.
-export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
+// `origem` viaja pela cadeia desde a F-1a. O recálculo em si é sempre o mesmo
+// cálculo; o que muda é QUEM o disparou, e é isso que o `historicoStatus`
+// precisa registrar (DEC-038). Sem o parâmetro, um reparcelamento apareceria no
+// histórico como derivação normal — e a advogada perderia justamente a
+// distinção entre "o sistema derivou" e "alguém decidiu".
+export const recalcularStatusInstallment = async (
+  installmentId,
+  usuarioId,
+  origem = ORIGEM_STATUS.RECALCULO
+) => {
   const installment = await Installment.findOne({ _id: installmentId, usuarioId });
   if (!installment) return null;
 
   if (installment.ativo !== true) {
-    await recalcularStatusFee(installment.feeId, usuarioId);
+    await recalcularStatusFee(installment.feeId, usuarioId, origem);
     return null;
   }
 
@@ -142,7 +151,7 @@ export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
 
   await installment.save();
 
-  await recalcularStatusFee(installment.feeId, usuarioId);
+  await recalcularStatusFee(installment.feeId, usuarioId, origem);
 
   return installment;
 };
@@ -150,9 +159,13 @@ export const recalcularStatusInstallment = async (installmentId, usuarioId) => {
 // Recalcula tudo o que uma operação tocou. Uma parcela por vez, porque o
 // recálculo do honorário no fim de cada uma é idempotente e barato — e porque
 // tentar recalcular em lote reintroduziria uma segunda fórmula.
-export const recalcularParcelas = async (parcelaIds, usuarioId) => {
+export const recalcularParcelas = async (
+  parcelaIds,
+  usuarioId,
+  origem = ORIGEM_STATUS.RECALCULO
+) => {
   for (const id of new Set(parcelaIds.map(String))) {
-    await recalcularStatusInstallment(id, usuarioId);
+    await recalcularStatusInstallment(id, usuarioId, origem);
   }
 };
 
@@ -194,24 +207,16 @@ export const preverAlocacao = async (dados, usuarioId) => {
     throw criarErro(400, "O valor do pagamento deve ser maior que zero", { campo: "valor" });
   }
 
-  if (dados.tipo === "adiantamento") {
-    return {
-      honorarioId: fee._id,
-      tipo: "adiantamento",
-      destinos: [],
-      sobra: emCentavos(valor),
-      saldoAdiantadoAtual: emCentavos(fee.saldoAdiantado || 0),
-      saldoAdiantadoDepois: emCentavos(Number(fee.saldoAdiantado || 0) + valor)
-    };
-  }
-
+  // Sem ramo por tipo: desde a F-1a `adiantamento` e `comum` passam pelo MESMO
+  // planejamento (ver o cabeçalho de `alocarPagamento`). Um `if` aqui faria o
+  // preview divergir da criação no exato caso em que ele mais importa.
   const parcelas = await listarAlocaveis(fee._id, usuarioId);
   const alocado = await mapaDeAlocado(fee._id, usuarioId);
   const { destinos, sobra } = planejarAlocacao(valor, parcelas, alocado);
 
   return {
     honorarioId: fee._id,
-    tipo: "comum",
+    tipo: dados.tipo === "adiantamento" ? "adiantamento" : "comum",
     destinos,
     sobra,
     saldoAdiantadoAtual: emCentavos(fee.saldoAdiantado || 0),

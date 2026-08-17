@@ -13,6 +13,8 @@ import {
   dadosHonorario,
   dadosParcela,
   dadosPagamento,
+  dadosEstorno,
+  dadosReparcelamento,
   dadosSecao,
   dadosModelo,
   SENHA_PADRAO
@@ -75,9 +77,43 @@ export const criarParcela = async (api, feeId, numero, extra = {}) => {
   return esperado(r, 201, `criação de parcela ${numero}`);
 };
 
-export const criarPagamento = async (api, installmentId, extra = {}) => {
-  const r = await api.post("/payments", dadosPagamento(installmentId, extra));
+// ── F-1a: o pagamento nasce contra o HONORÁRIO ─────────────────────────────
+//
+// A resposta do POST deixou de ser o pagamento cru e passou a ser
+// `{ pagamento, alocacoes, sobra, saldoAdiantado }` — a criação executa o motor
+// de alocação e devolve o que ele fez. O helper devolve o envelope INTEIRO, e
+// não só `pagamento`: a maioria dos testes desta fase mede justamente para onde
+// o dinheiro foi, e desembrulhar aqui obrigaria cada um a refazer a consulta.
+export const criarPagamento = async (api, honorarioId, extra = {}) => {
+  const r = await api.post("/payments", dadosPagamento(honorarioId, extra));
   return esperado(r, 201, "criação de pagamento");
+};
+
+// Estorno de um pagamento. Devolve
+// `{ estorno, desalocacao, valorLiquido, totalEstornado }`.
+export const criarEstorno = async (api, pagamentoId, extra = {}) => {
+  const r = await api.post(`/payments/${pagamentoId}/reversals`, dadosEstorno(extra));
+  return esperado(r, 201, "criação de estorno");
+};
+
+// Anulação de estorno — o estorno-do-estorno. Não leva `valor`: a anulação
+// restaura o valor integral do estorno anulado (ver `reversalValidation.js`).
+export const anularEstorno = async (api, pagamentoId, estornoAnuladoId, extra = {}) => {
+  const r = await api.post(`/payments/${pagamentoId}/reversals`, {
+    estornoAnuladoId,
+    motivo: "Anulação registrada pela suíte de testes",
+    ...extra
+  });
+  return esperado(r, 201, "anulação de estorno");
+};
+
+// Reparcelamento de um honorário.
+export const criarReparcelamento = async (api, honorarioId, parcelas, extra = {}) => {
+  const r = await api.post(
+    `/fees/${honorarioId}/renegotiations`,
+    dadosReparcelamento(parcelas, extra)
+  );
+  return esperado(r, 201, "criação de reparcelamento");
 };
 
 export const criarSecao = async (api, extra = {}) => {

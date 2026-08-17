@@ -130,17 +130,23 @@ const gravarDestinos = async ({ destinos, pagamentoId, feeId, usuarioId, data, o
 
 // Aloca o valor de um pagamento recém-criado. Devolve as alocações e a sobra
 // que foi para o saldo.
+// ── `tipo` é DESCRITIVO, não um segundo motor (DEC-036, refinada na F-1a) ──
+//
+// A fundação desta branch fazia `adiantamento` curto-circuitar para o saldo sem
+// olhar parcela nenhuma. Isso contradizia o cabeçalho do próprio `Payment.js`,
+// que diz que "a distinção é do PEDIDO, não do resultado", e criava DOIS
+// motores de alocação — um por tipo — para a mesma pergunta.
+//
+// Passa a haver um só: todo pagamento planeja contra as parcelas alocáveis, do
+// vencimento mais antigo em diante, e o que sobra vira `saldoAdiantado`. Num
+// honorário SEM parcelas o resultado é idêntico ao de antes (não há destino, e
+// o valor inteiro cai no saldo), que é o caso para o qual `adiantamento` foi
+// criado. Com parcelas em aberto, o dinheiro passa a quitar o que está vencido
+// em vez de ficar parado ao lado de uma dívida — que é o que a advogada faria.
+//
+// O tipo continua gravado e continua importando: é o que o extrato mostra meses
+// depois para explicar a INTENÇÃO do lançamento.
 export const alocarPagamento = async ({ pagamento, fee, usuarioId }) => {
-  // Adiantamento não disputa parcela: vai inteiro para o saldo, por decisão da
-  // advogada. Ela pode ter um motivo que o sistema não conhece — um acerto
-  // combinado para o mês que vem — e adivinhar destino seria justamente a
-  // "mágica" que a DEC-035 proíbe.
-  if (pagamento.tipo === "adiantamento") {
-    fee.saldoAdiantado = emCentavos(Number(fee.saldoAdiantado || 0) + Number(pagamento.valor));
-    await fee.save();
-    return { alocacoes: [], sobra: emCentavos(pagamento.valor) };
-  }
-
   const parcelas = await listarAlocaveis(fee._id, usuarioId);
   const alocado = await mapaDeAlocado(fee._id, usuarioId);
   const { destinos, sobra } = planejarAlocacao(pagamento.valor, parcelas, alocado);

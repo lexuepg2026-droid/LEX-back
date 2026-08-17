@@ -5,8 +5,7 @@ import {
   getAllInstallments,
   getInstallmentById,
   updateInstallment,
-  deleteInstallment,
-  reactivateInstallment
+  deleteInstallment
 } from "../controllers/installmentController.js";
 
 const router = Router();
@@ -15,9 +14,9 @@ router.use(authMiddleware);
 
 router.post("/", createInstallment);
 router.get("/", getAllInstallments);
-// Reativação (Fase 4.5). Guarda própria: parcela só volta com o honorário
-// ativo. Antes das genéricas de `/:id`.
-router.patch("/:id/reativar", reactivateInstallment);
+// A rota `PATCH /:id/reativar` MORREU na Fase F-1a (DEC-034) e passa a
+// responder 404 pelo `notFoundMiddleware`. Ver o registro no fim de
+// `installmentService.js` — e o teste que trava as duas rotas de reativação.
 
 router.get("/:id", getInstallmentById);
 // PATCH é o verbo de update do projeto; PUT fica como alias depreciado, no

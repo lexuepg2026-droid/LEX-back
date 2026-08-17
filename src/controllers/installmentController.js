@@ -3,7 +3,6 @@ import {
   listarInstallments,
   buscarInstallmentPorId,
   atualizarInstallment,
-  reativarInstallment,
   deletarInstallment
 } from "../services/installmentService.js";
 
@@ -55,11 +54,7 @@ export const deleteInstallment = async (req, res, next) => {
   }
 };
 
-export const reactivateInstallment = async (req, res, next) => {
-  try {
-    const resultado = await reativarInstallment(req.user._id, req.params.id);
-    return res.status(200).json(resultado);
-  } catch (error) {
-    return next(error);
-  }
-};
+// `reactivateInstallment` foi REMOVIDA na Fase F-1a (DEC-034), junto com o
+// service e a rota. O motivo está por extenso no fim de `installmentService.js`:
+// parcela que sai de circulação sai por REPARCELAMENTO, com vínculo, e
+// ressuscitá-la faria a cobrança substituída somar ao lado da que a substituiu.

@@ -17,7 +17,12 @@ import ConfirmacaoVisualizacao from '../src/models/ConfirmacaoVisualizacao.js';
 import feeService from '../src/services/feeService.js';
 import { createProcess } from '../src/services/processService.js';
 import { criarInstallment } from '../src/services/installmentService.js';
-import { create as criarPayment } from '../src/services/paymentService.js';
+import { create as criarPayment, recalcularParcelas } from '../src/services/paymentService.js';
+import { criarEstorno } from '../src/services/reversalService.js';
+import { criarReparcelamento } from '../src/services/renegotiationService.js';
+import Reversal from '../src/models/Reversal.js';
+import Allocation from '../src/models/Allocation.js';
+import Renegotiation from '../src/models/Renegotiation.js';
 import { gerarDocumentoService, atualizarTextoService } from '../src/services/documentGenerationService.js';
 import { detectarLacunas } from '../src/utils/lacunas.js';
 import { CATALOGO_VARIAVEIS } from '../src/config/templateVariables.js';
@@ -329,8 +334,28 @@ const MODELOS_DATA = [
 
 // ── Dados: Honorários + Parcelas + Pagamentos ─────────────────────────────────
 // createdAt: backdate para popular gráfico "Honorários por Mês" (últimos 6 meses)
-// installments[].payments[]: inseridos via paymentService (overpayment guard ativo)
-// valorPago por payment NUNCA excede installment.valor
+//
+// ── Fase F-1a — a forma do spec mudou junto com o modelo ────────────────────
+// O pagamento deixou de pendurar na parcela (`installments[].payments[]`) e
+// passou a pendurar no HONORÁRIO, porque é isso que ele faz agora: nasce
+// contra a cobrança e o motor decide em quais parcelas encosta.
+//
+// Chaves de cada spec, na ordem em que o laço as executa:
+//
+//   pagamentosAntesDasParcelas[]  entram sem parcela existir → saldoAdiantado
+//   installments[]                a criação dispara a auto-alocação do saldo
+//   pagamentos[]                  alocados do vencimento mais antigo em diante
+//   estornos[]                    desalocam na ordem espelhada (mais novo 1º)
+//   reparcelamento{}              cancela as antigas COM vínculo e cria o plano
+//   cancelarDepois                status explícito, sempre por último
+//
+// `ref` num pagamento serve para o estorno apontá-lo. Não existe mais
+// `ativo: false` em pagamento: desfazer entrada é ESTORNO (DEC-033), e a rota
+// que desativava morreu.
+//
+// **Nenhum documento é escrito à mão.** Tudo passa pelos services de verdade,
+// então um seed que roda até o fim é prova de que o motor, a desalocação e o
+// reparcelamento funcionam encadeados.
 //
 // ── Fase 4.1 ────────────────────────────────────────────────────────────────
 // `status` do honorário NÃO é mais escrita: é DERIVADO das parcelas (DEC-028).
@@ -350,48 +375,52 @@ const FEES_DATA = [
     processoIdx: 0,
     feeData:   { descricao: 'Honorários advocatícios — fase inicial', valor: 5000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-06-30' },
     createdAt: new Date(2026, 0, 15), // Jan
-    // DERIVADO: pendente — nenhuma parcela ativa com pagamento ativo.
     installments: [
-      {
-        numeroParcela: 1, valor: 2500, dataVencimento: '2026-04-30',
-        // PAGAMENTO DESATIVADO (Fase 4.1): estorno. Prova que pagamento
-        // inativo sai da soma — esta parcela continua com valorPago 0 e
-        // status `vencido`, e o honorário continua `pendente`.
-        payments: [{ valorPago: 2500, dataPagamento: '2026-04-28', formaPagamento: 'boleto', observacoes: 'Boleto estornado pelo banco — pagamento desfeito', ativo: false }],
-      },
-      { numeroParcela: 2, valor: 2500, dataVencimento: '2026-07-31', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 2500, dataVencimento: '2026-04-30' },
+      { numeroParcela: 2, valor: 2500, dataVencimento: '2026-07-31' },
     ],
+    // ── ESTORNO TOTAL (F-1a) — substitui o "pagamento desativado" da 4.1 ────
+    // O boleto entrou, alocou na parcela 1, e o banco o desfez. Na F-0 isso
+    // era `ativo: false` no pagamento; agora é um registro de estorno, que diz
+    // QUANDO voltou e POR QUÊ — e devolve a parcela a `vencido` pela
+    // desalocação, sem apagar o fato de que houve entrada.
+    pagamentos: [
+      { ref: 'boleto', valor: 2500, data: '2026-04-28', formaPagamento: 'boleto', observacoes: 'Boleto compensado — depois estornado pelo banco' },
+    ],
+    estornos: [
+      { pagamentoRef: 'boleto', valor: 2500, data: '2026-05-02', motivo: 'Boleto devolvido pelo banco por insuficiência de fundos' },
+    ],
+    // DERIVADO: pendente — o estorno total desalocou tudo.
   },
   {
     processoIdx: 0,
     // 10% de R$ 80.000 = R$ 8.000. `valor` não vai no payload: o hook calcula.
     feeData:   { descricao: 'Honorários de êxito — 10% sobre o valor da causa', tipo: 'percentual', percentual: 10, valorBase: 80000, status: 'pendente', dataVencimento: '2026-08-30' },
     createdAt: new Date(2026, 1, 10), // Fev
-    // DERIVADO: pendente.
     installments: [
-      { numeroParcela: 1, valor: 8000, dataVencimento: '2026-08-30', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 8000, dataVencimento: '2026-08-30' },
     ],
+    // DERIVADO: pendente.
   },
 
   // ── Processo 1 — Ana / Revisão Contrato ────────────────────────────────
   {
     processoIdx: 1,
-    feeData:   { descricao: 'Consultoria e revisão contratual', valor: 3000, tipo: 'fixo', status: 'pago', dataVencimento: '2026-03-31' },
+    feeData:   { descricao: 'Consultoria e revisão contratual', valor: 3000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-03-31' },
     createdAt: new Date(2026, 2, 5), // Mar
     installments: [
-      {
-        numeroParcela: 1, valor: 1000, dataVencimento: '2026-01-31',
-        payments: [{ valorPago: 1000, dataPagamento: '2026-01-20', formaPagamento: 'pix',          observacoes: 'Pagamento 1ª parcela' }],
-      },
-      {
-        numeroParcela: 2, valor: 1000, dataVencimento: '2026-02-28',
-        payments: [{ valorPago: 1000, dataPagamento: '2026-02-25', formaPagamento: 'transferencia', observacoes: 'Pagamento 2ª parcela' }],
-      },
-      {
-        numeroParcela: 3, valor: 1000, dataVencimento: '2026-03-31',
-        payments: [{ valorPago: 600,  dataPagamento: '2026-03-15', formaPagamento: 'dinheiro',      observacoes: 'Pagamento parcial — saldo pendente' }],
-      },
+      { numeroParcela: 1, valor: 1000, dataVencimento: '2026-01-31' },
+      { numeroParcela: 2, valor: 1000, dataVencimento: '2026-02-28' },
+      { numeroParcela: 3, valor: 1000, dataVencimento: '2026-03-31' },
     ],
+    // Três pagamentos, cada um caindo na parcela mais antiga em aberto — que
+    // é a ordem natural do motor (DEC-035). O terceiro é parcial.
+    pagamentos: [
+      { valor: 1000, data: '2026-01-20', formaPagamento: 'pix',           observacoes: 'Pagamento 1ª parcela' },
+      { valor: 1000, data: '2026-02-25', formaPagamento: 'transferencia', observacoes: 'Pagamento 2ª parcela' },
+      { valor: 600,  data: '2026-03-15', formaPagamento: 'dinheiro',      observacoes: 'Pagamento parcial — saldo pendente' },
+    ],
+    // DERIVADO: parcialmente_pago.
   },
 
   // ── Processo 2 — Carlos / Divórcio ─────────────────────────────────────
@@ -400,9 +429,19 @@ const FEES_DATA = [
     feeData:   { descricao: 'Honorários advocatícios — divórcio litigioso', valor: 6000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-07-15' },
     createdAt: new Date(2026, 3, 10), // Abr
     installments: [
-      { numeroParcela: 1, valor: 3000, dataVencimento: '2026-05-10', payments: [] },           // vencida, sem pagamento → vencido
-      { numeroParcela: 2, valor: 3000, dataVencimento: '2026-07-15', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 3000, dataVencimento: '2026-05-10' },
+      { numeroParcela: 2, valor: 3000, dataVencimento: '2026-07-15' },
     ],
+    // ── O PAGAMENTO QUE ATRAVESSA DUAS PARCELAS (F-1a) ────────────────────
+    // R$ 4.500 num PIX só: quita a parcela 1 (3.000) e abate 1.500 da parcela
+    // 2. Na F-0 isto seria impossível — o pagamento pertencia a UMA parcela, e
+    // a advogada teria de lançar dois pagamentos e emitir dois recibos para um
+    // depósito que o cliente fez uma vez. É o caso que a DEC-035 existe para
+    // resolver, e o que o extrato precisa saber contar.
+    pagamentos: [
+      { valor: 4500, data: '2026-05-08', formaPagamento: 'pix', observacoes: 'PIX único cobrindo a 1ª parcela e parte da 2ª' },
+    ],
+    // DERIVADO: parcialmente_pago — parcela 1 `pago`, parcela 2 `parcial`.
   },
 
   // ── Processo 4 — Maria / Inventário ────────────────────────────────────
@@ -413,10 +452,22 @@ const FEES_DATA = [
     // {{percentualHonorario}} no seed.
     feeData:   { descricao: 'Honorários — inventário e partilha (% sobre monte)', tipo: 'percentual', percentual: 6, valorBase: 200000, status: 'pendente', dataVencimento: '2026-09-30' },
     createdAt: new Date(2026, 4, 1), // Mai
-    // DERIVADO: pendente.
-    installments: [
-      { numeroParcela: 1, valor: 12000, dataVencimento: '2026-09-30', payments: [] },          // futura → pendente
+    // ── O ADIANTAMENTO COM AUTO-ALOCAÇÃO POSTERIOR (DEC-036) ─────────────
+    // Estes R$ 5.000 entram ANTES de existir parcela nenhuma: a herdeira
+    // adiantou por conta do inventário, e o plano de parcelas só foi montado
+    // depois. O dinheiro fica em `Fee.saldoAdiantado` até a parcela nascer, e
+    // no instante em que ela nasce se auto-aloca sozinho.
+    //
+    // Sem isso, a advogada veria a parcela inteira em aberto no dia seguinte
+    // ao cliente ter pago, e "resolveria" lançando o pagamento de novo —
+    // criando um recebimento que nunca existiu.
+    pagamentosAntesDasParcelas: [
+      { valor: 5000, data: '2026-05-05', tipo: 'adiantamento', formaPagamento: 'transferencia', observacoes: 'Adiantamento por conta do inventário — antes do parcelamento' },
     ],
+    installments: [
+      { numeroParcela: 1, valor: 12000, dataVencimento: '2026-09-30' },
+    ],
+    // DERIVADO: parcialmente_pago — a parcela nasceu e recebeu os 5.000.
   },
 
   // ── Processo 6 — Beatriz / Usucapião ───────────────────────────────────
@@ -425,57 +476,68 @@ const FEES_DATA = [
     feeData:   { descricao: 'Honorários advocatícios — usucapião urbano', valor: 8000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-06-30' },
     createdAt: new Date(2026, 4, 20), // Mai
     installments: [
-      {
-        numeroParcela: 1, valor: 4000, dataVencimento: '2026-04-30',
-        payments: [{ valorPago: 4000, dataPagamento: '2026-04-25', formaPagamento: 'cartao_credito', observacoes: 'Entrada — cartão de crédito' }],
-      },
-      { numeroParcela: 2, valor: 4000, dataVencimento: '2026-06-30', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 4000, dataVencimento: '2026-04-30' },
+      { numeroParcela: 2, valor: 4000, dataVencimento: '2026-06-30' },
     ],
+    // ── O ESTORNO PARCIAL COM DESALOCAÇÃO (DEC-033) ──────────────────────
+    // A entrada de 4.000 quitou a parcela 1. Depois, 1.500 voltaram — a
+    // operadora do cartão contestou parte. O estorno desaloca 1.500 da
+    // parcela, que volta de `pago` para `parcial` com 2.500.
+    //
+    // A linha de alocação original NÃO é reescrita: ela é carimbada com o
+    // `estornoId` e uma linha nova, de 2.500, toma o lugar dela (decisão
+    // intocável da fundação). O extrato mostra os três fatos.
+    pagamentos: [
+      { ref: 'cartao', valor: 4000, data: '2026-04-25', formaPagamento: 'cartao_credito', observacoes: 'Entrada — cartão de crédito' },
+    ],
+    estornos: [
+      { pagamentoRef: 'cartao', valor: 1500, data: '2026-05-18', motivo: 'Contestação parcial da operadora do cartão' },
+    ],
+    // DERIVADO: parcialmente_pago.
   },
 
   // ── Processo 7 — Roberto / Cobrança ────────────────────────────────────
   {
     processoIdx: 7,
-    feeData:   { descricao: 'Honorários advocatícios — ação de cobrança', valor: 2500, tipo: 'fixo', status: 'pago', dataVencimento: '2026-03-31' },
+    feeData:   { descricao: 'Honorários advocatícios — ação de cobrança', valor: 2500, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-03-31' },
     createdAt: new Date(2026, 2, 5), // Mar
     installments: [
-      {
-        numeroParcela: 1, valor: 2500, dataVencimento: '2026-03-31',
-        payments: [{ valorPago: 2500, dataPagamento: '2026-03-28', formaPagamento: 'boleto', observacoes: 'Honorários quitados via boleto bancário' }],
-      },
+      { numeroParcela: 1, valor: 2500, dataVencimento: '2026-03-31' },
     ],
+    pagamentos: [
+      { valor: 2500, data: '2026-03-28', formaPagamento: 'boleto', observacoes: 'Honorários quitados via boleto bancário' },
+    ],
+    // DERIVADO: pago.
   },
   {
     processoIdx: 7,
-    feeData:   { descricao: 'Custas processuais e despesas cartorárias', valor: 1200, tipo: 'custas', status: 'pago', dataVencimento: '2026-04-15' },
+    feeData:   { descricao: 'Custas processuais e despesas cartorárias', valor: 1200, tipo: 'custas', status: 'pendente', dataVencimento: '2026-04-15' },
     createdAt: new Date(2026, 3, 10), // Abr
     installments: [
-      {
-        numeroParcela: 1, valor: 1200, dataVencimento: '2026-04-15',
-        payments: [{ valorPago: 1200, dataPagamento: '2026-04-10', formaPagamento: 'pix', observacoes: 'Custas pagas via PIX' }],
-      },
+      { numeroParcela: 1, valor: 1200, dataVencimento: '2026-04-15' },
     ],
+    pagamentos: [
+      { valor: 1200, data: '2026-04-10', formaPagamento: 'pix', observacoes: 'Custas pagas via PIX' },
+    ],
+    // DERIVADO: pago.
   },
 
-  // ── Processo 8 — Construtora / Disputas (encerrado, tudo pago) ─────────
+  // ── Processo 8 — Construtora / Disputas (encerrado) ────────────────────
   {
     processoIdx: 8,
-    feeData:   { descricao: 'Honorários contratuais — disputa com fornecedor', valor: 15000, tipo: 'fixo', status: 'pago', dataVencimento: '2026-03-31' },
+    feeData:   { descricao: 'Honorários contratuais — disputa com fornecedor', valor: 15000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-03-31' },
     createdAt: new Date(2026, 0, 20), // Jan
     installments: [
-      {
-        numeroParcela: 1, valor: 5000, dataVencimento: '2026-01-31',
-        payments: [{ valorPago: 5000, dataPagamento: '2026-01-28', formaPagamento: 'transferencia', observacoes: 'Parcela 1/3' }],
-      },
-      {
-        numeroParcela: 2, valor: 5000, dataVencimento: '2026-02-28',
-        payments: [{ valorPago: 5000, dataPagamento: '2026-02-25', formaPagamento: 'transferencia', observacoes: 'Parcela 2/3' }],
-      },
-      {
-        numeroParcela: 3, valor: 5000, dataVencimento: '2026-03-31',
-        payments: [{ valorPago: 4000, dataPagamento: '2026-05-10', formaPagamento: 'cartao_debito', observacoes: 'Parcela 3/3 — quitação parcial (mai/26)' }],
-      },
+      { numeroParcela: 1, valor: 5000, dataVencimento: '2026-01-31' },
+      { numeroParcela: 2, valor: 5000, dataVencimento: '2026-02-28' },
+      { numeroParcela: 3, valor: 5000, dataVencimento: '2026-03-31' },
     ],
+    pagamentos: [
+      { valor: 5000, data: '2026-01-28', formaPagamento: 'transferencia', observacoes: 'Parcela 1/3' },
+      { valor: 5000, data: '2026-02-25', formaPagamento: 'transferencia', observacoes: 'Parcela 2/3' },
+      { valor: 4000, data: '2026-05-10', formaPagamento: 'cartao_debito', observacoes: 'Parcela 3/3 — quitação parcial (mai/26)' },
+    ],
+    // DERIVADO: parcialmente_pago.
   },
 
   // ── Processo 9 — Tech / Tributário ─────────────────────────────────────
@@ -484,40 +546,83 @@ const FEES_DATA = [
     feeData:   { descricao: 'Assessoria tributária — processo administrativo', valor: 7500, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-08-15' },
     createdAt: new Date(2026, 4, 1), // Mai
     installments: [
-      {
-        numeroParcela: 1, valor: 3750, dataVencimento: '2026-05-10',
-        payments: [{ valorPago: 1500, dataPagamento: '2026-05-15', formaPagamento: 'pix', observacoes: 'Sinal — pagamento parcial (mai/26)' }],
-      },
-      { numeroParcela: 2, valor: 3750, dataVencimento: '2026-08-15', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 3750, dataVencimento: '2026-05-10' },
+      { numeroParcela: 2, valor: 3750, dataVencimento: '2026-08-15' },
     ],
+    pagamentos: [
+      { valor: 1500, data: '2026-05-15', formaPagamento: 'pix', observacoes: 'Sinal — pagamento parcial (mai/26)' },
+    ],
+    // ── O REPARCELAMENTO (DEC-037) ───────────────────────────────────────
+    // O cliente não deu conta do plano de duas parcelas e renegociou. O saldo
+    // em aberto no momento é 7.500 − 1.500 = 6.000, e vira três parcelas de
+    // 2.000.
+    //
+    // As duas antigas saem com `status: "cancelado"` E `reparcelamentoId`
+    // apontando para o registro — canceladas COM VÍNCULO. A parcela 1, que
+    // era `parcial`, é cancelada com os 1.500 alocados nela intactos: o
+    // dinheiro recebido não volta, ele é histórico, e o saldo renegociado já
+    // o descontou.
+    //
+    // A numeração das novas continua em 3, 4 e 5, e não recomeça em 1: o
+    // índice único {feeId, numeroParcela} não é parcial (Fase 4.5), então a
+    // parcela cancelada nunca solta o número dela.
+    reparcelamento: {
+      data: '2026-06-01',
+      motivo: 'Renegociação a pedido do cliente — fluxo de caixa da empresa',
+      parcelas: [
+        { valor: 2000, dataVencimento: '2026-07-15' },
+        { valor: 2000, dataVencimento: '2026-08-15' },
+        { valor: 2000, dataVencimento: '2026-09-15' },
+      ],
+    },
+    // DERIVADO: pendente — as parcelas novas nasceram sem alocação.
   },
   {
     processoIdx: 9,
     feeData:   { descricao: 'Honorários complementares — recurso administrativo', valor: 3000, tipo: 'fixo', status: 'pendente', dataVencimento: '2026-07-30' },
     createdAt: new Date(2026, 4, 1), // Mai
     installments: [
-      { numeroParcela: 1, valor: 3000, dataVencimento: '2026-07-30', payments: [] },           // futura → pendente
+      { numeroParcela: 1, valor: 3000, dataVencimento: '2026-07-30' },
     ],
+    // ── A SOBRA QUE VIRA SALDO (DEC-036) ─────────────────────────────────
+    // O cliente depositou 3.500 por uma cobrança de 3.000. Na F-0 o excedente
+    // era RECUSADO com 409 — a advogada teria de registrar 3.000 e o depósito
+    // real de 3.500 não existiria em lugar nenhum do sistema.
+    //
+    // Agora a parcela é quitada e os 500 restantes ficam visíveis em
+    // `saldoAdiantado`, esperando a próxima parcela deste honorário. Nada se
+    // perde e nada é inventado.
+    pagamentos: [
+      { valor: 3500, data: '2026-06-20', formaPagamento: 'transferencia', observacoes: 'Depósito a maior — sobra fica como saldo' },
+    ],
+    // DERIVADO: pago, com saldoAdiantado 500.
   },
   {
     processoIdx: 9,
-    feeData:   { descricao: 'Custas administrativas — taxas e emolumentos', valor: 800, tipo: 'custas', status: 'cancelado', dataVencimento: '2026-05-01' },
+    feeData:   { descricao: 'Custas administrativas — taxas e emolumentos', valor: 800, tipo: 'custas', status: 'pendente', dataVencimento: '2026-05-01' },
     createdAt: new Date(2026, 1, 10), // Fev
-    // ── O CASO QUE PROVA A GUARDA DA DEC-028 (Fase 4.1) ────────────────────
+    // ── O CASO QUE PROVA A GUARDA DA DEC-028 ──────────────────────────────
     // Honorário CANCELADO com a parcela INTEGRALMENTE PAGA. A cobrança foi
-    // desfeita depois de o cliente já ter recolhido a taxa, e o valor virou
-    // crédito para outra despesa.
+    // desfeita depois de o cliente já ter recolhido a taxa.
     //
     // Pela regra derivada, "todas as parcelas ativas quitadas" seria `pago`.
     // A guarda de `recalcularStatusFee` impede: `cancelado` só muda por
     // escrita explícita, e este honorário continua `cancelado` no fim do seed.
     // Se algum dia ele aparecer como `pago`, a guarda caiu.
+    //
+    // O cancelamento vem DEPOIS do pagamento, e agora isso é obrigatório e não
+    // arranjo do seed: desde a F-1a, honorário cancelado RECUSA pagamento com
+    // 409 (`regra: "honorarioCancelado"`). Registrar dinheiro contra uma
+    // cobrança desfeita deixaria um valor recebido pendurado numa dívida que
+    // não existe.
     installments: [
-      {
-        numeroParcela: 1, valor: 800, dataVencimento: '2026-05-01',
-        payments: [{ valorPago: 800, dataPagamento: '2026-04-28', formaPagamento: 'pix', observacoes: 'Taxa recolhida antes do cancelamento — virou crédito' }],
-      },
+      { numeroParcela: 1, valor: 800, dataVencimento: '2026-05-01' },
     ],
+    pagamentos: [
+      { valor: 800, data: '2026-04-28', formaPagamento: 'pix', observacoes: 'Taxa recolhida antes do cancelamento — virou crédito' },
+    ],
+    cancelarDepois: true,
+    // DERIVADO: cancelado (escrita explícita, preservada pela guarda).
   },
 ];
 
@@ -538,6 +643,14 @@ async function main() {
     console.log(`Removendo dados do usuario demo (${DEMO_EMAIL})...`);
 
     const [pay, inst, fee, vinc, sec, doc, procCli, proc, cli] = await Promise.all([
+      // As três coleções da F-1a saem ANTES do pagamento e da parcela, na
+      // ordem da cascata: alocação e estorno apontam para pagamento,
+      // reparcelamento aponta para parcela. A ordem não importa para
+      // `deleteMany` independentes, mas espelhar a dependência é o que faz a
+      // lista continuar legível quando alguém acrescentar a próxima coleção.
+      Allocation.deleteMany({ usuarioId: uid }),
+      Reversal.deleteMany({ usuarioId: uid }),
+      Renegotiation.deleteMany({ usuarioId: uid }),
       Payment.deleteMany({ usuarioId: uid }),
       Installment.deleteMany({ usuarioId: uid }),
       Fee.deleteMany({ usuarioId: uid }),
@@ -781,7 +894,27 @@ async function main() {
   );
 
   // ── HONORÁRIOS + PARCELAS + PAGAMENTOS (via services) ─────────────────────
+  //
+  // ── A ORDEM MUDOU na F-1a, e a ordem É o conteúdo ────────────────────────
+  //
+  // Até a F-0 o pagamento nascia dentro do laço da parcela, porque pertencia a
+  // ela. Agora ele nasce contra o HONORÁRIO e o motor decide o destino — então
+  // a sequência passa a ser:
+  //
+  //   1. honorário
+  //   2. pagamentos ANTES das parcelas   → viram `saldoAdiantado`
+  //   3. parcelas                        → a auto-alocação consome o saldo
+  //   4. pagamentos                      → alocados do vencimento mais antigo
+  //   5. estornos                        → desalocam na ordem espelhada
+  //   6. reparcelamento                  → cancela as antigas com vínculo
+  //   7. cancelamento do honorário       → depois do dinheiro, nunca antes
+  //
+  // Cada passo depende do anterior ter acontecido de verdade: montar o seed
+  // por escrita direta no banco produziria os mesmos documentos e NÃO provaria
+  // nada, porque não passaria pelo motor. Do jeito que está, um seed que roda
+  // é um teste de fumaça do módulo inteiro.
   let totalFees = 0, totalInstallments = 0, totalPayments = 0;
+  let totalEstornos = 0, totalReparcelamentos = 0;
 
   for (const spec of FEES_DATA) {
     // Cria honorário via feeService (valida processo, tenant isolation)
@@ -798,36 +931,84 @@ async function main() {
       { $set: { createdAt: spec.createdAt } }
     );
 
-    // Cria parcelas via installmentService (recalcularStatusInstallment automático)
-    for (const instSpec of spec.installments) {
-      const installment = await criarInstallment(uid, {
+    // Guarda os pagamentos por `ref`, para os estornos saberem qual estornar.
+    const pagamentosPorRef = new Map();
+
+    const registrarPagamento = async (paySpec) => {
+      const { pagamento } = await criarPayment({
+        honorarioId:    fee._id.toString(),
+        valor:          paySpec.valor,
+        data:           paySpec.data,
+        tipo:           paySpec.tipo ?? 'comum',
+        formaPagamento: paySpec.formaPagamento,
+        observacoes:    paySpec.observacoes ?? '',
+      }, uid);
+      totalPayments++;
+      if (paySpec.ref) pagamentosPorRef.set(paySpec.ref, pagamento);
+      return pagamento;
+    };
+
+    // 2. Pagamentos ANTES das parcelas — o adiantamento da DEC-036. Sem
+    //    parcela para receber, o valor inteiro cai em `Fee.saldoAdiantado`.
+    for (const paySpec of spec.pagamentosAntesDasParcelas ?? []) {
+      await registrarPagamento(paySpec);
+    }
+
+    // 3. Parcelas via installmentService. É aqui que a auto-alocação dispara:
+    //    a parcela nasce e o saldo adiantado encontra destino sozinho.
+    for (const instSpec of spec.installments ?? []) {
+      await criarInstallment(uid, {
         feeId:          fee._id.toString(),
         numeroParcela:  instSpec.numeroParcela,
         valor:          instSpec.valor,
         dataVencimento: instSpec.dataVencimento,
       });
       totalInstallments++;
+    }
 
-      // Cria pagamentos via paymentService (overpayment guard + recálculo de status)
-      for (const paySpec of instSpec.payments) {
-        await criarPayment({
-          installmentId:  installment._id.toString(),
-          valorPago:      paySpec.valorPago,
-          dataPagamento:  paySpec.dataPagamento,
-          formaPagamento: paySpec.formaPagamento,
-          observacoes:    paySpec.observacoes ?? '',
-          // `ativo: false` monta o pagamento estornado da Fase 4.1. Ele existe
-          // no banco e NÃO entra em `Installment.valorPago` nem no status.
-          ...(paySpec.ativo === false ? { ativo: false } : {}),
-        }, uid);
-        totalPayments++;
-      }
+    // 4. Pagamentos normais — o motor aloca do vencimento mais antigo em
+    //    diante, e a sobra vira saldo.
+    for (const paySpec of spec.pagamentos ?? []) {
+      await registrarPagamento(paySpec);
+    }
+
+    // 5. Estornos. Passam pelo service de verdade, com a desalocação
+    //    espelhada (do vencimento mais novo para o mais antigo) e o recálculo
+    //    das parcelas tocadas.
+    for (const estSpec of spec.estornos ?? []) {
+      const alvo = pagamentosPorRef.get(estSpec.pagamentoRef);
+      if (!alvo) throw new Error(`seed: pagamento ref "${estSpec.pagamentoRef}" não encontrado`);
+
+      const { desalocacao } = await criarEstorno(alvo._id.toString(), {
+        valor:  estSpec.valor,
+        motivo: estSpec.motivo,
+        data:   estSpec.data,
+      }, uid);
+
+      await recalcularParcelas(desalocacao?.parcelasAfetadas ?? [], uid);
+      totalEstornos++;
+    }
+
+    // 6. Reparcelamento. Cancela as antigas em aberto COM vínculo e cria o
+    //    plano novo, exigindo que a soma iguale o saldo — o mesmo 422 que a
+    //    tela levaria se a conta não fechasse.
+    if (spec.reparcelamento) {
+      await criarReparcelamento(fee._id.toString(), spec.reparcelamento, uid);
+      totalReparcelamentos++;
+    }
+
+    // 7. Cancelamento explícito, sempre por último: honorário cancelado
+    //    RECUSA pagamento com 409 desde a F-1a.
+    if (spec.cancelarDepois) {
+      await feeService.updateFee(fee._id.toString(), uid, { status: 'cancelado' });
     }
   }
 
   console.log(`${totalFees} honorarios criados (via feeService)`);
-  console.log(`${totalInstallments} parcelas criadas (via installmentService + recalculo status)`);
-  console.log(`${totalPayments} pagamentos criados (via paymentService + overpayment guard)`);
+  console.log(`${totalInstallments} parcelas criadas (via installmentService + auto-alocacao)`);
+  console.log(`${totalPayments} pagamentos criados (via paymentService + motor de alocacao)`);
+  console.log(`${totalEstornos} estornos criados (via reversalService + desalocacao espelhada)`);
+  console.log(`${totalReparcelamentos} reparcelamento criado (via renegotiationService)`);
 
   // ── CONTRATOS COM HONORÁRIO (depois das FEES, de proposito) ───────────────
   // O modelo de contrato usa {{valorHonorario}} e {{valorHonorarioExtenso}};
@@ -1050,7 +1231,39 @@ async function main() {
   // resumo, o seed deixou de cobrir um dos casos da DEC-028.
   const statusHonorarios = await porStatus(Fee);
 
+  // ── F-1a: não há mais pagamento desativado ────────────────────────────────
+  // A rota que desativava morreu (DEC-032) e desfazer entrada virou ESTORNO.
+  // O contador continua aqui, e de propósito: se algum dia voltar a ser > 0,
+  // alguém reabriu um caminho de escrita em `Payment.ativo` — e o resumo do
+  // seed é onde isso aparece primeiro.
   const nPagamentosInativos = await Payment.countDocuments({ usuarioId: uid, ativo: false });
+
+  // As três coleções novas do Financeiro 2.0.
+  const [nAlocacoes, nAlocacoesAtivas, nEstornos, nReparcelamentos] = await Promise.all([
+    Allocation.countDocuments({ usuarioId: uid }),
+    Allocation.countDocuments({ usuarioId: uid, estornoId: null }),
+    Reversal.countDocuments({ usuarioId: uid }),
+    Renegotiation.countDocuments({ usuarioId: uid }),
+  ]);
+
+  // Saldo adiantado vivo — dinheiro que entrou e ainda não achou parcela.
+  const feesComSaldo = await Fee.find({ usuarioId: uid, ativo: true, saldoAdiantado: { $gt: 0 } })
+    .select('descricao saldoAdiantado');
+
+  // Parcelas canceladas COM vínculo de reparcelamento. É a prova de que o
+  // cancelamento não apagou nada: a parcela continua legível e aponta para a
+  // operação que a substituiu.
+  const nCanceladasComVinculo = await Installment.countDocuments({
+    usuarioId: uid, reparcelamentoId: { $ne: null }
+  });
+
+  // O pagamento que atravessa duas parcelas: prova viva da DEC-035. Contado do
+  // banco, e não afirmado no comentário.
+  const alocPorPagamento = await Allocation.aggregate([
+    { $match: { usuarioId: uid, estornoId: null } },
+    { $group: { _id: '$pagamentoId', n: { $sum: 1 } } },
+    { $match: { n: { $gt: 1 } } },
+  ]);
 
   // Cobertura do catálogo: quais das 48 chaves algum documento gerado resolveu.
   // Lida do banco, não das constantes — é a prova de que a variável RESOLVE, e
@@ -1114,6 +1327,14 @@ async function main() {
   console.log(`    Honorarios        : ${nFees}  ${statusHonorarios}`);
   console.log(`    Parcelas          : ${nInst}  ${statusParcelas}`);
   console.log(`    Pagamentos        : ${nPay}  (+${nPagamentosInativos} desativado, fora da soma)`);
+  console.log(`    Alocacoes         : ${nAlocacoes}  (${nAlocacoesAtivas} ativas, ${nAlocacoes - nAlocacoesAtivas} desfeitas por estorno)`);
+  console.log(`    Estornos          : ${nEstornos}`);
+  console.log(`    Reparcelamentos   : ${nReparcelamentos}  (${nCanceladasComVinculo} parcelas canceladas com vinculo)`);
+  console.log(`    Pagamentos que atravessam >1 parcela: ${alocPorPagamento.length}`);
+  if (feesComSaldo.length > 0) {
+    console.log(`    Saldo adiantado vivo:`);
+    feesComSaldo.forEach(f => console.log(`      - ${f.descricao}: R$ ${f.saldoAdiantado.toFixed(2)}`));
+  }
   console.log(`    Documentos        : ${nDocs}  (${nUploads} upload + ${nModelos} modelos + ${nGerados} gerados)`);
   console.log(`    Secoes            : ${nSecoes}`);
   console.log(`    Vinculos doc-secao: ${nVinculos}`);

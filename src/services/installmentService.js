@@ -1,12 +1,14 @@
 import mongoose from "mongoose";
 import Installment from "../models/Installment.js";
 import Fee from "../models/Fee.js";
+import Allocation from "../models/Allocation.js";
 import Payment from "../models/Payment.js";
 import {
   validarCriacaoInstallment,
   validarAtualizacaoInstallment
 } from "../validations/installmentValidation.js";
 import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentService.js";
+import { autoAlocarSaldo } from "./allocationService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
@@ -127,8 +129,36 @@ export const criarInstallment = async (usuarioId, dados) => {
     ativo: dados.ativo !== undefined ? dados.ativo : true
   });
 
+  // ── AUTO-ALOCAÇÃO DO SALDO ADIANTADO (DEC-036, F-1a) ────────────────────
+  //
+  // Parcela que NASCE é o evento que dá destino ao dinheiro que já tinha
+  // entrado. Sem isto, a advogada registraria um adiantamento, emitiria as
+  // parcelas e veria todas em aberto com o dinheiro parado no saldo — e teria
+  // de "registrar o pagamento de novo" para casar as duas coisas, criando um
+  // recebimento que nunca existiu.
+  //
+  // Usa a MESMA `planejarAlocacao` do pagamento e do preview, do primeiro
+  // vencimento em diante. Chamada depois do `create` e antes do recálculo,
+  // para o status já nascer refletindo o que foi alocado.
+  await autoAlocarSaldo({ fee, usuarioId, pagamentoOrigemId: await origemDoSaldo(fee._id, usuarioId) });
+
   const atualizado = await recalcularStatusInstallment(installment._id, usuarioId);
   return atualizado || installment;
+};
+
+// Qual pagamento originou o saldo que está sendo consumido. É o mais ANTIGO
+// que ainda alimenta o honorário — sem ele a alocação de origem
+// `saldoAdiantado` ficaria sem "de onde veio", e é justamente a linha do
+// extrato que mais precisa da explicação.
+//
+// `null` quando não há pagamento nenhum (base montada à mão, ou saldo escrito
+// por outro caminho): o model aceita, e uma alocação sem origem é melhor que
+// uma alocação que mente sobre a origem.
+export const origemDoSaldo = async (feeId, usuarioId) => {
+  const primeiro = await Payment.findOne({ honorarioId: feeId, usuarioId, ativo: true })
+    .sort({ data: 1, createdAt: 1 })
+    .select("_id");
+  return primeiro?._id ?? null;
 };
 
 export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status, inativos } = {}) => {
@@ -258,10 +288,15 @@ export const atualizarInstallment = async (
 
   await installment.save();
 
+  // Mudar a parcela de honorário move as ALOCAÇÕES dela junto: a alocação
+  // guarda `honorarioId` denormalizado, e deixá-lo apontando para o honorário
+  // antigo faria `totalAlocadoDoFee` somar dinheiro num honorário que não tem
+  // mais a parcela. O `processoId` do pagamento NÃO é reescrito — o pagamento
+  // é imutável (DEC-032), e ele pode ter outras alocações que não se mudaram.
   if (dados.feeId !== undefined) {
-    await Payment.updateMany(
-      { installmentId: installment._id, ativo: true },
-      { $set: { processoId: processoIdFinal } }
+    await Allocation.updateMany(
+      { parcelaId: installment._id, usuarioId },
+      { $set: { honorarioId: feeIdFinal } }
     );
   }
 
@@ -291,7 +326,28 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
     throw erro(404, "Parcela não encontrada");
   }
 
-  const paymentsAtivos = await Payment.countDocuments({ installmentId: installment._id, ativo: true });
+  // ── O dependente da parcela virou a ALOCAÇÃO (F-1a) ─────────────────────
+  //
+  // Até a F-0 o pagamento pertencia à parcela e a contagem era direta. Agora o
+  // vínculo é `Allocation`, e a pergunta certa é "quantos pagamentos AINDA
+  // apontam para esta parcela" — alocações com `estornoId` preenchido saíram
+  // de circulação e não seguram a exclusão, do mesmo jeito que um pagamento
+  // desativado não segurava antes.
+  //
+  // A contagem é de PAGAMENTOS DISTINTOS, não de linhas de alocação: um
+  // pagamento parcialmente estornado deixa a linha carimbada e uma substituta,
+  // e contar linhas diria "2 pagamentos" onde há um. O contrato do 409 não
+  // muda — `dependencia: "pagamentos"` + `quantidade` (Fase 2E.1).
+  const alocacoesAtivas = await Allocation.find({
+    parcelaId: installment._id,
+    usuarioId,
+    estornoId: null
+  }).select("pagamentoId");
+
+  const paymentsAtivos = new Set(
+    alocacoesAtivas.map((a) => String(a.pagamentoId)).filter((id) => id !== "null")
+  ).size;
+
   if (paymentsAtivos > 0) {
     const um = paymentsAtivos === 1;
     // `dependencia` e `quantidade` são para o frontend; a prosa é o que a
@@ -316,61 +372,26 @@ export const deletarInstallment = async (usuarioId, installmentId) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REATIVAÇÃO DE PARCELA (achado 2.2c — Fase 4.5)
+// `reativarInstallment` FOI REMOVIDA na Fase F-1a (DEC-034)
 //
-// Rota própria pelo mesmo motivo do pagamento: a guarda de integridade não cabe
-// num campo de update genérico.
+// Ela nasceu na Fase 4.5, junto com a de pagamento, e as duas saem juntas
+// agora — pela mesma razão, que é uma razão do MODELO e não de escopo.
 //
-// A guarda: a parcela só volta se o HONORÁRIO dela estiver ativo. Parcela
-// pendurada em honorário desativado não entra em `derivarStatusFee` (que filtra
-// o honorário por `ativo: true`) nem na ficha financeira — seria cobrança viva
-// dentro de contrato morto.
+// A reativação de parcela existia para desfazer uma exclusão. Com o Financeiro
+// 2.0 a exclusão de parcela com dinheiro em cima deixou de ser alcançável (o
+// 409 de alocação ativa a barra), e a parcela que sai por decisão da advogada
+// sai por REPARCELAMENTO — que a cancela com `reparcelamentoId` apontando para
+// o plano novo, deixando o histórico legível. "Reativar" uma parcela cancelada
+// por reparcelamento ressuscitaria uma cobrança que foi substituída, ao lado
+// da que a substituiu: as duas somariam, e a advogada cobraria duas vezes.
 //
-// ── Sobre a colisão de `numeroParcela` ────────────────────────────────────
-// O roteiro da fase pedia tratar colisão do índice único na reativação. Ela NÃO
-// é alcançável, e a razão está no índice: `{ feeId, numeroParcela }` é único
-// SEM `partialFilterExpression` (`models/Installment.js:70`), diferente dos
-// índices de `documento_secao`, que são parciais em `ativo: true`. Sem filtro
-// parcial, a parcela desativada NUNCA solta o número — ele continua reservado, e
-// por isso não existe segunda parcela com o mesmo número para colidir na volta.
-// A checagem abaixo fica como rede, com o custo de uma consulta, e o teste que
-// tentaria produzir a colisão está registrado como impossível no relatório.
+// A rota `PATCH /api/installments/:id/reativar` respondia 200 e passa a
+// responder 404 pelo `notFoundMiddleware`. Há teste travando as duas rotas
+// (esta e a de pagamento) — ver `tests/financial/invariantes2.test.js`.
+//
+// O que substitui cada caso de uso:
+//   • excluí sem querer          → a parcela sem alocação continua excluível e
+//                                  recriável por `POST /installments`;
+//   • quis desfazer o pagamento  → estorno (DEC-033);
+//   • quis refazer o plano       → reparcelamento (DEC-037).
 // ═══════════════════════════════════════════════════════════════════════════
-export const reativarInstallment = async (usuarioId, installmentId) => {
-  validarObjectId(installmentId, "installmentId");
-
-  const installment = await Installment.findOne({ _id: installmentId, usuarioId });
-  if (!installment) {
-    throw erro(404, "Parcela não encontrada");
-  }
-
-  if (installment.ativo === true) {
-    return installment;
-  }
-
-  const fee = await Fee.findOne({ _id: installment.feeId, usuarioId, ativo: true });
-  if (!fee) {
-    throw erro(
-      409,
-      "Não é possível reativar esta parcela: o honorário dela está desativado. " +
-      "Reative o honorário antes.",
-      { dependencia: "honorario" }
-    );
-  }
-
-  await verificarNumeroParcelaDuplicado({
-    feeId: installment.feeId,
-    numeroParcela: installment.numeroParcela,
-    installmentId: installment._id
-  });
-
-  installment.ativo = true;
-  await installment.save();
-
-  // A parcela volta ao conjunto: os dois níveis são recalculados. O primeiro
-  // regrava `status` e `valorPago` a partir dos pagamentos que continuam
-  // ativos; o segundo é chamado por ele, no fim da cadeia.
-  await recalcularStatusInstallment(String(installment._id), usuarioId);
-
-  return Installment.findById(installment._id);
-};

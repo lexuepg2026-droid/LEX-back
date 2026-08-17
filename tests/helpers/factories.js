@@ -194,11 +194,36 @@ export const dadosParcela = (feeId, numeroParcela, extra = {}) => ({
   ...extra
 });
 
-export const dadosPagamento = (installmentId, extra = {}) => ({
-  installmentId,
-  valorPago: 1000,
-  dataPagamento: "2026-02-10",
+// ── Pagamento — reescrito na F-1a (DEC-032/DEC-035) ────────────────────────
+//
+// O primeiro argumento passou a ser o HONORÁRIO, e não a parcela: o pagamento
+// nasce contra a cobrança e o motor decide em quais parcelas encosta. O nome do
+// parâmetro mudou junto, de propósito — deixá-lo como `installmentId`
+// funcionaria e mentiria, e o próximo teste a ser escrito passaria uma parcela.
+export const dadosPagamento = (honorarioId, extra = {}) => ({
+  honorarioId,
+  valor: 1000,
+  data: "2026-02-10",
+  tipo: "comum",
   formaPagamento: "pix",
+  ...extra
+});
+
+// Estorno de um pagamento. `motivo` é obrigatório no contrato e por isso vem
+// preenchido: um default vazio faria metade dos testes baterem no 400 de
+// validação em vez de exercitar a regra que eles querem.
+export const dadosEstorno = (extra = {}) => ({
+  valor: 1000,
+  motivo: "Estorno registrado pela suíte de testes",
+  ...extra
+});
+
+// Plano de parcelas de um reparcelamento. A soma tem de igualar o saldo em
+// aberto do honorário — quem escolhe os valores é cada teste, porque é
+// justamente essa igualdade que a maioria deles está medindo.
+export const dadosReparcelamento = (parcelas, extra = {}) => ({
+  parcelas,
+  motivo: "Reparcelamento registrado pela suíte de testes",
   ...extra
 });
 

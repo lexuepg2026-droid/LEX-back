@@ -2,7 +2,9 @@ import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Installment from "../models/Installment.js";
+import Allocation from "../models/Allocation.js";
 import Payment from "../models/Payment.js";
+import Reversal from "../models/Reversal.js";
 import Document from "../models/Document.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -78,26 +80,40 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
     }).select("nome tipo dataGeracao honorarioId")
   ]);
 
-  // Os pagamentos saem por `installmentId`, que é o vínculo real, e não pelo
-  // `processoId` desnormalizado que o Payment também carrega: mudar a parcela
-  // de honorário reescreve aquele campo, e uma ficha montada sobre ele
-  // dependeria de a reescrita nunca ter falhado.
-  const pagamentos = await Payment.find({
-    installmentId: { $in: parcelas.map((p) => p._id) },
+  // ── O vínculo parcela↔dinheiro virou a ALOCAÇÃO (F-1a) ──────────────────
+  //
+  // Até a F-0 o pagamento pertencia a uma parcela e a ficha o lia direto. Com
+  // o Financeiro 2.0, um PIX pode atravessar duas parcelas, e "os pagamentos
+  // desta parcela" passa a ser "as alocações ativas desta parcela, com o
+  // pagamento de onde cada uma veio".
+  //
+  // Só alocações ATIVAS (`estornoId: null`): a desalocada é histórico do
+  // extrato, não dinheiro em cima da parcela. Somá-la aqui faria a ficha
+  // mostrar como recebido um valor que voltou.
+  const alocacoes = await Allocation.find({
+    parcelaId: { $in: parcelas.map((p) => p._id) },
     usuarioId,
-    ativo: true
-  }).sort({ dataPagamento: 1, createdAt: 1 });
+    estornoId: null
+  })
+    .populate("pagamentoId", "valor data formaPagamento tipo observacoes")
+    .sort({ data: 1, createdAt: 1 });
 
-  const pagamentosPorParcela = new Map();
-  for (const pagamento of pagamentos) {
-    const chave = String(pagamento.installmentId);
-    if (!pagamentosPorParcela.has(chave)) pagamentosPorParcela.set(chave, []);
-    pagamentosPorParcela.get(chave).push({
-      _id: pagamento._id,
-      valorPago: pagamento.valorPago,
-      dataPagamento: pagamento.dataPagamento,
-      formaPagamento: pagamento.formaPagamento,
-      observacoes: pagamento.observacoes
+  const alocacoesPorParcela = new Map();
+  for (const alocacao of alocacoes) {
+    const chave = String(alocacao.parcelaId);
+    if (!alocacoesPorParcela.has(chave)) alocacoesPorParcela.set(chave, []);
+    alocacoesPorParcela.get(chave).push({
+      _id: alocacao._id,
+      valor: alocacao.valor,
+      data: alocacao.data,
+      origem: alocacao.origem,
+      // O vínculo, explícito: de qual pagamento este pedaço veio. É o que a
+      // tela da F-1b usa para navegar da parcela ao pagamento e vice-versa.
+      pagamentoId: alocacao.pagamentoId?._id ?? alocacao.pagamentoId ?? null,
+      formaPagamento: alocacao.pagamentoId?.formaPagamento ?? null,
+      tipoPagamento: alocacao.pagamentoId?.tipo ?? null,
+      dataPagamento: alocacao.pagamentoId?.data ?? null,
+      observacoes: alocacao.pagamentoId?.observacoes ?? ""
     });
   }
 
@@ -116,7 +132,10 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
       dataVencimento: parcela.dataVencimento,
       dataPagamento: parcela.dataPagamento,
       status: parcela.status,
-      pagamentos: pagamentosPorParcela.get(String(parcela._id)) ?? []
+      // `alocacoes` substitui `pagamentos` (F-1a). O nome mudou porque a coisa
+      // mudou: não são os pagamentos da parcela, são os pedaços de pagamento
+      // que encostaram nela — e um mesmo pagamento pode aparecer em duas.
+      alocacoes: alocacoesPorParcela.get(String(parcela._id)) ?? []
     });
   }
 
@@ -134,7 +153,29 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
 
   const linhas = honorarios.map((fee) => {
     const parcelasDoFee = parcelasPorHonorario.get(String(fee._id)) ?? [];
-    const pagoNoFee = somar(parcelasDoFee, "valorPago");
+
+    // ── A INVARIANTE DA FICHA (F-1a) ──────────────────────────────────────
+    //
+    //     contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto
+    //
+    // `pagoLiquidoAlocado` é a soma das alocações ATIVAS — o dinheiro que
+    // encontrou parcela e não voltou por estorno. `saldoAdiantado` é o que
+    // entrou e ainda não achou destino. Os dois são dinheiro no caixa da
+    // advogada; o que os separa é só ter ou não uma parcela apontada.
+    //
+    // Por isso os DOIS abatem o em aberto. Contar só o alocado faria um
+    // honorário integralmente adiantado aparecer como devendo tudo, no dia
+    // seguinte ao cliente ter pago — que é o erro que a advogada notaria
+    // primeiro e confiaria menos depois.
+    //
+    // `emAberto` sai da FÓRMULA, e não de uma segunda soma sobre as parcelas.
+    // Duas fórmulas para a mesma pergunta divergem, e esta é a mesma razão
+    // pela qual `pendente` do resumo é `contratado − recebido` (Fase 4.3).
+    //
+    // Pode dar NEGATIVO, e é honesto: um honorário que recebeu mais do que foi
+    // contratado tem crédito, e zerar no piso esconderia dinheiro da cliente.
+    const pagoLiquidoAlocado = somar(parcelasDoFee, "valorPago");
+    const saldoAdiantado = emCentavos(fee.saldoAdiantado || 0);
 
     return {
       _id: fee._id,
@@ -148,10 +189,20 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
       valorBase: fee.valorBase ?? null,
       status: fee.status,
       dataVencimento: fee.dataVencimento,
+      // Dinheiro recebido que ainda não achou parcela. Exposto na ficha porque
+      // é a única tela onde a advogada pode entender por que um honorário com
+      // parcelas em aberto já está pago.
+      saldoAdiantado,
       totais: {
         contratado: emCentavos(fee.valor),
-        pago: pagoNoFee,
-        emAberto: emCentavos(Number(fee.valor) - pagoNoFee)
+        // `pago` mantém o nome que a ficha publicou na 4.1 (o frontend o lê),
+        // e ganha o apelido explícito ao lado. Renomear de vez é churn de
+        // contrato sem ganho; ter os dois nomes divergindo, não — saem da
+        // mesma variável.
+        pago: pagoLiquidoAlocado,
+        pagoLiquidoAlocado,
+        saldoAdiantado,
+        emAberto: emCentavos(Number(fee.valor) - pagoLiquidoAlocado - saldoAdiantado)
       },
       parcelas: parcelasDoFee,
       documentos: documentosPorHonorario.get(String(fee._id)) ?? []
@@ -166,7 +217,8 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
   const vigentes = linhas.filter((linha) => linha.status !== STATUS_CANCELADO);
 
   const contratado = somar(vigentes.map((l) => l.totais), "contratado");
-  const pago = somar(vigentes.map((l) => l.totais), "pago");
+  const pago = somar(vigentes.map((l) => l.totais), "pagoLiquidoAlocado");
+  const saldoAdiantado = somar(vigentes.map((l) => l.totais), "saldoAdiantado");
 
   return {
     processo: {
@@ -179,7 +231,12 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
     totais: {
       contratado,
       pago,
-      emAberto: emCentavos(contratado - pago),
+      pagoLiquidoAlocado: pago,
+      saldoAdiantado,
+      // A mesma invariante, um nível acima. Somar os `emAberto` das linhas
+      // daria o mesmo número; sair da fórmula garante que continue dando,
+      // mesmo se um dia a lista de linhas ganhar recorte.
+      emAberto: emCentavos(contratado - pago - saldoAdiantado),
       // Contagens: a tela mostra "3 honorários, 1 cancelado" sem recontar o
       // array — e sem errar a conta quando um dia houver recorte.
       honorarios: linhas.length,
@@ -190,4 +247,139 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
   };
 };
 
-export default { montarFichaFinanceira };
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGAMENTOS DO PROCESSO — `GET /api/financeiro/processos/:id/payments`
+// (Fase F-1a)
+//
+// A lista do dinheiro que entrou neste processo, na ordem em que entrou, com
+// os estornos e as alocações de cada linha já resumidos.
+//
+// ── Por que não é a ficha, e por que não é `GET /payments?processoId=` ────
+// A ficha é a árvore da COBRANÇA e não pagina (contrato publicado na 4.1).
+// `GET /payments?processoId=` existe e continua existindo, mas devolve o
+// pagamento cru do módulo — sem o líquido nem o para-onde-foi. Esta rota é a
+// junção das duas coisas para a aba financeira do processo, e o resumo vem do
+// backend pelo mesmo motivo dos totais da ficha: a tela não faz conta.
+//
+// O `processoId` do `Payment` é denormalizado e escrito UMA vez, na criação
+// (o pagamento é imutável desde a DEC-032) — então aqui ele é fonte confiável,
+// diferente do que acontecia na F-0, quando mover a parcela de honorário o
+// reescrevia.
+// ═══════════════════════════════════════════════════════════════════════════
+export const listarPagamentosDoProcesso = async (
+  usuarioId,
+  processoId,
+  { page = 1, limit = 20 } = {}
+) => {
+  if (!mongoose.Types.ObjectId.isValid(processoId)) {
+    throw createError("Identificador de processo inválido", 400);
+  }
+
+  const processo = await Process.findOne({ _id: processoId, usuarioId, ativo: true })
+    .select("numeroProcesso titulo");
+  if (!processo) {
+    throw createError("Processo não encontrado", 404);
+  }
+
+  const filtro = { processoId: processo._id, usuarioId, ativo: true };
+  const skip = (page - 1) * limit;
+
+  const [pagamentos, total] = await Promise.all([
+    Payment.find(filtro)
+      .populate("honorarioId", "descricao tipo status")
+      .sort({ data: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Payment.countDocuments(filtro)
+  ]);
+
+  const ids = pagamentos.map((p) => p._id);
+
+  // Duas consultas para a página inteira, e não duas por linha: a listagem não
+  // pode custar N+1 idas ao banco.
+  const [estornos, alocacoes] = await Promise.all([
+    Reversal.find({ pagamentoId: { $in: ids }, usuarioId }).sort({ data: 1 }),
+    Allocation.find({ pagamentoId: { $in: ids }, usuarioId })
+      .populate("parcelaId", "numeroParcela valor dataVencimento status")
+      .sort({ data: 1 })
+  ]);
+
+  const anulados = new Set(
+    estornos.filter((e) => e.estornoAnuladoId).map((e) => String(e.estornoAnuladoId))
+  );
+
+  const estornosPorPagamento = new Map();
+  for (const e of estornos) {
+    const chave = String(e.pagamentoId);
+    if (!estornosPorPagamento.has(chave)) estornosPorPagamento.set(chave, []);
+    estornosPorPagamento.get(chave).push(e);
+  }
+
+  const alocacoesPorPagamento = new Map();
+  for (const a of alocacoes) {
+    const chave = String(a.pagamentoId);
+    if (!alocacoesPorPagamento.has(chave)) alocacoesPorPagamento.set(chave, []);
+    alocacoesPorPagamento.get(chave).push(a);
+  }
+
+  const data = pagamentos.map((p) => {
+    const meus = estornosPorPagamento.get(String(p._id)) ?? [];
+    // Σ estornos ATIVOS — os comuns que ninguém anulou. Mesma regra de
+    // `reversalService.totalEstornado`, que é quem a define.
+    const estornado = emCentavos(
+      meus
+        .filter((e) => !e.estornoAnuladoId && !anulados.has(String(e._id)))
+        .reduce((t, e) => t + Number(e.valor), 0)
+    );
+
+    const minhas = alocacoesPorPagamento.get(String(p._id)) ?? [];
+
+    return {
+      _id: p._id,
+      valor: emCentavos(p.valor),
+      valorLiquido: emCentavos(Number(p.valor) - estornado),
+      totalEstornado: estornado,
+      data: p.data,
+      tipo: p.tipo,
+      formaPagamento: p.formaPagamento,
+      observacoes: p.observacoes ?? "",
+      honorarioId: p.honorarioId?._id ?? p.honorarioId,
+      descricaoHonorario: p.honorarioId?.descricao ?? null,
+      estornos: meus.map((e) => ({
+        _id: e._id,
+        valor: e.valor,
+        motivo: e.motivo,
+        data: e.data,
+        tipo: e.tipo,
+        estornoAnuladoId: e.estornoAnuladoId,
+        anulado: anulados.has(String(e._id))
+      })),
+      alocacoes: minhas.map((a) => ({
+        _id: a._id,
+        valor: a.valor,
+        data: a.data,
+        origem: a.origem,
+        parcelaId: a.parcelaId?._id ?? a.parcelaId,
+        numeroParcela: a.parcelaId?.numeroParcela ?? null,
+        dataVencimento: a.parcelaId?.dataVencimento ?? null,
+        estornoId: a.estornoId,
+        ativa: a.estornoId === null
+      }))
+    };
+  });
+
+  return {
+    processo: {
+      _id: processo._id,
+      numeroProcesso: processo.numeroProcesso,
+      titulo: processo.titulo
+    },
+    data,
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit))
+  };
+};
+
+export default { montarFichaFinanceira, listarPagamentosDoProcesso };

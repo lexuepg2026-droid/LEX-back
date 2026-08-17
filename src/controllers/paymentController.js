@@ -1,23 +1,42 @@
 import paymentService from "../services/paymentService.js";
 import { emitirRecibo } from "../services/receiptService.js";
-import {
-  validateCreatePayment,
-  validatePaymentId
-} from "../validations/paymentValidation.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGAMENTO — controller reescrito na Fase F-1a
+//
+// O que saiu, e para onde foi:
+//   • `reativar`  → a rota morreu (DEC-034). Um pagamento não é "desativado"
+//     para depois voltar: ele é estornado, e o estorno se desfaz por anulação.
+//   • `remove`    → a rota morreu (DEC-032). Estornar é o caminho.
+//   • `validatePaymentId` → nunca existiu no módulo reescrito. A checagem de
+//     ObjectId mora no service, junto das demais, e responde 400 com `campo`
+//     no padrão da F-0. Validar no controller era o único módulo financeiro
+//     fora da convenção "validação sempre no service" (Fase 4.5).
+//   • `validateCreatePayment` no controller → idem: `paymentService.create`
+//     já a chama e monta o 400 com `campo`. Rodando aqui antes, engolia a
+//     recusa da allowlist — foi exatamente o defeito que a 4.5 corrigiu no
+//     `update` e que a F-1a não reintroduz no `create`.
+// ═══════════════════════════════════════════════════════════════════════════
 
 const create = async (req, res, next) => {
   try {
-    const erros = validateCreatePayment(req.body);
+    const resultado = await paymentService.create(req.body, req.user._id);
+    return res.status(201).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
 
-    if (erros.length > 0) {
-      const err = new Error(erros[0]);
-      err.statusCode = 400;
-      err.errors = erros;
-      return next(err);
-    }
-
-    const payment = await paymentService.create(req.body, req.user._id);
-    return res.status(201).json(payment);
+// Preview de alocação: o que ACONTECERIA se este pagamento fosse registrado.
+// Não grava nada. Usa a MESMA função de planejamento que a criação (decisão
+// intocável da fundação) — é o que impede o preview de mentir.
+//
+// A tela que o consome é da F-1b; a rota nasce aqui porque quem a garante é o
+// teste de invariante desta fase, não a interface.
+const prever = async (req, res, next) => {
+  try {
+    const resultado = await paymentService.preverAlocacao(req.body, req.user._id);
+    return res.status(200).json(resultado);
   } catch (error) {
     return next(error);
   }
@@ -27,8 +46,20 @@ const findAll = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { installmentId, processoId, formaPagamento, inativos } = req.query;
-    const result = await paymentService.findAll(req.user._id, { page, limit, installmentId, processoId, formaPagamento, inativos });
+    // `installmentId` continua existindo e agora filtra POR ALOCAÇÃO
+    // ("pagamentos que tocaram esta parcela"). `honorarioId` e `tipo` são
+    // novos — o pagamento passou a nascer contra o honorário, e a listagem
+    // precisa poder recortar por ele.
+    const { installmentId, honorarioId, processoId, formaPagamento, tipo } = req.query;
+    const result = await paymentService.findAll(req.user._id, {
+      page,
+      limit,
+      installmentId,
+      honorarioId,
+      processoId,
+      formaPagamento,
+      tipo
+    });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
@@ -37,15 +68,6 @@ const findAll = async (req, res, next) => {
 
 const findById = async (req, res, next) => {
   try {
-    const erros = validatePaymentId(req.params.id);
-
-    if (erros.length > 0) {
-      const err = new Error(erros[0]);
-      err.statusCode = 400;
-      err.errors = erros;
-      return next(err);
-    }
-
     const payment = await paymentService.findById(req.params.id, req.user._id);
     return res.status(200).json(payment);
   } catch (error) {
@@ -55,37 +77,8 @@ const findById = async (req, res, next) => {
 
 const update = async (req, res, next) => {
   try {
-    // `validateUpdatePayment` saiu daqui na Fase 4.5 e passou ao service, junto
-    // com a allowlist: rodando antes dele, engolia a recusa de campo desconhecido.
-    const erros = validatePaymentId(req.params.id);
-
-    if (erros.length > 0) {
-      const err = new Error(erros[0]);
-      err.statusCode = 400;
-      err.errors = erros;
-      return next(err);
-    }
-
     const payment = await paymentService.update(req.params.id, req.body, req.user._id);
     return res.status(200).json(payment);
-  } catch (error) {
-    return next(error);
-  }
-};
-
-const remove = async (req, res, next) => {
-  try {
-    const erros = validatePaymentId(req.params.id);
-
-    if (erros.length > 0) {
-      const err = new Error(erros[0]);
-      err.statusCode = 400;
-      err.errors = erros;
-      return next(err);
-    }
-
-    const result = await paymentService.remove(req.params.id, req.user._id);
-    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }
@@ -112,21 +105,11 @@ const baixarRecibo = async (req, res, next) => {
   }
 };
 
-const reativar = async (req, res, next) => {
-  try {
-    const payment = await paymentService.reativar(req.params.id, req.user._id);
-    return res.status(200).json(payment);
-  } catch (error) {
-    return next(error);
-  }
-};
-
 export default {
   create,
+  prever,
   findAll,
   findById,
   update,
-  reativar,
-  remove,
   baixarRecibo
 };
