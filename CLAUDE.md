@@ -2530,6 +2530,212 @@ imprimir o bruto daria ao cliente um comprovante de um valor que ele não pagou 
 justamente o documento que ele guardaria para provar o contrário. Um pagamento
 que cobre duas parcelas as nomeia ("parcelas 1 e 2 de 3").
 
+### DEC-040 — em aberto tem PISO ZERO; crédito é campo próprio (F-1a.1)
+
+**Substitui a decisão nº 4 da F-1a** ("`emAberto` pode ficar negativo, e é
+honesto"), preservando a preocupação dela — não esconder dinheiro da cliente —
+com execução correta.
+
+#### O caso que a derrubou, em números
+
+Smoke test manual de 17/08/2026, na main mergeada:
+
+| | |
+|---|---|
+| contratado do processo | **10.500** |
+| recebido | **7.500** |
+| em aberto EXIBIDO | **2.500** |
+| em aberto REAL | **3.000** |
+
+Um honorário com **−500** de crédito abatia a dívida de outro na soma do
+processo. O dinheiro fechava — nada sumia —, mas a leitura mentia, e mentia **a
+favor do cliente**, num módulo que imprime recibo assinado.
+
+#### A regra
+
+```
+emAberto (parcela)   = max(0, valor − valorPago)
+emAberto (honorário) = max(0, contratado − pagoLiquidoAlocado)
+emAberto (processo)  = Σ emAberto dos honorários NÃO CANCELADOS
+saldoAdiantado       = crédito, sempre NOMEADO, nunca somado nem subtraído
+```
+
+- **`saldoAdiantado` não entra em conta nenhuma.** Não é recebido (não quitou
+  obrigação) e não abate em aberto (é crédito, não pagamento). Ele existe no
+  model como sempre e passa a ser exibido ao lado, com nome.
+- **A soma do processo é Σ DAS LINHAS**, e não uma fórmula própria. Recalcular
+  por `contratado − pago` reintroduziria o defeito: a subtração global não
+  conhece a fronteira entre honorários. **Crédito é do honorário onde foi
+  gerado.**
+- **`contratado − pagoLiquidoAlocado − saldoAdiantado = emAberto` DEIXA DE SER
+  a invariante da ficha.** Era a fórmula que produzia o negativo.
+
+#### O que mudou junto, e por quê
+
+`renegotiationService.saldoEmAberto` usava a mesma fórmula antiga. Enquanto ela
+subtraía o crédito, o reparcelamento exigia um plano **menor** que a dívida — e
+logo depois a auto-alocação (DEC-036) consumia o crédito dentro desse plano
+menor, descontando **o mesmo dinheiro duas vezes**.
+
+Medido: honorário de 7.500 com 1.500 alocados e 500 de crédito. Pela fórmula
+antiga o plano novo somava 5.500, a auto-alocação punha os 500 nele, e as
+parcelas novas ficavam com 5.000 em aberto — enquanto o honorário dizia 5.500.
+Os dois níveis discordavam em exatamente o valor do crédito. Com a fórmula nova
+os dois dizem 5.500.
+
+`pendente` do resumo passou a somar **por honorário**, com piso, em vez de
+subtrair globalmente. Continua fechando com a soma das fichas — a igualdade que
+a Fase 4.3 existiu para garantir.
+
+#### O piso da PARCELA é alcançável, não é defesa em profundidade
+
+O motor nunca aloca mais do que a parcela comporta. Mas
+`PATCH /installments/:id { valor }` aceita **reduzir** o valor da parcela
+depois de ela ter recebido alocação, e `valorPago` é recalculado das alocações,
+não do valor da parcela. Sem o piso, a parcela exibiria "em aberto −R$ 500,00"
+e o número entraria em `aReceberNoMes` e `valorVencido`, abatendo outras
+parcelas. Há teste que percorre esse caminho pela API.
+
+**O excedente não some por causa do piso:** ele continua visível em
+`valorPago`, que fica maior que `valor` — e é ali que a advogada vê que recebeu
+mais do que cobrou.
+
+#### Uma premissa do roteiro desta fase que NÃO se confirmou
+
+O roteiro dizia que "`valorVencido` e o em aberto usam a mesma fórmula e
+carregam o mesmo defeito". **Carregam metade dele.** `aReceberNoMes` e
+`valorVencido` somam o em aberto de PARCELA, que nunca subtraiu
+`saldoAdiantado` — o defeito do crédito não passava por ali. O que passava era
+o negativo por `valor` reduzido, e é esse que o piso fecha. Corrigido e
+provado; a caracterização é que estava mais larga do que o defeito.
+
+#### O invariante 6 era CIRCULAR, e é por isso que ele passou verde
+
+Ele recomputava `contratado − pagoLiquidoAlocado − saldoAdiantado` a partir dos
+**mesmos campos** que a API devolvia, e comparava com o `emAberto` que a API
+calculara com a **mesma fórmula**. Uma tautologia: só falharia se o backend se
+contradissesse consigo mesmo, nunca se a fórmula estivesse errada.
+
+Reescrito com verificação independente — a expectativa sai dos dados **brutos**
+das parcelas (`valor` e `valorPago`, que não derivam da fórmula sob teste), e o
+que se afirma é a REGRA (nunca negativo; crédito fora da conta), não a
+aritmética. Casos novos: crédito + dívida no mesmo processo (o caso observado),
+crédito maior que o contratado, crédito em honorário cancelado, e parcela com
+valor reduzido abaixo do alocado.
+
+**A igualdade `emAberto do honorário = Σ emAberto das parcelas ativas` só é
+exigida onde ela vale**: quando o honorário está integralmente parcelado. Um
+honorário de 3.000 com uma parcela de 1.000 emitida deve 3.000 na ficha e 1.000
+pela soma das parcelas — decisão publicada desde a Fase 4.3, e a que vale é a
+da ficha. Exigi-la sempre transformaria uma decisão registrada em bug.
+
+---
+
+### DEC-041 — o recibo DESCREVE a alocação. **PROVISÓRIA** (F-1a.1)
+
+#### O caso que a originou
+
+Recibo emitido de um pagamento de **R$ 7.000,00** dizia:
+
+> referente a Honorários advocatícios — **parcela 2 de 2**
+> […] dando **plena e geral quitação** do valor acima em relação à obrigação a
+> que se refere.
+
+Quando só **R$ 1.500,00** foram para aquela parcela (que vale 3.000) e
+**R$ 5.500,00** viraram crédito. O documento é assinado pela advogada e
+entregue ao cliente: ele **quitava mais do que a obrigação a que se referia**, e
+é o papel que o cliente guardaria para provar isso.
+
+#### As duas regras
+
+1. **O recibo é DO PAGAMENTO.** Uma alocação não gera recibo próprio — um PIX é
+   um recibo, mesmo cobrindo três parcelas.
+2. **Ele DESCREVE a alocação.** Onde o dinheiro foi parar sai por extenso, e a
+   frase de quitação acompanha o que de fato foi quitado.
+
+| Caso | Referência |
+|---|---|
+| uma alocação que quita a parcela | `parcela N de M` — **texto preservado**, é o caso comum |
+| honorário não parcelado | `pagamento único` (sem "parcela 1 de 1", desde a F-1a) |
+| múltiplas alocações | `R$ X na parcela 1 de 2 e R$ Y na parcela 2 de 2` |
+| sobra em crédito | acrescenta `R$ Z mantidos como crédito para abatimento futuro` |
+| adiantamento sem parcelas | `adiantamento` — sem número de parcela |
+
+**Os valores só aparecem quando há mais de um destino ou sobra.** Enumerar
+valor onde há um destino só seria ruído; a partir de dois, o total do recibo
+deixa de descrever o que foi para a parcela citada — que é exatamente o defeito.
+
+#### A frase de quitação
+
+**Plena** só quando o pagamento não deixa nada pendente no que ele alcança: sem
+crédito sobrando **e** com todas as parcelas tocadas integralmente quitadas.
+
+> Para clareza e como prova, firmo o presente recibo, dando plena e geral
+> quitação do valor acima em relação à obrigação a que se refere.
+
+Em qualquer outro caso:
+
+> Para clareza e como prova, firmo o presente recibo, dando quitação do valor
+> acima efetivamente recebido. A quitação é PARCIAL e não alcança o saldo
+> remanescente da obrigação, que permanece devido.
+
+**A redação é PROVISÓRIA e aguarda ratificação da Laís**, como TIPOS_HONORARIO
+(DEC-039). É texto jurídico entregue a terceiro, e a escolha entre "quitação
+plena" e "quitação do valor recebido" tem efeito que não se decide por critério
+técnico.
+
+**O crédito do recibo sai da diferença** entre o líquido e o alocado, e não de
+`Fee.saldoAdiantado`: aquele campo é do honorário e pode ter contribuição de
+outros pagamentos, enquanto o recibo fala de UM. A conta fecha mesmo com
+estorno no meio, porque a desalocação consome o crédito antes das parcelas.
+
+As duas decisões vivem em funções **puras e exportadas** —
+`descreverDestino` e `frasePeDeQuitacao` —, testadas pelo texto extraído do PDF
+nos cinco casos.
+
+**Limitação conhecida da ferramenta de teste, registrada para não virar
+"correção" no documento:** `tests/helpers/pdfText.js`, o extrator escrito à mão
+na Fase 2E.2, embaralha MAIÚSCULAS em fonte com subconjunto — "PARCIAL" sai
+"PLRCILG" no texto extraído. O PDF está correto; quem abre o arquivo lê
+"PARCIAL". As asserções miram o trecho minúsculo da frase, e há comentário no
+teste dizendo por quê.
+
+---
+
+### A-3 e A-4 do smoke test — leitura, não conta (F-1a.1)
+
+**A-3 — parcela reparcelada exibia dívida fantasma.** Parcela `cancelado` com
+`reparcelamentoId` imprimia "em aberto R$ 2.250,00" na ficha. Ela **não entrava
+em soma nenhuma** — isso já valia. O problema era de leitura, e leitura é o que
+a ficha é.
+
+A ficha passa a enviar `reparcelamentoId` e `reparceladaEm` (a data da
+operação). A tela mostra rótulo **"Reparcelada"** — distinto de cancelamento
+avulso, porque uma cobrança cancelada foi desfeita e uma reparcelada foi
+SUBSTITUÍDA —, omite o "em aberto", atenua a linha e diz por qual operação ela
+saiu. **Valor e recebido ficam**: é histórico auditável, e omitir a parcela
+inteira levaria junto o registro de que aquela cobrança existiu.
+
+**A-4 — a busca perdia o foco.** Causa estrutural, confirmada por leitura antes
+da correção: `if (loading) return <Loading />` trocava a **árvore inteira** —
+inclusive o input — a cada refetch, e o React desmontava e remontava o campo.
+Não era `key`.
+
+Corrigido nas **cinco** listagens com filtro próprio (clientes, honorários,
+processos, pagamentos, parcelas), movendo o indicador para dentro do JSX,
+abaixo dos controles. `SecaoListPage` já nascia com o padrão certo e serviu de
+referência. As telas de DETALHE não têm o defeito: o `loading` delas é do
+carregamento inicial e não volta a `true`.
+
+**Não se corrigiu com `autoFocus` nem `.focus()` em efeito.** Os dois tratam o
+sintoma e criam um defeito pior — roubam o foco de quem navega por teclado, e
+num efeito disparado por refetch fazem isso a cada tecla.
+
+**Não há como provar foco sem DOM.** `tests/regressions/f1a1.test.js` trava a
+CAUSA por varredura estática (nenhuma listagem com filtro pode ter o `return`
+antecipado, e nenhuma pode usar as duas saídas fáceis), e o passo **155** do
+roteiro manual fecha a outra metade. Inventar um teste de foco frágil seria
+pior que o passo manual honesto.
 ### A divisão F-1a / F-1b / F-1c
 
 **Decisão registrada:** o escopo original da Fase F-1 não cabia numa sessão e
@@ -2749,6 +2955,50 @@ fórmula percentual. **Nenhuma dependência nova** — `package.json` idêntico 
 `main` nos dois repositórios.
 
 **Roteiro manual: nenhuma seção nova** (ver "A divisão F-1a/b/c").
+
+### Fase F-1a.1 — correções do smoke test do Financeiro 2.0
+
+**Resumo:** quatro achados de um smoke test manual do Daniel na main mergeada
+da F-1a. Dois são de dinheiro e um sai impresso em recibo assinado — por isso
+vieram antes da F-1b, que construiria telas ricas sobre números errados.
+Backend 395 → **407**. Frontend 289 → **305**. Roteiro 154 → **157**.
+
+**Nada de UX nova**: preview de alocação, página do honorário, paginador e
+filtro por honorário continuam sendo F-1b.
+
+**Arquivos alterados (backend):** `services/financeiroService.js`,
+`services/dashboardService.js`, `services/renegotiationService.js`,
+`services/receiptService.js`, `tests/financial/financeiro2.test.js`,
+`tests/financial/invariantes.test.js`, `tests/financial/recibo.test.js`.
+
+**Arquivos novos (frontend):** `tests/regressions/f1a1.test.js`.
+**Alterados:** `components/financeiro/ProcessFinancialSheet.jsx` + `.css`,
+`utils/statusVisual.js`, e as cinco listagens com filtro
+(`ClientListPage`, `FeeListPage`, `ProcessListPage`, `PaymentListPage`,
+`InstallmentListPage`).
+
+**Decisões:** DEC-040 (piso zero + crédito nomeado, substituindo a decisão nº 4
+da F-1a) e DEC-041 (recibo por alocação, **provisória**), as duas por extenso
+acima, com o caso numérico observado — é o que impede a reintrodução.
+
+**Um defeito MEU da F-1a, corrigido aqui.** A decisão nº 4 daquela fase dizia
+que "`emAberto` pode ficar negativo, e é honesto". A preocupação estava certa —
+não esconder dinheiro da cliente — e a execução, errada: o negativo propagava
+para a soma do processo, e ali o crédito de um honorário abatia a dívida de
+outro. A correção mantém o dinheiro visível, em campo próprio e com nome.
+
+**Um teste meu que não testava.** O invariante 6 recomputava a mesma fórmula
+que a API usara e comparava consigo mesma. Passou verde durante toda a F-1a com
+o defeito presente. Reescrito com verificação independente.
+
+**Uma premissa do roteiro desta fase que não se confirmou:** `valorVencido` e
+`aReceberNoMes` carregavam METADE do defeito, não ele inteiro — somam o em
+aberto de PARCELA, que nunca subtraiu `saldoAdiantado`. Ver a nota na DEC-040.
+
+**Não tocado:** `documentRenderService.js`, `letterheadService.js`, timbrado,
+catálogo de variáveis, rotas do portal, vetores da fórmula percentual (hash
+travado), contrato de rota nenhum além dos dois campos novos da ficha.
+**Nenhuma dependência nova.**
 
 ---
 
