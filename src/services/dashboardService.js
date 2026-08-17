@@ -133,12 +133,18 @@ export const getStatusCounts = async (usuarioId) => {
 // advogada podia abrir as dez fichas, somar na calculadora e não chegar ao
 // número do painel. Quem se ajustou foi o resumo: a ficha não muda.
 //
-// ── `pendente` é `contratado − recebido`, e não a soma dos saldos ───────────
-// A ficha calcula o em aberto de cada honorário como `fee.valor − pago`, e não
-// como a soma do que falta nas parcelas. A diferença aparece no honorário que
-// ainda não foi parcelado por inteiro: 3.000 contratados com uma parcela de
-// 1.000 emitida têm 3.000 em aberto na ficha e teriam 1.000 aqui. Duas
-// fórmulas para a mesma pergunta divergem — e a que vale é a publicada.
+// ── `pendente` é Σ POR HONORÁRIO de `max(0, contratado − pago)` ────────────
+// A ficha calcula o em aberto de cada honorário como `fee.valor − pago`, com
+// piso zero (DEC-040), e NÃO como a soma do que falta nas parcelas. A diferença
+// aparece no honorário que ainda não foi parcelado por inteiro: 3.000
+// contratados com uma parcela de 1.000 emitida têm 3.000 em aberto na ficha e
+// teriam 1.000 pela outra fórmula. Duas fórmulas para a mesma pergunta divergem
+// — e a que vale é a publicada.
+//
+// O que a DEC-040 mudou aqui foi o NÍVEL da soma, não a fórmula: era uma
+// subtração global (`contratado − recebido − saldoAdiantado`), que não conhece
+// a fronteira entre honorários e deixava o crédito de um abater a dívida de
+// outro. Agora soma honorário a honorário, cada um com piso.
 //
 // ── `recebidoNoMes` sai de Payment, não de Installment ─────────────────────
 // `Installment.dataPagamento` é a data em que a parcela FECHOU. Um pagamento
@@ -148,11 +154,15 @@ export const getStatusCounts = async (usuarioId) => {
 // acima (F-1a: a âncora do pagamento deixou de ser a parcela) e LÍQUIDA dos
 // estornos do próprio pagamento.
 //
-// ── DUAS MUDANÇAS DE CONTRATO na F-1a, as duas deliberadas ────────────────
-// 1. `pendente` passa a ser `contratado − recebido − saldoAdiantado`. Sem o
-//    terceiro termo ele divergiria da soma das fichas no primeiro
-//    adiantamento — a mesma divergência que a Fase 4.3 existiu para fechar.
-// 2. `saldoAdiantado` é chave NOVA de primeiro nível. São dez agora.
+// ── AS MUDANÇAS DE CONTRATO, e o que a F-1a.1 corrigiu ───────────────────
+// 1. `saldoAdiantado` é chave de primeiro nível desde a F-1a. São dez.
+// 2. `pendente` passou por DUAS formas. A F-1a o fez
+//    `contratado − recebido − saldoAdiantado`, para fechar com a soma das
+//    fichas; a F-1a.1 (DEC-040) o refez como Σ por honorário de
+//    `max(0, contratado − pago)`, porque a forma anterior carregava o mesmo
+//    defeito da ficha — crédito de um honorário abatendo dívida de outro.
+//    As duas fecham com as fichas; só a segunda descreve a dívida real.
+// 3. `saldoAdiantado` deixou de entrar em conta nenhuma: sai nomeado.
 // ═══════════════════════════════════════════════════════════════════════════
 export const getFinanceiroResumo = async (usuarioId) => {
   const uid = new mongoose.Types.ObjectId(usuarioId);
@@ -222,7 +232,12 @@ export const getFinanceiroResumo = async (usuarioId) => {
       numeroParcela: parcela.numeroParcela,
       valor: parcela.valor,
       valorPago: parcela.valorPago ?? 0,
-      emAberto: emCentavos(Number(parcela.valor) - Number(parcela.valorPago || 0)),
+      // Piso em zero (DEC-040), pelo mesmo motivo da ficha: `PATCH
+      // /installments/:id { valor }` aceita reduzir o valor da parcela depois
+      // de ela ter recebido alocação. Sem o piso, a parcela negativa abateria
+      // `aReceberNoMes` e `valorVencido` — indicadores que a advogada usa para
+      // decidir a quem cobrar.
+      emAberto: Math.max(0, emCentavos(Number(parcela.valor) - Number(parcela.valorPago || 0))),
       dataVencimento: parcela.dataVencimento,
       status: parcela.status,
       // Vem do HONORÁRIO, e não do `processoId` desnormalizado da parcela,
@@ -288,9 +303,38 @@ export const getFinanceiroResumo = async (usuarioId) => {
   // reescrito pelo recálculo a partir das alocações ativas (F-1a), então este
   // número já é líquido de estorno sem precisar de segunda conta.
   const recebido = somar(parcelas, "valorPago");
-  // Dinheiro que entrou e ainda não achou parcela. Sai no resumo pelo mesmo
-  // motivo pelo qual sai na ficha — e porque sem ele `pendente` mentiria.
+  // Dinheiro que entrou e ainda não achou parcela. Sai NOMEADO, e desde a
+  // DEC-040 não entra em conta nenhuma: não é recebido (não quitou obrigação)
+  // e não abate em aberto (é crédito, não pagamento).
   const saldoAdiantado = somar(honorarios, "saldoAdiantado");
+
+  // ── `pendente` é somado POR HONORÁRIO, com piso (DEC-040) ───────────────
+  //
+  // Era `contratado − recebido − saldoAdiantado`, uma subtração global. Ela
+  // carrega o mesmo defeito que a ficha tinha: a conta global não conhece a
+  // fronteira entre honorários, e o crédito de um abate a dívida de outro.
+  //
+  // Somar por honorário, cada um já com piso zero, é o que faz este número
+  // continuar batendo com a soma das fichas — a igualdade que a Fase 4.3
+  // existiu para garantir e que `tests/financial/resumo.test.js` trava
+  // somando as fichas de verdade, processo a processo.
+  const pagoPorFee = new Map();
+  for (const parcela of parcelas) {
+    const chave = String(parcela.feeId);
+    pagoPorFee.set(
+      chave,
+      emCentavos((pagoPorFee.get(chave) ?? 0) + Number(parcela.valorPago || 0))
+    );
+  }
+
+  const pendente = emCentavos(
+    honorarios.reduce(
+      (total, fee) =>
+        total +
+        Math.max(0, emCentavos(Number(fee.valor) - (pagoPorFee.get(String(fee._id)) ?? 0))),
+      0
+    )
+  );
 
   const noMes = linhas.filter(
     (l) => l.dataVencimento >= inicioDoMes && l.dataVencimento <= fimDoMes
@@ -307,11 +351,7 @@ export const getFinanceiroResumo = async (usuarioId) => {
     // mudou o que entra na conta, para fecharem com as fichas.
     valorContratado: contratado,
     recebido,
-    // A invariante da F-1a, a mesma da ficha: o saldo adiantado abate o em
-    // aberto tanto quanto o alocado. Sem ele, `pendente` divergiria da soma
-    // das fichas no primeiro adiantamento — que é exatamente a divergência
-    // que a Fase 4.3 existiu para fechar.
-    pendente: emCentavos(contratado - recebido - saldoAdiantado),
+    pendente,
     saldoAdiantado,
     // Contagem de parcelas vencidas, como sempre. Agora acompanhada do valor.
     vencidas: vencidasLinhas.length,

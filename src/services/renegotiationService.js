@@ -58,15 +58,27 @@ const validarObjectId = (id, campo) => {
 // milhar, e é esta frase que a advogada lê no 422.
 const reais = (n) => moeda(Number(n));
 
-// O em aberto do honorário AGORA — a mesma fórmula da ficha financeira
-// (`contratado − pagoLiquidoAlocado − saldoAdiantado`), e de propósito: duas
+// O em aberto do honorário AGORA — a MESMA fórmula da ficha financeira
+// (`max(0, contratado − pagoLiquidoAlocado)`, DEC-040), e de propósito: duas
 // fórmulas para "quanto ainda se deve" divergem, e a advogada compararia a
 // ficha com o 422 e veria dois números.
+//
+// ── O `saldoAdiantado` saiu desta conta na F-1a.1, e não é detalhe ────────
+// Enquanto ele era subtraído aqui, o reparcelamento exigia um plano MENOR que
+// a dívida — e logo depois a auto-alocação (DEC-036) consumia o crédito
+// dentro desse plano menor, descontando o mesmo dinheiro duas vezes.
+//
+// Medido: honorário de 7.500 com 1.500 alocados e 500 de crédito. Pela fórmula
+// antiga o plano novo somava 5.500; a auto-alocação punha os 500 nele, e as
+// parcelas novas ficavam com 5.000 em aberto — enquanto o honorário dizia
+// 5.500. Os dois níveis discordavam em exatamente o valor do crédito.
+//
+// Com a fórmula nova o plano soma 6.000, o crédito se aloca nele, e os dois
+// níveis dizem 5.500. O crédito é consumido UMA vez, onde ele deve ser: nas
+// parcelas.
 export const saldoEmAberto = async (fee, usuarioId) => {
   const alocado = await totalAlocadoDoFee(fee._id, usuarioId);
-  return emCentavos(
-    Number(fee.valor) - alocado - emCentavos(fee.saldoAdiantado || 0)
-  );
+  return Math.max(0, emCentavos(Number(fee.valor) - alocado));
 };
 
 export const criarReparcelamento = async (honorarioId, dados, usuarioId) => {
