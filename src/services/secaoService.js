@@ -53,8 +53,14 @@ export const listSecoes = async (usuarioId, { page = 1, limit = 20, tipo, busca 
   // Busca por título, ignorando caixa E acento. Os títulos das seções são
   // acentuados ("Qualificação do outorgante"), e obrigar a advogada a acertar
   // o acento para encontrar a própria seção é atrito à toa.
-  if (busca) {
-    const regex = regexBuscaTexto(busca);
+  // Guarda de tipo também aqui (Fase F-0). Era o único filtro de texto sem
+  // nenhuma: `if (busca)` aceitava qualquer coisa e entregava a `regexBuscaTexto`,
+  // que só não quebrava porque faz `String(termo ?? "")` — um objeto virava a
+  // busca literal por "[object Object]". Funcionava por acidente, e acidente
+  // não é guarda.
+  const buscaFiltro = filtroTexto(busca);
+  if (buscaFiltro) {
+    const regex = regexBuscaTexto(buscaFiltro);
     if (regex) filter.titulo = regex;
   }
 

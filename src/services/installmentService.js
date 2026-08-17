@@ -9,6 +9,7 @@ import {
 import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -145,18 +146,23 @@ export const listarInstallments = async (usuarioId, { page = 1, limit = 20, proc
   // O default não muda: sem o parâmetro, `ativo: true`, como sempre.
   const somenteInativos = inativos === true || inativos === "true";
   const filter = { usuarioId, ativo: !somenteInativos };
-  if (status && typeof status === 'string') filter.status = status;
 
-  if (processoId) {
-    if (!mongoose.Types.ObjectId.isValid(processoId)) {
-      return { data: [], total: 0, page: 1, limit: 0, totalPages: 1 };
-    }
-    filter.processoId = processoId;
-    const data = await Installment.find(filter)
-      .populate("feeId")
-      .sort({ numeroParcela: 1, createdAt: -1 });
-    return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
-  }
+  const statusFiltro = filtroTexto(status);
+  if (statusFiltro) filter.status = statusFiltro;
+
+  // ── Fase F-0: o `processoId` deixou de ter caminho próprio ────────────────
+  //
+  // Havia aqui um `return` antecipado que, com `processoId` presente,
+  // devolvia TODAS as parcelas do processo sem `skip` nem `limit`, montando o
+  // envelope com `limit: data.length`. A regra central nº 4 do projeto manda
+  // paginar todo `GET /`, com teto de 100 — e este caminho, que é justamente
+  // o que a aba financeira do processo usa, não tinha teto nenhum.
+  //
+  // O id inválido também mudou: devolvia `{ data: [], total: 0 }`, ou seja,
+  // "este processo não tem parcelas", para uma requisição malformada. Agora é
+  // 400 com `campo`, uniforme com os outros três módulos.
+  const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
+  if (processoFiltro) filter.processoId = processoFiltro;
 
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([

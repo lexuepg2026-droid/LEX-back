@@ -5,7 +5,7 @@ import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import { REGRA_CONFLITO } from "../config/integrityConflicts.js";
 import { validateUpdatePayment } from "../validations/paymentValidation.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
-import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
+import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
 
 const criarErro = (statusCode, message, extra = {}) => {
   const error = new Error(message);
@@ -253,20 +253,32 @@ export const findAll = async (usuarioId, { page = 1, limit = 20, installmentId, 
   // O default não muda: sem o parâmetro, `ativo: true`, como sempre.
   const somenteInativos = inativos === true || inativos === "true";
   const filter = { usuarioId, ativo: !somenteInativos };
-  if (formaPagamento && typeof formaPagamento === 'string') filter.formaPagamento = formaPagamento;
 
-  if (processoId) {
-    if (!mongoose.Types.ObjectId.isValid(processoId)) {
-      return { data: [], total: 0, page: 1, limit: 0, totalPages: 1 };
-    }
-    filter.processoId = processoId;
-    const data = await Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 });
-    return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
-  }
+  const formaFiltro = filtroTexto(formaPagamento);
+  if (formaFiltro) filter.formaPagamento = formaFiltro;
 
-  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
-  const installmentFiltro = filtroObjectId(installmentId);
+  // ── Fase F-0: os dois filtros passam a COMPOR ─────────────────────────────
+  //
+  // Havia aqui um `return` antecipado sob `if (processoId)`, e ele ficava
+  // ANTES da linha que aplica `installmentId`. Consequência medida na
+  // auditoria de retomada, contra o seed:
+  //
+  //     ?installmentId=Y               → total 1
+  //     ?processoId=X&installmentId=Y  → total 3   ← o segundo filtro sumia
+  //
+  // Combinar dois filtros devolvia MAIS linhas do que um só, em silêncio.
+  // Agora os dois entram no mesmo `filter` e compõem por AND, que é o que
+  // qualquer um espera de dois parâmetros na mesma query string.
+  //
+  // O mesmo `return` também pulava `skip`/`limit` (regra central nº 4) e
+  // devolvia lista vazia para id malformado. As três coisas eram o mesmo
+  // atalho, e saíram juntas.
+  const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
+  if (processoFiltro) filter.processoId = processoFiltro;
+
+  const installmentFiltro = filtroObjectIdExigido(installmentId, "installmentId");
   if (installmentFiltro) filter.installmentId = installmentFiltro;
+
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([
     Payment.find(filter).populate(PAYMENT_POPULATE).sort({ createdAt: -1 }).skip(skip).limit(limit),

@@ -96,45 +96,15 @@ export const vincularSecao = async (api, documentoId, secaoId, ordem) => {
   return esperado(r, 201, "vínculo de seção");
 };
 
-// Cenário completo de um usuário: cliente PF, cliente PJ, processo com os
-// dois, honorário, 2 parcelas, 1 pagamento, seção, modelo com a seção
-// vinculada, e um documento gerado. É o arranjo que a Parte 3 usa para o
-// usuário A e a Parte 5 para os testes de geração.
-export const montarCenarioCompleto = async (api, { comDocumentoGerado = true } = {}) => {
-  const pf = await criarClientePF(api);
-  const pj = await criarClientePJ(api);
-
-  const processo = await criarProcesso(api, [
-    { clienteId: pf._id, papel: "autor", principal: true },
-    { clienteId: pj._id, papel: "litisconsorte", principal: false }
-  ]);
-
-  const honorario = await criarHonorario(api, processo._id);
-  const parcela1 = await criarParcela(api, honorario._id, 1);
-  const parcela2 = await criarParcela(api, honorario._id, 2);
-  const pagamento = await criarPagamento(api, parcela1._id);
-
-  // Texto com variáveis das 3 origens que sempre resolvem num PF completo.
-  const secao = await criarSecao(api, {
-    titulo: `Qualificação ${Date.now()}${Math.random()}`,
-    tipo: "qualificacao",
-    texto:
-      "{{nomeCliente}}, {{profissaoCliente}}, portadora do CPF {{cpfCliente}}, " +
-      "nos autos do processo {{numeroProcesso}}, outorga poderes a " +
-      "{{nomeAdvogada}}, OAB/{{estadoOAB}} {{numOAB}}."
-  });
-
-  const modelo = await criarModelo(api);
-  await vincularSecao(api, modelo._id, secao._id);
-
-  let documento = null;
-  if (comDocumentoGerado) {
-    const r = await api.post(`/documents/modelos/${modelo._id}/gerar`, {
-      processoId: processo._id,
-      clienteId: pf._id
-    });
-    documento = esperado(r, 201, "geração de documento");
-  }
-
-  return { pf, pj, processo, honorario, parcela1, parcela2, pagamento, secao, modelo, documento };
-};
+// `montarCenarioCompleto` foi REMOVIDA na Fase F-0.
+//
+// Montava cliente PF + PJ, processo, honorário, DUAS parcelas, pagamento,
+// seção, modelo e documento gerado, e o comentário afirmava ser "o arranjo que
+// a Parte 3 usa para o usuário A". Não era: `tests/isolation/tenant.test.js`
+// monta o cenário dele inline, com UMA parcela e um texto de seção próprio.
+//
+// O perigo não era o código morto — era o comentário falso. Quem lesse a
+// afirmação e ligasse o helper no teste de isolamento trocaria, sem perceber, a
+// fixture do bloco mais importante da suíte. Os construtores individuais
+// (`criarClientePF`, `criarProcesso`, …) continuam aqui e são o que os testes
+// realmente usam.

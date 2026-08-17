@@ -602,8 +602,11 @@ usar é a ficha financeira da Fase 4. O contrato existe e está acima.
 - `valorParcela` fica `undefined` quando as parcelas são desiguais. É
   honesto: dividir o total pelo número produziria um valor que não
   corresponde a nenhuma cobrança real.
-- Não há `CLAUDE.md` no repositório do frontend. As convenções de interface
-  estão no `README.md` e em `docs/validacao-manual.md`.
+- ~~Não há `CLAUDE.md` no repositório do frontend.~~ **Existe desde a Fase
+  4.2** (`lex-frontend/CLAUDE.md`, 791 linhas), e cobre as decisões de
+  interface. Esta linha ficou desatualizada por quatro fases e foi corrigida
+  na F-0. O contrato da API continua morando **aqui**; lá está o que é decisão
+  de tela.
 
 ### Índices não consultados — MANTIDOS de propósito (eram três, restam dois)
 
@@ -1468,11 +1471,54 @@ sumir da ficha levaria junto o histórico.
 `tests/financial/ficha.test.js` trava a AUSÊNCIA de `data`, `page`, `limit`,
 `totalPages` e `total`, para que uma uniformização futura caia no teste.
 
-### Risco conhecido de dependência do frontend — a conta honesta
+### Risco conhecido de dependência — REMEDIDO na Fase F-0
+
+O bloco abaixo, escrito na Fase 2E.2, **descrevia um quadro que mudou**. A
+auditoria de retomada rodou `npm audit` de novo e encontrou outra coisa; o
+registro histórico fica preservado logo em seguida, porque ele explica por que
+o `react-router-dom` está na versão em que está.
+
+**Medido na F-0 (2026-08-17):**
+
+| Repo | Total | Pacote | Cadeia | Sai no bundle? |
+|---|---|---|---|---|
+| Backend | **1 high** | `brace-expansion` | `nodemon → minimatch` | não — devDependency |
+| Frontend | **3 high** | `brace-expansion`, `js-yaml` | `eslint` | não — devDependency |
+| | | `nanoid` | `vite → postcss` | não — só build |
+
+**As quatro são de cadeia de desenvolvimento. Nenhuma chega ao navegador da
+advogada nem ao servidor em produção.**
+
+**Duas afirmações do bloco de 2E.2 ficaram falsas:**
+
+1. **O GHSA-qwww-vcr4-c8h2 do `react-router` não é mais reportado.**
+   `react-router-dom@7.18.2` / `react-router@7.18.2` continuam instalados e o
+   `npm audit` de hoje não os acusa. O risco residual que a 2E.2 aceitou por
+   escrito **deixou de existir na base de advisories** — a decisão de manter a
+   versão continua válida, mas não é mais uma decisão de risco.
+2. **"As outras 5 exigem `eslint@10`, major"** — hoje as quatro restantes têm
+   `fixAvailable` **sem major**. A F-0 **não as atualizou**: a fase autorizou
+   apenas `mongoose` e `express-rate-limit`, nomeadamente, e subir a cadeia do
+   `eslint` de passagem é o tipo de mudança que se faz na fase que a decidiu.
+   Fica como item de backlog, não como risco aceito.
+
+**Atualizado na F-0, dentro do semver:** `mongoose` 9.8.1 → **9.9.2**,
+`express-rate-limit` 8.6.1 → **8.6.2**. Suíte verde nos dois casos.
+
+**`bcryptjs` 2.4.3 → 3.x foi ADIADO, e é decisão consciente.** É major, e o
+pacote fica no caminho de autenticação da advogada **e** do portal do cliente —
+o lugar onde uma mudança de comportamento de hash não aparece em teste de
+unidade e aparece no login de quem já tem senha gravada. Entra em fase que
+tenha autenticação no escopo, com releitura do changelog e do formato de hash.
+
+---
+
+### Risco conhecido de dependência do frontend — o registro de 2E.2
 
 Registrado na Fase 2E.2. Se alguém rodar `npm audit` na defesa, a resposta
 precisa estar escrita. **Resposta honesta é melhor que otimista**, e por isso
-o registro não é "15 → 7".
+o registro não é "15 → 7". **Ver o bloco acima para o quadro atual** — este
+aqui ficou como histórico da decisão do `react-router`.
 
 **O que se ganhou.** A atualização da Fase 2E.1 fechou **3 vulnerabilidades
 de produção que atingiam o navegador**: `axios` 1.13.2 → 1.19.0 (alta),
@@ -2131,6 +2177,141 @@ fora. A advogada clicava em Regerar e não tinha como descobrir o que faltava.
 `substituir`, `montarValores` e a ordem das pendências continuam idênticos),
 `documentRenderService.js`, `letterheadService.js`, rotas do portal.
 **Nenhuma dependência nova.**
+
+---
+
+### Fase F-0 — Ponto de restauração e faxina do backlog
+
+**Resumo:** a tag de restauração publicada no GitHub, e depois a limpeza dos
+achados P/M da Auditoria de Retomada — paginação, filtros, allowlist de upload,
+mensagens, logger de produção e segredos de teste. Backend 327 → **346**.
+Frontend 250 → **264**. Roteiro manual 147 → **154** passos.
+
+**Ponto de restauração (Parte 0, antes de qualquer edição):** tag anotada
+`v-pre-f0-2026-08-16` e branch `backup/pre-f0-main`, publicadas nos DOIS
+repositórios, apontando para `4f3e0ee` (back) e `0ef1ecb` (front). Restaurar:
+`git checkout v-pre-f0-2026-08-16`, ou `git reset --hard v-pre-f0-2026-08-16`
+na `main` — com a ressalva do limite permanente: reescrever histórico
+publicado é decisão explícita, não rotina.
+
+**Arquivos novos (backend):** `utils/logError.js`.
+**Arquivos novos (frontend):** `src/api/baseURL.js`, `.env.production.example`,
+`tests/regressions/f0.test.js`.
+
+**DUAS MUDANÇAS DE CONTRATO, as duas deliberadas:**
+
+1. **Id de filtro malformado responde 400 com `campo`**, nos quatro módulos.
+   Ver o bloco próprio abaixo.
+2. **`urlArquivo`, `tamanho` e `dataUpload` saíram da allowlist de PATCH de
+   `/documents`.** A decisão 16 diz que o upload está dormente; a allowlist o
+   mantinha aberto para escrita, e um documento **gerado** podia passar a
+   declarar que veio de arquivo enviado. Dormente passa a valer para escrita
+   também. `origem` fica, porque a validação já o recusa com mensagem própria.
+
+**Decisões**, com o porquê no código:
+
+- **O build de produção do frontend FALHA sem `VITE_API_URL`.** Era o achado
+  mais grave da auditoria: `npm run build` saía com sucesso embutindo
+  `http://localhost:3001/api`, e o deploy subia e falhava em toda requisição.
+  Nem `lint`, nem `build`, nem as duas suítes acusavam — não há erro no
+  código, o defeito é a ausência de uma variável. Por isso a guarda vive no
+  `vite.config.js`, e não num teste. `npm run dev` continua sem exigir nada.
+- **A URL base virou módulo único** (`api/baseURL.js`), consumido pelas duas
+  instâncias de axios. O fallback é guardado por `import.meta.env.DEV` na
+  forma LITERAL, que é a única que o Vite substitui por `false` — assim o ramo
+  vira código morto e o endereço de desenvolvimento **desaparece do bundle**.
+  A primeira versão lia a flag de um parâmetro, e o `grep` no `dist/` pegou o
+  literal sobrevivendo.
+- **`contarNaoVistas` foi MANTIDA e ligada**, não apagada: o dashboard
+  reescrevia a mesma consulta à mão e a função existia sem chamador.
+- **`bcryptjs` 3.x adiado** — major no caminho de autenticação dos dois
+  domínios. Ver o bloco de dependências.
+- **Log de 5xx em produção** sem biblioteca (`utils/logError.js`): carimbo,
+  método, **padrão** da rota, status e mensagem. Sem corpo, sem query, sem
+  cookie, sem `req.user` — a advogada é controladora de dado de terceiro, e
+  log sobrevive ao incidente, é copiado para triagem e raramente é apagado.
+- **Segredo de teste rotacionado.** `.env.test.example` trazia valores
+  literais e o `.env.test` em uso era cópia fiel deles, num repositório
+  **público**. Viraram placeholders; os segredos locais foram regerados.
+  Nenhuma credencial de banco esteve exposta — o `MONGO_URI_TEST` do exemplo
+  sempre foi placeholder.
+
+**Três premissas da auditoria que NÃO se confirmaram, corrigidas aqui:**
+
+1. **As `RATE_LIMIT_*` já estavam documentadas** no `.env.example`, comentadas
+   com os defaults (linhas 37-56). A varredura da auditoria contou só linhas
+   não comentadas. **Nada a fazer** — o item 6.8 já estava satisfeito.
+2. **Os segredos do `.env.test.example` não eram strings aleatórias
+   vazadas**, e sim placeholders descritivos
+   (`segredo-de-teste-nao-usar-em-producao`) que o `.env.test` local copiou
+   verbatim. O efeito prático é o mesmo — segredo de teste público — e a
+   correção também; a caracterização é que estava errada.
+3. **`escapeRegex` tinha QUATRO cópias, não três**: `feeService`,
+   `clientService`, `processService` e a `escaparRegex` privada de
+   `utils/texto.js`. Unificadas em `utils/texto.js`, junto com um
+   `regexTermoSimples` para os três campos de busca.
+
+**Um erro meu, pego pelo próprio teste que eu tinha acabado de escrever:** a
+varredura que proíbe a diretiva `eslint-env` no `public/sw.js` derrubou o
+comentário que EXPLICA a remoção, porque a explicação reproduzia a diretiva.
+É o trap que `css/foco.test.js` documenta desde a 4.5, e eu caí nele na fase
+seguinte. A varredura passou a procurar a forma de diretiva, e o comentário
+deixou de soletrá-la.
+
+**Não tocado:** `documentRenderService.js`, `letterheadService.js`, catálogo
+de variáveis, contrato das rotas do portal, envelope de `/auth`, model nenhum.
+**Nenhuma dependência nova** — só as duas versões da Parte 6.4.
+
+---
+
+### Semântica única do id de filtro inválido (Fase F-0)
+
+**MUDANÇA DE CONTRATO.** Antes, o mesmo parâmetro malformado tinha quatro
+comportamentos, medidos contra o seed:
+
+| Rota | Antes | Depois |
+|---|---|---|
+| `GET /documents?processoId=xyz` | 200, total **19** — a listagem INTEIRA | **400** `campo: "processoId"` |
+| `GET /fees?processoId=xyz` | 200, total **12** — idem | **400** |
+| `GET /installments?processoId=xyz` | 200, total **0** — lista vazia | **400** |
+| `GET /payments?processoId=xyz` | 200, total **0** — idem | **400** |
+
+Os dois primeiros são o pior caso: um id torto vindo de um link mostrava a base
+inteira no lugar do recorte pedido, sem nada na resposta dizendo que o filtro
+não foi aplicado. Os dois últimos mentiam ao contrário — "não há nada aqui".
+
+**Filtro AUSENTE continua sendo "sem filtro"**, e não 400: `?processoId=` vazio
+ou parâmetro nenhum é a listagem normal. A recusa é só para o que foi enviado e
+não serve.
+
+**Texto continua sendo descartado, e a assimetria é proposital.** `?busca=` ou
+`?tipo=` com valor estranho não vira 400: um id malformado significa que a tela
+montou uma URL errada; um texto estranho significa que alguém digitou algo
+estranho. A guarda mora em `filtroObjectIdExigido` / `filtroTexto`
+(`utils/filtrosDeConsulta.js`), agora aplicada aos **doze** filtros — a Fase
+4.5 tinha alcançado quatro.
+
+### Paginação nas listagens por processo (Fase F-0)
+
+`installmentService` e `paymentService` tinham um `return` antecipado sob
+`if (processoId)` que fazia **três** coisas erradas de uma vez:
+
+1. pulava `skip`/`limit` e devolvia o conjunto inteiro, com `limit: data.length`
+   — violando a regra central nº 4 (paginação obrigatória, teto 100);
+2. em `/payments`, ficava **antes** da linha que aplica `installmentId`, então
+   `?processoId=X&installmentId=Y` descartava o segundo filtro em silêncio.
+   Medido: `?installmentId=Y` devolvia 1 e os dois juntos devolviam **3** —
+   combinar dois filtros dava MAIS linhas;
+3. devolvia `{ data: [], total: 0, limit: 0, totalPages: 1 }` para id inválido.
+
+Os três saíram juntos, porque eram o mesmo atalho.
+
+**Consequência na tela, tratada na mesma fase.** `PaymentListPage` e
+`InstallmentListPage` renderizam o array inteiro, sem paginador — funcionavam
+por causa do defeito. Corrigido o backend, o default de 20 passaria a truncar em
+silêncio. As duas passaram a pedir o **teto de 100** explicitamente e a exibir
+"Mostrando N de M" quando o conjunto é maior. Paginador de verdade é da F-1,
+que reescreve estas telas; truncar sem avisar não podia sobreviver a esta.
 
 ---
 

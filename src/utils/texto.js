@@ -10,7 +10,15 @@ export const semAcento = (valor) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-const escaparRegex = (valor) => valor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Escapa os metacaracteres de regex de um termo digitado pela advogada.
+//
+// Vivia em QUATRO cópias idênticas (`feeService`, `clientService`,
+// `processService` e aqui), todas com o mesmo corpo e três com o mesmo nome em
+// inglês. Unificada na Fase F-0: quatro cópias da mesma regra é o formato de
+// dívida em que uma delas fica para trás, e a que ficar para trás transforma
+// um termo de busca em padrão de regex — `.*` num campo de busca varreria a
+// coleção inteira.
+export const escaparRegex = (valor) => String(valor ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Cada letra que admite acento vira a classe com todas as suas formas. O termo
 // entra sem acento e o padrão aceita as duas grafias, nos dois sentidos:
@@ -43,4 +51,15 @@ export const regexBuscaTexto = (termo, { limite = 80 } = {}) => {
   return new RegExp(padrao, "i");
 };
 
-export default { semAcento, regexBuscaTexto };
+// Regex de busca simples (sem tratamento de acento), para os campos em que o
+// termo é comparado como digitado — descrição de honorário, nome de cliente,
+// título/número de processo. Devolve `null` quando não há termo utilizável,
+// para o chamador simplesmente não aplicar o filtro.
+export const regexTermoSimples = (termo, { limite = 80 } = {}) => {
+  if (typeof termo !== "string") return null;
+  const limpo = termo.slice(0, limite).trim();
+  if (!limpo) return null;
+  return new RegExp(escaparRegex(limpo), "i");
+};
+
+export default { semAcento, escaparRegex, regexBuscaTexto, regexTermoSimples };

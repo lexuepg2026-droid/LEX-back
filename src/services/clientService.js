@@ -5,6 +5,7 @@ import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { regexTermoSimples } from "../utils/texto.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -198,17 +199,13 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 const getAllClients = async (usuarioId, { page = 1, limit = 20, busca } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  if (busca && typeof busca === 'string') {
-    const termo = busca.slice(0, 80).trim();
-    if (termo) {
-      const regex = new RegExp(escapeRegex(termo), 'i');
-      filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
-    }
+  // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
+  const regex = regexTermoSimples(busca);
+  if (regex) {
+    filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
   }
   const [data, total] = await Promise.all([
     Client.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),

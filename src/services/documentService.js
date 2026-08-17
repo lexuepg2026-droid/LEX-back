@@ -3,7 +3,7 @@ import Document from "../models/Document.js";
 import Process from "../models/Process.js";
 import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
-import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
+import { filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 
 const createError = (message, statusCode, extra = {}) => {
@@ -74,8 +74,10 @@ export const createDocumentService = async (usuarioId, payload) => {
 export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
-  const processoFiltro = filtroObjectId(processoId);
+  // Guarda de tipo (Fase 4.5), que na F-0 passou a RECUSAR em vez de
+  // descartar: `?processoId=xyz` devolvia a listagem inteira, como se nenhum
+  // filtro tivesse sido pedido — o pior dos quatro comportamentos divergentes.
+  const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
   const [data, total] = await Promise.all([
     Document.find(filter)

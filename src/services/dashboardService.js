@@ -5,7 +5,7 @@ import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
-import ConfirmacaoVisualizacao from "../models/ConfirmacaoVisualizacao.js";
+import { contarNaoVistas } from "./confirmacaoService.js";
 
 const toCountMap = (arr) =>
   arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
@@ -41,6 +41,13 @@ export const getSummary = async (usuarioId) => {
     // número do mesmo painel, sai da mesma consulta paralela, e uma rota
     // própria obrigaria a tela a fazer duas chamadas para desenhar um cabeçalho.
     // Apoiado pelo índice { usuarioId, vistaPelaAdvogada }.
+    //
+    // A consulta vem de `confirmacaoService.contarNaoVistas` desde a Fase F-0.
+    // Estava escrita à mão aqui, idêntica à função que já existia e que a
+    // auditoria de retomada encontrou SEM NENHUMA referência — as duas únicas
+    // ocorrências de `contarNaoVistas` no repositório eram a definição e o
+    // `export default`. Duas fórmulas para a mesma pergunta divergem; o dia em
+    // que "não vista" ganhar uma condição a mais, só uma delas saberia.
     confirmacoesNaoVistas
   ] = await Promise.all([
     Process.countDocuments({ usuarioId, status: "ativo", ativo: true }),
@@ -63,7 +70,7 @@ export const getSummary = async (usuarioId) => {
         }
       }
     ]),
-    ConfirmacaoVisualizacao.countDocuments({ usuarioId, vistaPelaAdvogada: false })
+    contarNaoVistas(usuarioId)
   ]);
 
   return {

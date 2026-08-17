@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { filtroTexto } from "../utils/filtrosDeConsulta.js";
+import { regexTermoSimples } from "../utils/texto.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
   normalizarClientesDoPayload,
@@ -146,8 +148,6 @@ export const createProcess = async (usuarioId, data) => {
   throw createError("Não foi possível gerar um código de acesso único para os vínculos", 500);
 };
 
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 // Anexa os participantes a processos já lidos. Uma consulta só para a página
 // inteira — não uma por processo.
 const anexarParticipantes = async (usuarioId, processos) => {
@@ -185,14 +185,13 @@ const anexarParticipantes = async (usuarioId, processos) => {
 export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  if (busca && typeof busca === 'string') {
-    const termo = busca.slice(0, 80).trim();
-    if (termo) {
-      const regex = new RegExp(escapeRegex(termo), 'i');
-      filter.$or = [{ titulo: regex }, { numeroProcesso: regex }];
-    }
+  // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
+  const regex = regexTermoSimples(busca);
+  if (regex) {
+    filter.$or = [{ titulo: regex }, { numeroProcesso: regex }];
   }
-  if (status && typeof status === 'string') filter.status = status;
+  const statusFiltro = filtroTexto(status);
+  if (statusFiltro) filter.status = statusFiltro;
   const [data, total] = await Promise.all([
     // `lean` para que `participantes` possa ser anexado ao objeto devolvido —
     // um documento Mongoose ignoraria a propriedade por não estar no schema.

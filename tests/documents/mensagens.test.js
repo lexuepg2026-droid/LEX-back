@@ -455,4 +455,88 @@ describe("mensagens do módulo de documentos — cada orientação é executáve
       );
     }
   });
+// ═════════════════════════════════════════════════════════════════════════
+  // 6 — A FRASE DO TOPO acompanha o motivo dominante (Fase F-0)
+  //
+  // A 4.6 consertou a LISTA de pendências e deixou o `message` do 422 sempre
+  // igual: "há informações faltando no cadastro". Medido na auditoria de
+  // retomada — modelo PJ para cliente PF devolvia SEIS pendências, todas
+  // `tipoIncompativel`, sob um título dizendo que faltava preencher cadastro.
+  // Não faltava: o cadastro estava certo e o modelo é que não servia.
+  //
+  // A tela separa os blocos e escapa disso. O `message` é o que qualquer OUTRO
+  // consumidor lê — um curl, um log, uma tela que ainda não exista —, e uma
+  // frase que orienta para a ação errada é exatamente o defeito que a 4.6
+  // nomeou.
+  // ═════════════════════════════════════════════════════════════════════════
+  describe("a frase do topo do 422", () => {
+    test("100% tipoIncompativel: o topo fala de TIPO, não de cadastro incompleto", async () => {
+      const pf = await criarClientePF(api);
+      const processo = await criarProcesso(api, [
+        { clienteId: pf._id, papel: "autor", principal: true }
+      ]);
+      const modelo = await modeloComTexto(
+        "A empresa {{razaoSocialCliente}}, CNPJ {{cnpjCliente}}, representada por " +
+        "{{representanteLegalNome}}."
+      );
+
+      const r = await gerar(modelo._id, { processoId: processo._id, clienteId: pf._id });
+      assert.equal(r.status, 422);
+
+      const motivos = new Set(pendenciasDe(r).map((p) => p.motivo));
+      assert.deepEqual(
+        [...motivos], [MOTIVO_PENDENCIA.TIPO_INCOMPATIVEL],
+        "arranjo: todas as pendências precisam ser do mesmo motivo para o caso valer"
+      );
+
+      assert.doesNotMatch(
+        r.body.message, /faltando no cadastro/,
+        "o topo não pode mandar preencher cadastro quando NADA falta no cadastro — " +
+        `veio: "${r.body.message}"`
+      );
+      assert.match(
+        r.body.message, /tipo de pessoa/,
+        `o topo precisa dizer do que se trata — veio: "${r.body.message}"`
+      );
+    });
+
+    test("100% campoVazio: o topo continua sendo a frase de cadastro", async () => {
+      // A frase antiga não estava errada — estava sendo usada para tudo. Neste
+      // caso ela é a certa, e precisa continuar aparecendo.
+      const pf = await criarClientePF(api, { profissao: null });
+      const processo = await criarProcesso(api, [
+        { clienteId: pf._id, papel: "autor", principal: true }
+      ]);
+      const modelo = await modeloComTexto("{{nomeCliente}}, {{profissaoCliente}}, {{cpfCliente}}.");
+
+      const r = await gerar(modelo._id, { processoId: processo._id, clienteId: pf._id });
+      assert.equal(r.status, 422);
+
+      const motivos = new Set(pendenciasDe(r).map((p) => p.motivo));
+      assert.deepEqual([...motivos], [MOTIVO_PENDENCIA.CAMPO_VAZIO], "arranjo");
+      assert.match(r.body.message, /faltando no cadastro/);
+    });
+
+    test("motivos MISTOS voltam à frase genérica", async () => {
+      // Com motivos diferentes, qualquer frase específica estaria certa sobre
+      // parte das pendências e errada sobre o resto. A lista abaixo dela é que
+      // conta a história completa.
+      const pf = await criarClientePF(api, { profissao: null });
+      const processo = await criarProcesso(api, [
+        { clienteId: pf._id, papel: "autor", principal: true }
+      ]);
+      // Uma variável de PJ (incompatível) + uma vazia (campoVazio).
+      const modelo = await modeloComTexto("{{cnpjCliente}} e {{profissaoCliente}}.");
+
+      const r = await gerar(modelo._id, { processoId: processo._id, clienteId: pf._id });
+      assert.equal(r.status, 422);
+
+      const motivos = new Set(pendenciasDe(r).map((p) => p.motivo));
+      assert.ok(motivos.size > 1, `arranjo: precisa haver motivos diferentes — veio ${[...motivos]}`);
+      assert.match(
+        r.body.message, /faltando no cadastro/,
+        "misto mantém a genérica, de propósito"
+      );
+    });
+  });
 });

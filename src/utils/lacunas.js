@@ -87,6 +87,9 @@ export const detectarLacunas = (texto) => {
   return lacunas.sort((a, b) => a.inicio - b.inicio);
 };
 
-export const contarLacunas = (texto) => detectarLacunas(texto).length;
+// `contarLacunas` foi REMOVIDA na Fase F-0. Era `detectarLacunas(texto).length`
+// e não tinha um único chamador: as rotas devolvem `lacunas[]` e quem precisa
+// da contagem lê o `.length` do array que já recebeu. Mantê-la convidava a
+// varrer o mesmo texto duas vezes — uma para contar, outra para exibir.
 
-export default { detectarLacunas, contarLacunas, TIPOS_LACUNA };
+export default { detectarLacunas, TIPOS_LACUNA };

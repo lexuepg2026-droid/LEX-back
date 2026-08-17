@@ -11,11 +11,13 @@ import {
   orientacaoPendencia,
   VARIAVEIS_DE_HONORARIO,
   MOTIVO_PENDENCIA,
+  mensagemDePendencias,
   variaveisIncompativeis
 } from "../config/templateVariables.js";
 import { substituir } from "../utils/templateParser.js";
 import formatadores from "../utils/templateFormatters.js";
 import { detectarLacunas } from "../utils/lacunas.js";
+import { filtroTexto } from "../utils/filtrosDeConsulta.js";
 import { buscarVinculoAtivo } from "./processoClienteService.js";
 
 const createError = (message, statusCode, extra = {}) => {
@@ -446,7 +448,10 @@ export const criarModeloService = async (usuarioId, payload) => {
 export const listarModelosService = async (usuarioId, { page = 1, limit = 20, tipo } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true, ehModelo: true };
-  if (tipo) filter.tipo = tipo;
+  // Guarda de tipo (Fase F-0): era `if (tipo)`, sem checagem nenhuma — o único
+  // filtro do módulo de documentos que a 4.5 não alcançou.
+  const tipoFiltro = filtroTexto(tipo);
+  if (tipoFiltro) filter.tipo = tipoFiltro;
 
   const [data, total] = await Promise.all([
     Document.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
@@ -508,11 +513,9 @@ export const gerarDocumentoService = async (
   // Documento incompleto não é gerado: preferimos recusar a produzir uma peça
   // com lacuna que só apareceria na leitura do juiz.
   if (pendencias.length > 0) {
-    throw createError(
-      "Não é possível gerar o documento: há informações faltando no cadastro",
-      422,
-      { errors: { pendencias } }
-    );
+    // A frase do topo acompanha o motivo dominante (Fase F-0). Com pendências
+    // de motivos diferentes, volta a ser a genérica — ver `mensagemDePendencias`.
+    throw createError(mensagemDePendencias(pendencias), 422, { errors: { pendencias } });
   }
 
   // Regerar por cima de um texto que a advogada revisou à mão descarta o

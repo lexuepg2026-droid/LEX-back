@@ -9,7 +9,8 @@ import {
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { recalcularStatusFee } from "./paymentService.js";
-import { filtroObjectId } from "../utils/filtrosDeConsulta.js";
+import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
+import { regexTermoSimples } from "../utils/texto.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEC-027 (Fase 4.1) — as três peças que saíram no MESMO commit
@@ -97,8 +98,27 @@ const erroDeCampo = (message, statusCode, campos, extra = {}) => {
   return error;
 };
 
+// Separador ponto-e-vírgula, e não vírgula (Fase F-0).
+//
+// Vários erros desta validação CONTÊM vírgula — `tipo inválido. Use: fixo,
+// percentual, custas` e `status inválido. Use: pendente, parcialmente_pago,
+// pago, cancelado`. Juntando com vírgula, a lista do enum se fundia com o erro
+// seguinte e a frase virava:
+//
+//   "status inválido. Use: pendente, parcialmente_pago, pago, cancelado,
+//    dataVencimento é obrigatória"
+//
+// que se lê como se `dataVencimento é obrigatória` fosse mais um valor válido
+// de status. Era o caso raiz da Fase 4.6 — mensagem gramaticalmente correta
+// que aponta para o lugar errado — sobrevivendo no separador.
+//
+// O array vai junto em `errors`, no formato que o `errorHandler` já repassa e
+// que a allowlist de PATCH também usa: a tela que quiser listar um erro por
+// linha não precisa desfazer a concatenação.
 const erroDeValidacao = (validation) =>
-  erroDeCampo(validation.errors.join(", "), 400, validation.campos);
+  erroDeCampo(validation.errors.join("; "), 400, validation.campos, {
+    errors: [...validation.errors]
+  });
 
 // O `pre("validate")` do model lança `ValidationError`, que o `errorHandler`
 // já converte em 400 com `errors` por caminho. Falta só o `campo`: sem ele o
@@ -162,20 +182,23 @@ const createFee = async (usuarioId, feeData) => {
   return derivado || fee;
 };
 
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 const listFees = async (usuarioId, { page = 1, limit = 20, processoId, busca, tipo, status } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
-  // Guarda de tipo (Fase 4.5): só ObjectId em string entra na query.
-  const processoFiltro = filtroObjectId(processoId);
+  // Guarda de tipo (Fase 4.5), que na F-0 passou a RECUSAR em vez de descartar.
+  const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
-  if (busca && typeof busca === 'string') {
-    const termo = busca.slice(0, 80).trim();
-    if (termo) filter.descricao = new RegExp(escapeRegex(termo), 'i');
-  }
-  if (tipo && typeof tipo === 'string') filter.tipo = tipo;
-  if (status && typeof status === 'string') filter.status = status;
+
+  // `escapeRegex` era uma cópia local, idêntica às de `clientService`,
+  // `processService` e `utils/texto.js`. Unificada na Fase F-0.
+  const regexBusca = regexTermoSimples(busca);
+  if (regexBusca) filter.descricao = regexBusca;
+
+  const tipoFiltro = filtroTexto(tipo);
+  if (tipoFiltro) filter.tipo = tipoFiltro;
+
+  const statusFiltro = filtroTexto(status);
+  if (statusFiltro) filter.status = statusFiltro;
   const [data, total] = await Promise.all([
     Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
     Fee.countDocuments(filter)
