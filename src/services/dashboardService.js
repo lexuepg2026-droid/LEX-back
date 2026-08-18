@@ -229,6 +229,10 @@ export const getFinanceiroResumo = async (usuarioId) => {
       // `descricaoHonorario` e não `descricao`: a tela lista PARCELAS, e o
       // nome que a advogada reconhece é o da cobrança de origem.
       descricaoHonorario: fee?.descricao ?? null,
+      // O ID da cobrança, para o nome dela virar LINK no dashboard (F-1b). O
+      // honorário já está carregado aqui — mandar só o texto obrigava a tela a
+      // exibir um nome sem caminho para o registro que o explica.
+      honorarioId: fee?._id ?? null,
       numeroParcela: parcela.numeroParcela,
       valor: parcela.valor,
       valorPago: parcela.valorPago ?? 0,
