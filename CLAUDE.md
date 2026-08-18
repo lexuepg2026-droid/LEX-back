@@ -1051,10 +1051,56 @@ O **409 de integridade** do `deleteFee` continua **sem** `campo`, com
 
 | Estado | Quando |
 |---|---|
-| `pendente` | nenhuma parcela ativa com pagamento |
-| `parcialmente_pago` | ao menos uma parcela paga, nem todas |
+| `pendente` | nenhuma parcela ativa com pagamento **e o honorário sem pago líquido alocado** |
+| `parcialmente_pago` | ao menos uma parcela paga, nem todas — **ou pago líquido alocado > 0** |
 | `pago` | todas as parcelas ativas quitadas |
 | `cancelado` | **apenas por escrita explícita** |
+
+#### EMENDA DE 17/08/2026 (Fase F-1a.2, achado A-4)
+
+> Registrada **dentro** da DEC-028, e não como decisão nova: é refinamento da
+> mesma regra, e o histórico precisa mostrar isso.
+
+**O que se via.** Na ficha da **"Ação de Cobrança de Dívida"**, o honorário
+"Assessoria tributária — processo administrativo" exibia, na mesma linha:
+
+> Recebido: **R$ 1.500,00**   ·   badge **"Pendente"**
+
+Uma contradição no mesmo honorário, entre dois números que estavam certos cada
+um por si.
+
+**A causa.** Depois do reparcelamento (DEC-037), o dinheiro recebido vive nas
+parcelas **canceladas COM vínculo**: a parcela 1, que era `parcial` com 1.500
+alocados, é cancelada com esses 1.500 intactos — o dinheiro não volta, e o saldo
+renegociado já o descontou. As parcelas novas nascem sem alocação. A derivação
+filtrava as canceladas fora do conjunto, sobrava "tudo pendente", e ela dizia
+`pendente` sobre um honorário que já recebera R$ 1.500,00.
+
+A ficha, por outro lado, publica "Recebido" como `pagoLiquidoAlocado` — a soma
+de `valorPago` de **todas** as parcelas, canceladas inclusive. **As duas
+leituras saíam de fontes diferentes**, e por isso podiam divergir.
+
+**A emenda.** Para distinguir `pendente` de `parcialmente_pago`,
+`derivarStatusFee` passa a considerar o **pago líquido alocado do HONORÁRIO** —
+a mesma grandeza que a ficha publica —, e não só o status das parcelas
+vigentes. As duas leituras passam a concordar porque agora saem da mesma fonte.
+
+**O que NÃO mudou, e é de propósito:**
+
+| Regra | Estado |
+|---|---|
+| `cancelado` é o único status escrevível, e **nunca** é sobrescrito pelo recálculo | **intacta** — a guarda continua sendo o `return` próprio em `recalcularStatusFee`, acima da derivação, e não foi tocada |
+| `pago` exige **em aberto zero** | **intacta** — só quando todas as parcelas VIGENTES estão `pago`. Dinheiro em parcela cancelada tira o honorário de `pendente`; **nunca** o promove a `pago` |
+| honorário sem parcela nenhuma é `pendente`, nunca `pago` | **intacta** — sem parcela não há alocação, então o pago é zero |
+
+**Onde está provado:** `tests/financial/derivacao.test.js`, seção 9 — um teste
+para o caso do reparcelamento e **dois de regressão**, um para cada linha da
+tabela acima. O invariante 3 de `tests/financial/invariantes.test.js` foi
+atualizado junto, porque ele recomputava a fórmula antiga.
+
+**Passo manual:** o **158** do roteiro, que olha o badge e o "Recebido" lado a
+lado. A contradição é visual: nenhuma asserção de valor a pega, e foi assim que
+o A-4 sobreviveu à suíte inteira da F-1a.
 
 **`cancelado` NUNCA é sobrescrito pelo recálculo.** Honorário cancelado não vira
 "pago" porque alguém quitou uma parcela antiga — a cobrança foi desfeita, e o
@@ -2699,6 +2745,160 @@ na Fase 2E.2, embaralha MAIÚSCULAS em fonte com subconjunto — "PARCIAL" sai
 "PLRCILG" no texto extraído. O PDF está correto; quem abre o arquivo lê
 "PARCIAL". As asserções miram o trecho minúsculo da frase, e há comentário no
 teste dizendo por quê.
+
+---
+
+### DEC-042 — três estados de quitação, decididos pela OBRIGAÇÃO ALCANÇADA. **PROVISÓRIA** (F-1a.2)
+
+> **Convive com a DEC-041, que segue PROVISÓRIA.** A 041 decidiu que o recibo
+> *descreve a alocação*; a 042 decide *o que ele declara quitado*. As duas
+> aguardam ratificação da Laís, e **nenhum recibo vai a cliente real antes
+> disso**.
+
+#### O documento que a originou (achado A-1 da F-1a.2 — GRAVE)
+
+Recibo de **R$ 3.500,00** do seed — Agro Campos Gerais Ltda, honorário
+"Honorários complementares — recurso administrativo", cobrança de R$ 3.000,00
+em parcela única. O corpo dizia **certo**:
+
+> referente a Honorários complementares — recurso administrativo — **R$ 3.000,00
+> na parcela 1 de 1 e R$ 500,00 mantidos como crédito para abatimento futuro**
+
+E o pé dizia:
+
+> A quitação é **PARCIAL** e não alcança o **saldo remanescente da obrigação,
+> que permanece devido**.
+
+**Não havia saldo remanescente.** A parcela 1 de 1 valia R$ 3.000,00 e foi paga
+integralmente; a obrigação estava quitada e **ainda sobrou crédito**. O
+documento afirmava **dívida inexistente contra o cliente que pagou a mais** — e
+é papel assinado pela advogada, que trabalharia contra ela em qualquer discussão
+futura.
+
+**Escopo confirmado por contraprova.** O recibo de **R$ 800,00** (Custas
+administrativas, mesmo cliente, parcela única paga integral, sem sobra) dizia
+corretamente "plena e geral quitação". O ramo pleno funcionava; o defeito era a
+condição que tratava **sobra-em-crédito como quitação parcial**.
+
+**A condição culpada**, em `frasePeDeQuitacao` (`src/services/receiptService.js`):
+
+```js
+const plena =
+  destinos.length > 0 &&
+  creditoMantido <= 0 &&          // ← tratava SOBRA como se fosse FALTA
+  destinos.every((d) => d.quitaAParcela);
+```
+
+#### A regra: a pergunta certa
+
+Não é *"sobrou dinheiro?"*. É **"o que este pagamento alcançou ficou quitado?"**.
+Daí os três estados:
+
+| # | Estado | Quando | Redação |
+|---|---|---|---|
+| 1 | **Plena** | as parcelas alcançadas ficaram **integralmente quitadas** — vale **mesmo havendo crédito** | duas variantes, abaixo |
+| 2 | **Parcial** | alguma parcela alcançada continua com **saldo em aberto** | **inalterada** desde a DEC-041: está correta |
+| 3 | **Adiantamento** | **nenhuma alocação** | texto próprio: não quita obrigação nenhuma porque não há obrigação vencida a quitar |
+
+#### As redações, por extenso
+
+**Estado 1 — plena SEM crédito** (a da 4.1, intacta; é o recibo de R$ 800,00):
+
+> Para clareza e como prova, firmo o presente recibo, dando plena e geral
+> quitação do valor acima em relação à obrigação a que se refere.
+
+**Estado 1 — plena COM crédito** (é o recibo de R$ 3.500,00):
+
+> Para clareza e como prova, firmo o presente recibo, dando plena e geral
+> quitação do valor acima em relação às parcelas alcançadas por este pagamento,
+> que ficaram integralmente quitadas. Os R$ 500,00 restantes não correspondem a
+> obrigação em aberto: ficam registrados como crédito do contratante, para
+> abatimento futuro.
+
+**Estado 2 — parcial** (inalterada; é o recibo de R$ 4.500,00, o de R$ 1.500,00
+e o de R$ 4.000,00):
+
+> Para clareza e como prova, firmo o presente recibo, dando quitação do valor
+> acima efetivamente recebido. A quitação é PARCIAL e não alcança o saldo
+> remanescente da obrigação, que permanece devido.
+
+**Estado 3 — adiantamento sem obrigação alcançada:**
+
+> Para clareza e como prova, firmo o presente recibo, dando quitação do valor
+> acima efetivamente recebido. Este pagamento não alcançou parcela alguma: não
+> há obrigação vencida a quitar, e o valor recebido fica registrado como crédito
+> do contratante, para abatimento futuro.
+
+#### As regras de redação, que valem acima das frases
+
+1. A quitação se refere **ao valor efetivamente recebido**, sempre.
+2. Havendo crédito, o pé **nomeia o crédito** e diz que ele fica para abatimento
+   futuro — **nunca** o descreve como dívida do cliente.
+3. A palavra **"devido"** só aparece quando existe, de fato, **saldo em aberto
+   numa parcela alcançada**. Provado por teste, caso a caso, sobre o texto
+   extraído do PDF: `tests/financial/recibo.test.js`.
+
+#### O que impede a reintrodução
+
+O caso de R$ 3.500,00 está reproduzido com os mesmos números em
+`recibo.test.js`, teste 3 do bloco DEC-041/042, e a asserção central é a
+**ausência** da palavra "devido". O de R$ 800,00 está no teste 8, como
+regressão da redação plena — e ali a frase exata é conferida sobre a **função
+pura** `frasePeDeQuitacao`, porque o extrator de PDF embaralha acento e cedilha
+e não consegue provar uma vírgula.
+
+---
+
+### A-2 da F-1a.2 — o adiantamento nomeia a parcela onde o dinheiro entrou
+
+Recibo de **R$ 5.000,00** do seed (Maria Aparecida, adiantamento do inventário)
+dizia apenas **"pagamento único"**. O saldo **foi auto-alocado** (DEC-036)
+quando a parcela nasceu, mas o recibo não dizia em qual — quem recebe o papel
+não conseguia ligar o dinheiro à obrigação.
+
+**A correção.** Quando o pagamento tem alocações, o recibo as **descreve**,
+qualquer que seja o `tipo` do pagamento. **"Pagamento único" fica reservado ao
+caso de uma alocação que QUITA uma parcela única.** Adiantamento ainda **sem**
+alocação usa o texto do **estado 3** da DEC-042.
+
+O predicado de `descreverDestino` ganhou o terceiro caso que faltava:
+
+```js
+const enumerar =
+  destinos.length > 1 ||
+  (destinos.length > 0 && creditoMantido > 0) ||
+  destinos.some((d) => !d.quitaAParcela);   // ← o que faltava
+```
+
+O recibo passa a dizer **"R$ 5.000,00 na parcela 1 de 1"**. A regressão de
+"parcela 1 de 1 é ruído" (F-1a) continua valendo: ela só some no caso em que a
+alocação quita a parcela, que é quando "pagamento único" é verdade.
+
+---
+
+### A-3 da F-1a.2 — o recibo de pagamento estornado não pode ser silencioso
+
+Recibo de **R$ 2.500,00** do seed (Beatriz, usucapião) saía pelo líquido —
+correto — mas **em silêncio**: o pagamento foi de R$ 4.000,00 com estorno de
+R$ 1.500,00, e o documento não dizia nada disso. Para documento de prova é
+lacuna: o cliente ficava com um recibo de 2.500 e **nenhum registro** do que
+houve com a diferença.
+
+**A correção.** Havendo estorno ativo, o recibo declara o valor recebido, o
+valor estornado **com a data**, e que o valor acima é o **líquido**:
+
+> Este recibo é do valor líquido: do pagamento de R$ 4.000,00 foi estornado
+> R$ 1.500,00 em 18/05/2026, restando os R$ 2.500,00 acima.
+
+O número **em destaque continua sendo o líquido** — é o que a advogada recebeu
+de fato. O que se acrescenta é a conta que leva até ele.
+
+**O motivo do estorno NÃO entra no texto.** O campo pode estar vazio, e inventar
+motivo em documento assinado é pior que omiti-lo. Há asserção travando isso.
+
+A lista de estornos que entra na frase é o espelho de `totalEstornado`:
+anulação não é débito, e estorno anulado não conta — senão o recibo declararia
+um estorno que foi desfeito.
 
 ---
 

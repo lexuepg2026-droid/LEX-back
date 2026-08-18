@@ -28,7 +28,7 @@ import { subirApp, derrubarApp } from "../helpers/server.js";
 import { limparColecoes, TODAS_AS_COLECOES, desconectar } from "../helpers/db.js";
 import {
   registrarUsuario, criarClientePF, criarProcesso, criarHonorario,
-  criarParcela, criarPagamento, criarEstorno, esperado
+  criarParcela, criarPagamento, criarEstorno, criarReparcelamento, esperado
 } from "../helpers/setup.js";
 import { dadosParcela } from "../helpers/factories.js";
 
@@ -386,6 +386,112 @@ describe("DEC-028 — status derivado e valorPago", () => {
 
       assert.equal(r.status, 201, `esperado 201 — ${JSON.stringify(r.body)}`);
       assert.equal(r.body.saldoAdiantado, 999499, "999999 − 500 ficam em saldo");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // 9 — EMENDA DE 17/08/2026 À DEC-028 (F-1a.2, achado A-4)
+  //     O status olha o PAGO DO HONORÁRIO, não só as parcelas vigentes
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("9. emenda de 17/08/2026 — o pago do honorário entra na derivação", () => {
+    test("A-4: honorário reparcelado com pago > 0 é `parcialmente_pago`, não `pendente`", async () => {
+      // ── O DEFEITO OBSERVADO ──────────────────────────────────────────────
+      // Ficha da "Ação de Cobrança de Dívida", honorário "Assessoria
+      // tributária — processo administrativo": a tela exibia
+      // **"Recebido: R$ 1.500,00"** e o badge **"Pendente"**, contradição na
+      // mesma linha do mesmo honorário.
+      //
+      // A causa: depois do reparcelamento, o dinheiro vive nas parcelas
+      // CANCELADAS COM VÍNCULO, e a derivação filtrava as canceladas fora —
+      // sobrava "tudo pendente". Os números do seed, reproduzidos.
+      const fee = await criarHonorario(api, processo._id, {
+        valor: 7500, descricao: "Assessoria tributária — processo administrativo"
+      });
+      await criarParcela(api, fee._id, 1, { valor: 3750, dataVencimento: AMANHA });
+      await criarParcela(api, fee._id, 2, { valor: 3750, dataVencimento: AMANHA });
+      await criarPagamento(api, fee._id, { valor: 1500 }); // parcela 1 → parcial
+
+      assert.equal(await statusDo(fee._id), "parcialmente_pago", "arranjo");
+
+      // Saldo em aberto = 7.500 − 1.500 = 6.000, em três de 2.000.
+      await criarReparcelamento(api, fee._id, [
+        { valor: 2000, dataVencimento: "2026-07-15" },
+        { valor: 2000, dataVencimento: "2026-08-15" },
+        { valor: 2000, dataVencimento: "2026-09-15" }
+      ]);
+
+      assert.equal(
+        await statusDo(fee._id), "parcialmente_pago",
+        "o honorário recebeu 1.500 — chamá-lo de `pendente` contradiz a própria ficha"
+      );
+
+      // E as duas leituras precisam SAIR DA MESMA FONTE, que é o ponto da
+      // emenda: o badge e a linha "Recebido" não podem mais divergir.
+      const ficha = esperado(
+        await api.get(`/financeiro/processos/${processo._id}`), 200, "ficha do processo"
+      );
+      const linha = ficha.honorarios.find((h) => String(h._id) === String(fee._id));
+      assert.equal(Math.round(linha.totais.pagoLiquidoAlocado * 100), 150000, "Recebido = 1.500,00");
+      assert.equal(linha.status, "parcialmente_pago", "e o badge concorda com ele");
+
+      // As parcelas VIGENTES continuam todas sem pagamento — é justamente por
+      // isso que a derivação antiga errava, e o teste precisa dizer isso.
+      const vigentes = linha.parcelas.filter((p) => p.status !== "cancelado");
+      assert.equal(vigentes.length, 3, "as três novas");
+      assert.ok(
+        vigentes.every((p) => Number(p.valorPago) === 0),
+        "nenhuma parcela vigente tem pagamento — o dinheiro está na cancelada"
+      );
+    });
+
+    test("regressão: `pago` continua exigindo EM ABERTO ZERO nas vigentes", async () => {
+      // O dinheiro em parcela cancelada tira o honorário de `pendente`; ele
+      // NUNCA o promove a `pago`. Sem esta trava, a emenda transformaria
+      // qualquer honorário reparcelado com pagamento antigo em quitado.
+      const fee = await criarHonorario(api, processo._id, { valor: 2000, descricao: "Reparcelado e ainda devendo" });
+      await criarParcela(api, fee._id, 1, { valor: 2000, dataVencimento: AMANHA });
+      await criarPagamento(api, fee._id, { valor: 500 });
+
+      await criarReparcelamento(api, fee._id, [
+        { valor: 1500, dataVencimento: "2026-07-15" }
+      ]);
+
+      assert.equal(
+        await statusDo(fee._id), "parcialmente_pago",
+        "há 1.500 em aberto na parcela nova: `pago` seria falso"
+      );
+
+      // Quitando a parcela nova, aí sim.
+      await criarPagamento(api, fee._id, { valor: 1500 });
+      assert.equal(await statusDo(fee._id), "pago", "agora o em aberto é zero");
+    });
+
+    test("regressão: `cancelado` não é sobrescrito, nem com pago > 0", async () => {
+      // A guarda da DEC-028 é um `return` próprio em `recalcularStatusFee`,
+      // acima da derivação, e a emenda não a tocou. Este é o caso do seed
+      // (Custas administrativas de 800, pagas e depois canceladas): pela regra
+      // derivada seria `pago`; pela emenda, com pago > 0, seria pelo menos
+      // `parcialmente_pago`. Precisa continuar `cancelado` nos dois caminhos.
+      const fee = await criarHonorario(api, processo._id, {
+        valor: 800, tipo: "custas", descricao: "Custas administrativas — taxas e emolumentos"
+      });
+      const parcela = await criarParcela(api, fee._id, 1, { valor: 800, dataVencimento: AMANHA });
+      await criarPagamento(api, fee._id, { valor: 800 });
+
+      esperado(await api.patch(`/fees/${fee._id}`, { status: "cancelado" }), 200, "cancelamento");
+      assert.equal(await statusDo(fee._id), "cancelado", "arranjo");
+
+      // Um recálculo FORÇADO depois do cancelamento: tocar a parcela dispara
+      // `recalcularStatusInstallment` → `recalcularStatusFee`, que é onde a
+      // guarda mora. Sem disparar a cadeia, o teste provaria só que ninguém
+      // escreveu no campo — e não é isso que está em jogo.
+      esperado(await api.patch(`/installments/${parcela._id}`, { valor: 800 }), 200, "toque na parcela");
+
+      assert.equal(
+        await statusDo(fee._id), "cancelado",
+        "a guarda da DEC-028 caiu: honorário cancelado voltou a ser derivado"
+      );
     });
   });
 });

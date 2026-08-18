@@ -923,38 +923,48 @@ describe("Financeiro 2.0 — os 11 invariantes (F-1a)", () => {
     test("reparcelar registra origem `reparcelamento`", async () => {
       // ── O cenário precisa PRODUZIR uma transição ─────────────────────────
       //
-      // A primeira versão deste teste quitava a parcela 1 por inteiro. Com uma
-      // parcela `pago` sobrevivendo ao reparcelamento, o honorário continua
-      // `parcialmente_pago` antes e depois — não há transição nenhuma, e
       // `registrarStatus` não grava linha para status igual, por desenho
-      // (senão o array encheria de ruído).
+      // (senão o array encheria de ruído). Então o arranjo tem de mover o
+      // status do honorário, ou não há carimbo nenhum para conferir.
       //
-      // Era a premissa do teste que estava errada, não o código. Aqui o
-      // pagamento é PARCIAL: a parcela 1 fica `parcial`, é cancelada pelo
-      // reparcelamento junto com a 2, e as novas nascem sem alocação — o
-      // honorário volta de `parcialmente_pago` para `pendente`, e é essa
-      // transição que precisa levar o carimbo certo.
+      // ── Reescrito em 17/08/2026 (F-1a.2), e a razão importa ──────────────
+      // O arranjo anterior era: pagamento PARCIAL, reparcelamento, e o
+      // honorário voltando de `parcialmente_pago` para `pendente`. Essa volta
+      // era o achado **A-4** — o honorário exibia "Recebido: R$ 1.500,00" com
+      // o badge "Pendente", porque a derivação olhava só as parcelas vigentes
+      // e o dinheiro tinha ficado nas canceladas com vínculo. Pela emenda de
+      // 17/08/2026 à DEC-028 ela não acontece mais, e é bom que não aconteça.
+      //
+      // O arranjo agora vai pelo outro lado: honorário de 2.000 com UMA
+      // parcela de 1.000, quitada — todas as vigentes `pago`, então o
+      // honorário é `pago`. Reparcelar o saldo de 1.000 em duas de 500 cancela
+      // a parcela quitada e cria duas sem alocação: `pago` exige em aberto
+      // zero nas vigentes e deixa de valer, e o dinheiro em parcela cancelada
+      // segura o honorário em `parcialmente_pago`. É essa transição
+      // (`pago` → `parcialmente_pago`) que precisa levar o carimbo certo.
       const fee = await honorarioNovo(2000);
       await criarParcela(api, fee._id, 1, { valor: 1000, dataVencimento: "2026-03-10" });
-      await criarParcela(api, fee._id, 2, { valor: 1000, dataVencimento: "2026-04-10" });
-      await criarPagamento(api, fee._id, { valor: 400 }); // parcela 1 → parcial
+      await criarPagamento(api, fee._id, { valor: 1000 }); // quita a parcela 1
 
       const antes = await historico(fee._id);
       assert.equal(
-        antes[antes.length - 1].para, "parcialmente_pago",
-        "arranjo: o honorário precisa estar `parcialmente_pago` antes"
+        antes[antes.length - 1].para, "pago",
+        "arranjo: todas as parcelas vigentes estão quitadas"
       );
 
-      // Saldo = 2000 − 400 = 1600, redistribuído em duas de 800.
+      // Saldo = 2000 − 1000 = 1000, redistribuído em duas de 500.
       await criarReparcelamento(api, fee._id, [
-        { valor: 800, dataVencimento: "2026-06-10" },
-        { valor: 800, dataVencimento: "2026-07-10" }
+        { valor: 500, dataVencimento: "2026-06-10" },
+        { valor: 500, dataVencimento: "2026-07-10" }
       ]);
 
       const h = await historico(fee._id);
       const ultima = h[h.length - 1];
 
-      assert.equal(ultima.para, "pendente", "as antigas saíram, as novas nasceram sem alocação");
+      assert.equal(
+        ultima.para, "parcialmente_pago",
+        "as novas nasceram sem alocação, mas os 1.000 recebidos continuam na cancelada"
+      );
       assert.equal(
         ultima.origemStatus, "reparcelamento",
         "a transição foi atribuída a `recalculo` — a origem não viajou pela cadeia"

@@ -21,6 +21,20 @@ const COLLECTIONS = [
   'fees',
   'installments',
   'payments',
+  // ── As três coleções da F-1a (acrescentadas na F-1a.2) ─────────────────
+  // Faltavam desde a F-1a, e `npm run seed:fresh` vinha acumulando: medido em
+  // 17/08/2026, a base de desenvolvimento tinha 160 alocações, 22 estornos e 9
+  // reparcelamentos para um seed que cria 14, 1 e 1. Eles ficavam órfãos —
+  // apontando para pagamentos e parcelas já derrubados —, então não corrompiam
+  // leitura nenhuma; mas `seed:fresh` é a PRÉ-CONDIÇÃO dos passos 156 e 157 do
+  // roteiro, e uma base que só cresce é o tipo de coisa que um dia deixa de
+  // ser inofensiva sem avisar.
+  //
+  // A ordem espelha a dependência, como em `seedDemo.js --clean`: alocação e
+  // estorno apontam para pagamento, reparcelamento aponta para parcela.
+  'alocacoes',
+  'estornos',
+  'reparcelamentos',
   'documents',
   'secoes',
   'documento_secao',
