@@ -1,6 +1,11 @@
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Process from "../models/Process.js";
 import Installment from "../models/Installment.js";
+import Client from "../models/Client.js";
+import Renegotiation from "../models/Renegotiation.js";
+// A conta dos totais (DEC-040) é a MESMA da ficha do processo. Ver o
+// cabeçalho de `feeTotals.js`.
+import { totaisDoHonorario, emCentavos } from "./feeTotals.js";
 import {
   validateCreateFee,
   validateUpdateFee,
@@ -211,6 +216,33 @@ const listFees = async (usuarioId, { page = 1, limit = 20, processoId, busca, ti
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// A LEITURA QUE SUSTENTA A PÁGINA DO HONORÁRIO (Fase F-1b)
+//
+// Até a F-1a esta rota devolvia o documento cru com o processo populado, e era
+// o bastante: quem a chamava era o FORMULÁRIO de edição, que só precisa dos
+// campos que edita.
+//
+// A F-1b abre `/dashboard/honorarios/:id`, a página onde a advogada vai
+// procurar "quanto entrou nesta cobrança" sem ter de lembrar o número da
+// parcela. Essa página precisa, de uma vez: o processo e o CLIENTE (para os
+// dois links do cabeçalho), os quatro números da DEC-040, e as parcelas.
+//
+// ── Por que as parcelas vêm AQUI, e não de `GET /installments?feeId=` ─────
+// Porque esse filtro não existe, e criá-lo é trabalho de LISTAGEM — que é o
+// escopo declarado da F-1b.2, junto do paginador e dos demais recortes. Fazer
+// meio filtro agora entregaria à F-1b.2 uma decisão já tomada pela metade.
+//
+// As parcelas de um honorário não são uma listagem: são o próprio honorário
+// visto por baixo, do mesmo jeito que a ficha do processo já as aninha. Não
+// paginam pelo mesmo motivo que a ficha não pagina — meia lista de parcelas
+// faria os totais do cabeçalho não fecharem com as linhas embaixo.
+//
+// ── O acréscimo é ADITIVO ────────────────────────────────────────────────
+// As chaves antigas continuam onde estavam, no topo do objeto: `chain.test.js`
+// e `derivacao.test.js` leem `.status` e `.valor` da raiz, e a página de
+// edição lê o resto. O que entra são chaves novas ao lado.
+// ═══════════════════════════════════════════════════════════════════════════
 const getFeeById = async (feeId, usuarioId) => {
   const validation = validateFeeId(feeId);
 
@@ -222,7 +254,7 @@ const getFeeById = async (feeId, usuarioId) => {
     _id: feeId,
     usuarioId,
     ativo: true
-  }).populate("processoId", "titulo numeroProcesso");
+  }).populate("processoId", "titulo numeroProcesso clientePrincipalId");
 
   if (!fee) {
     const error = new Error("Honorário não encontrado");
@@ -230,7 +262,92 @@ const getFeeById = async (feeId, usuarioId) => {
     throw error;
   }
 
-  return fee;
+  const parcelas = await Installment.find({
+    feeId: fee._id,
+    usuarioId,
+    ativo: true
+  }).sort({ numeroParcela: 1 });
+
+  // A data da operação que substituiu cada parcela reparcelada, para a página
+  // escrever "Substituída pelo reparcelamento de …" sem uma ida ao banco por
+  // linha — mesma solução da ficha do processo (F-1a.1).
+  const reparcelamentos = await Renegotiation.find({
+    honorarioId: fee._id,
+    usuarioId
+  }).select("data");
+  const dataDoReparcelamento = new Map(
+    reparcelamentos.map((r) => [String(r._id), r.data])
+  );
+
+  // O cliente principal do processo. `clientePrincipalId` é a desnormalização
+  // que o `Process` mantém justamente para esta pergunta (DEC-026) — a verdade
+  // sobre participação está em `ProcessoCliente`, e lê-la inteira aqui traria
+  // o litisconsórcio todo para um cabeçalho que mostra UM nome.
+  const clienteId = fee.processoId?.clientePrincipalId ?? null;
+  const clienteDoc = clienteId
+    ? await Client.findOne({ _id: clienteId, usuarioId, ativo: true })
+        .select("nomeCompleto razaoSocial tipoPessoa")
+    : null;
+
+  // O nome sai resolvido do servidor, no mesmo critério de `portalProjection`
+  // e `documentRenderService`: PJ mostra razão social, PF mostra nome
+  // completo. Os dois campos crus seguem ao lado — a tela que quiser
+  // distinguir não precisa refazer a escolha, e a que só quer escrever o nome
+  // não precisa conhecê-la.
+  const cliente = clienteDoc
+    ? {
+        _id: clienteDoc._id,
+        tipoPessoa: clienteDoc.tipoPessoa,
+        nomeCompleto: clienteDoc.nomeCompleto ?? null,
+        razaoSocial: clienteDoc.razaoSocial ?? null,
+        nome:
+          clienteDoc.tipoPessoa === "juridica"
+            ? clienteDoc.razaoSocial
+            : clienteDoc.nomeCompleto
+      }
+    : null;
+
+  const totais = totaisDoHonorario({
+    valorContratado: fee.valor,
+    saldoAdiantado: fee.saldoAdiantado,
+    parcelas
+  });
+
+  // Contagem por status, para o cabeçalho dizer "5 parcelas" sem a tela
+  // recontar o array — e sem errar no dia em que a lista ganhar recorte.
+  const porStatus = {};
+  for (const p of parcelas) {
+    porStatus[p.status] = (porStatus[p.status] ?? 0) + 1;
+  }
+
+  return {
+    ...fee.toObject(),
+    cliente,
+    totais,
+    parcelas: parcelas.map((p) => ({
+      _id: p._id,
+      numeroParcela: p.numeroParcela,
+      valor: emCentavos(p.valor),
+      valorPago: emCentavos(p.valorPago),
+      // Piso zero, pela mesma razão da ficha: `PATCH /installments/:id` aceita
+      // reduzir o valor da parcela depois de ela ter recebido alocação, e sem
+      // o piso a página exibiria "em aberto −R$ 500,00".
+      emAberto: Math.max(0, emCentavos(Number(p.valor) - Number(p.valorPago || 0))),
+      dataVencimento: p.dataVencimento,
+      dataPagamento: p.dataPagamento ?? null,
+      status: p.status,
+      // `null` quando não houve reparcelamento, nunca omitido: campo ausente e
+      // campo vazio são coisas diferentes para quem monta a tela.
+      reparcelamentoId: p.reparcelamentoId ?? null,
+      reparceladaEm: p.reparcelamentoId
+        ? dataDoReparcelamento.get(String(p.reparcelamentoId)) ?? null
+        : null
+    })),
+    contagemParcelas: {
+      total: parcelas.length,
+      porStatus
+    }
+  };
 };
 
 const updateFee = async (feeId, usuarioId, updateData) => {

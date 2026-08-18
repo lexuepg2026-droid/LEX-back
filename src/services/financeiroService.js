@@ -7,6 +7,9 @@ import Payment from "../models/Payment.js";
 import Reversal from "../models/Reversal.js";
 import Renegotiation from "../models/Renegotiation.js";
 import Document from "../models/Document.js";
+// A conta dos totais do honorário (DEC-040) mora num arquivo só desde a
+// F-1b: esta ficha e a página do honorário leem dela.
+import { totaisDoHonorario } from "./feeTotals.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FICHA FINANCEIRA DO PROCESSO (Fase 4.1)
@@ -195,6 +198,11 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
 
     // ── EM ABERTO TEM PISO ZERO; CRÉDITO É CAMPO PRÓPRIO (DEC-040) ────────
     //
+    // A fórmula MUDOU DE ARQUIVO na F-1b, e não mudou de valor: ela agora mora
+    // em `services/feeTotals.js`, porque a página do honorário (F-1b) precisa
+    // dos mesmos quatro números e uma segunda cópia da conta divergiria da
+    // primeira. O texto abaixo continua descrevendo o que aquela função faz.
+    //
     //     emAberto = max(0, contratado − pagoLiquidoAlocado)
     //
     // **O `saldoAdiantado` NÃO entra nesta conta.** Ele é o crédito, e sai
@@ -217,12 +225,12 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
     // Crédito é do honorário onde foi gerado. Ele aparece em
     // `saldoAdiantado`, com nome, e não como desconto silencioso em outro
     // lugar da árvore.
-    const pagoLiquidoAlocado = somar(parcelasDoFee, "valorPago");
-    const saldoAdiantado = emCentavos(fee.saldoAdiantado || 0);
-    const emAbertoDoFee = Math.max(
-      0,
-      emCentavos(Number(fee.valor) - pagoLiquidoAlocado)
-    );
+    const totaisDoFee = totaisDoHonorario({
+      valorContratado: fee.valor,
+      saldoAdiantado: fee.saldoAdiantado,
+      parcelas: parcelasDoFee
+    });
+    const saldoAdiantado = totaisDoFee.saldoAdiantado;
 
     return {
       _id: fee._id,
@@ -240,17 +248,10 @@ export const montarFichaFinanceira = async (usuarioId, processoId) => {
       // é a única tela onde a advogada pode entender por que um honorário com
       // parcelas em aberto já está pago.
       saldoAdiantado,
-      totais: {
-        contratado: emCentavos(fee.valor),
-        // `pago` mantém o nome que a ficha publicou na 4.1 (o frontend o lê),
-        // e ganha o apelido explícito ao lado. Renomear de vez é churn de
-        // contrato sem ganho; ter os dois nomes divergindo, não — saem da
-        // mesma variável.
-        pago: pagoLiquidoAlocado,
-        pagoLiquidoAlocado,
-        saldoAdiantado,
-        emAberto: emAbertoDoFee
-      },
+      // `contratado`, `pago`, `pagoLiquidoAlocado`, `saldoAdiantado` e
+      // `emAberto`, exatamente as chaves que a ficha publica desde a 4.1 — a
+      // função é que passou a montá-las.
+      totais: totaisDoFee,
       parcelas: parcelasDoFee,
       documentos: documentosPorHonorario.get(String(fee._id)) ?? []
     };

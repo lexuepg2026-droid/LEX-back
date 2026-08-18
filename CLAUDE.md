@@ -3202,6 +3202,124 @@ travado), contrato de rota nenhum além dos dois campos novos da ficha.
 
 ---
 
+---
+
+### DEC-043 — o preview de alocação é `POST /payments/preview`, e o plano tem UMA fonte (F-1b)
+
+#### A decisão
+
+A tela precisa mostrar, **antes de a advogada confirmar**, em quais parcelas o
+dinheiro vai encostar. A rota que responde isso é:
+
+```
+POST /api/payments/preview
+     { honorarioId, valor, tipo }  →  { destinos[], sobra,
+                                        saldoAdiantadoAtual, saldoAdiantadoDepois }
+```
+
+Ela **não grava nada** e já existia desde a F-1a, criada junto com o motor. A
+F-1b a manteve, ligou a tela nela e **travou a invariante que a sustenta**.
+
+#### Por que POST, e não `GET /payments/:id/allocation-preview`
+
+O roteiro desta fase sugeria a alternativa `GET /payments/:id/allocation-preview`.
+Ela não é implementável, e o motivo não é de estilo: **no momento do preview o
+pagamento não existe** — é justamente o que se está decidindo criar. Não há
+`:id` para pôr na URL. Um `GET` com `honorarioId`, `valor` e `tipo` na query
+funcionaria, mas:
+
+1. o corpo é o mesmo do `POST /payments`, e mantê-los idênticos é o que faz o
+   preview e a criação serem comparáveis — em query string, `valor` viraria
+   texto e ganharia uma conversão que a criação não tem;
+2. "o que aconteceria se eu registrasse este pagamento agora" é resposta
+   **volátil**: depende do estado das parcelas neste instante. `GET` é
+   cacheável por definição, e um preview servido do cache é um preview que
+   mente;
+3. a rota já estava publicada e testada como `POST` desde a F-1a. Trocar o
+   verbo agora seria churn de contrato sem ganho.
+
+#### A regra que não pode ser afrouxada: UMA fonte para o plano
+
+O preview e a criação usam **a mesma função**, `planejarAlocacao`
+(`services/allocationService.js`), que é pura e não toca o banco:
+
+| Caminho | Quem chama | Grava? |
+|---|---|---|
+| `POST /payments/preview` | `paymentService.preverAlocacao` | não |
+| `POST /payments` | `allocationService.alocarPagamento` | sim |
+| parcela nova nasce (DEC-036) | `allocationService.autoAlocarSaldo` | sim |
+
+**Se o preview divergir da criação, o preview mente** — e mentir aqui é pior
+que não ter preview, porque a advogada decide com base nele e só descobre
+depois de o dinheiro estar gravado. A garantia é estrutural (uma função só),
+mas garantia estrutural se perde num refactor distraído, então ela também é
+**medida pela ponta de fora**: `tests/financial/f1b.test.js`, bloco 1, manda a
+mesma entrada pelos dois caminhos e compara **parcela por parcela, na ordem**,
+mais a sobra. É a asserção mais importante da fase.
+
+A ordem entra na comparação de propósito: um preview que acertasse os valores
+na ordem errada diria que a parcela 3 será quitada antes da 2.
+
+**Corolário para a tela:** o frontend **formata** o plano e não o recalcula.
+`pages/payments/allocationPreview.js` não ordena, não soma e não decide o que
+cabe em cada parcela — há teste estático proibindo `sort`, `Math.min` e
+`Math.max` nesse arquivo. O mesmo formatador serve ao previsto e ao realizado
+(o 201 devolve a mesma forma), porque dois formatadores poderiam discordar
+sobre números que precisam bater.
+
+#### O que mudou de arquivo junto, e por quê
+
+A conta dos totais do honorário da **DEC-040** (`emAberto = max(0, contratado −
+pagoLiquidoAlocado)`, com o crédito à parte) vivia **dentro** de
+`montarFichaFinanceira`. A página do honorário da F-1b precisa dos mesmos
+quatro números, e o caminho barato seria repetir a fórmula.
+
+Ela saiu inteira para **`services/feeTotals.js`**, e a ficha passou a chamá-la.
+É o mesmo princípio do preview, um nível acima: **uma pergunta sobre dinheiro,
+uma fórmula**. `tests/financial/f1b.test.js`, bloco 3, compara os totais de
+`GET /fees/:id` com os da ficha, chave por chave — mover fórmula de dinheiro
+exige uma asserção dizendo que as duas leituras continuam concordando.
+
+#### `GET /fees/:id` ficou mais gordo, e é aditivo
+
+Passou a devolver, ao lado dos campos de sempre: `cliente` (o principal do
+processo, com o nome já resolvido por tipo de pessoa), `totais`, `parcelas` (com
+`emAberto` com piso e o vínculo do reparcelamento) e `contagemParcelas`.
+
+As parcelas vêm **aqui** e não de `GET /installments?feeId=` porque esse filtro
+não existe, e criá-lo é trabalho de **listagem** — escopo declarado da F-1b.2.
+As parcelas de um honorário não são uma listagem: são o próprio honorário visto
+por baixo, como a ficha já as aninha, e não paginam pela mesma razão (meia lista
+faria os totais do cabeçalho não fecharem com as linhas embaixo).
+
+---
+
+### A divisão F-1b / F-1b.2 / F-1c — e por que ela existe
+
+A F-1 original **morreu por escopo grande demais numa sessão**. O recorte
+abaixo é deliberado, e cada fase termina com suíte verde e merge.
+
+**F-1b (esta) — a UX do dinheiro.** A página do honorário
+(`/dashboard/honorarios/:id`), o extrato na linha do tempo com os vínculos, o
+preview de alocação, o estorno e a anulação em modal, e o nome do honorário
+virando link em toda tela onde ele aparece.
+
+**F-1b.2 — as listagens.** Paginador real (hoje o extrato usa "carregar mais",
+declarado como tal), filtro por honorário, barra de busca em pagamentos, filtro
+por período (mês atual / últimos 6 meses / intervalo) nas três listagens
+financeiras, badge "estornado integralmente" na coluna do valor, coluna de
+honorário legível, e **moeda que nunca trunca** — hoje a coluna Líquido corta
+valores ("R$ 3.50…"). A regra da moeda já vale nas telas escritas pela F-1b e
+tem teste; o que falta é aplicá-la às listagens antigas.
+
+**F-1c — o reparcelamento ponta a ponta.** O backend já reparcela (DEC-037); o
+botão existe na página do honorário **desabilitado, dizendo que chega na F-1c**.
+Junto vai a leitura do "parcela 1 de N" pós-reparcelamento (a observação do
+passo 156, item 6, endereçada à Laís) e a seção do roteiro que valida o módulo
+financeiro inteiro.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

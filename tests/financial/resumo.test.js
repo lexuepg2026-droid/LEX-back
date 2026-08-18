@@ -290,12 +290,16 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
       assert.deepEqual(
         Object.keys(p).sort(),
         [
-          "_id", "dataVencimento", "descricaoHonorario", "emAberto",
+          // `honorarioId` entrou na F-1b: o dashboard passou a LINKAR o nome do
+          // honorário para a página dele, e um nome sem id obrigaria a tela a
+          // exibir o texto sem caminho para o registro que o explica.
+          "_id", "dataVencimento", "descricaoHonorario", "emAberto", "honorarioId",
           "numeroParcela", "numeroProcesso", "processoId", "status", "valor", "valorPago"
         ],
         "o formato do próximo vencimento mudou"
       );
       assert.equal(p.descricaoHonorario, "Honorários contratuais");
+      assert.ok(p.honorarioId, "o id do honorário, para o nome dele virar link (F-1b)");
       assert.equal(String(p.processoId), String(processo._id));
       assert.equal(p.numeroProcesso, processo.numeroProcesso);
       assert.ok(p.emAberto > 0, "parcela quitada não é próximo vencimento");
