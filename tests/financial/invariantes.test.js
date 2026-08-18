@@ -125,15 +125,27 @@ describe("invariantes do financeiro", () => {
       }
 
       // 3. status derivado — `cancelado` é o único imune ao recálculo, e as
-      //    parcelas canceladas por reparcelamento saem do conjunto derivado.
+      //    parcelas canceladas por reparcelamento saem do conjunto que decide
+      //    `pago`.
+      //
+      // ── EMENDA DE 17/08/2026 À DEC-028 (F-1a.2, achado A-4) ─────────────
+      // O `pago` do HONORÁRIO entra na distinção entre `pendente` e
+      // `parcialmente_pago`, e ele inclui as parcelas canceladas com vínculo —
+      // é lá que mora o dinheiro depois de um reparcelamento. Sem este termo,
+      // a ficha exibia "Recebido: R$ 1.500,00" com o badge "Pendente".
+      //
+      // `pago` continua exigindo em aberto zero nas VIGENTES: dinheiro em
+      // parcela cancelada tira o honorário de `pendente`, nunca o promove a
+      // `pago`.
       if (h.status !== "cancelado") {
         const parcelas = h.parcelas.filter((p) => p.status !== "cancelado");
         const quitadas = parcelas.filter((p) => p.status === "pago");
         const comPagamento = parcelas.filter((p) => ["pago", "parcial"].includes(p.status));
+        const pagoDoHonorario = h.parcelas.reduce((acc, p) => acc + centavos(p.valorPago), 0);
 
         let esperadoStatus = "pendente";
         if (parcelas.length > 0 && quitadas.length === parcelas.length) esperadoStatus = "pago";
-        else if (comPagamento.length > 0) esperadoStatus = "parcialmente_pago";
+        else if (comPagamento.length > 0 || pagoDoHonorario > 0) esperadoStatus = "parcialmente_pago";
 
         assert.equal(
           h.status, esperadoStatus,

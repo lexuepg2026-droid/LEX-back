@@ -575,7 +575,11 @@ const FEES_DATA = [
         { valor: 2000, dataVencimento: '2026-09-15' },
       ],
     },
-    // DERIVADO: pendente — as parcelas novas nasceram sem alocação.
+    // DERIVADO: parcialmente_pago — as parcelas novas nasceram sem alocação,
+    // mas os R$ 1.500,00 recebidos continuam na parcela 1, cancelada COM
+    // vínculo. Era `pendente` até a emenda de 17/08/2026 à DEC-028 (achado
+    // A-4 da F-1a.2): a ficha exibia "Recebido: R$ 1.500,00" ao lado do badge
+    // "Pendente", contradição na mesma linha.
   },
   {
     processoIdx: 9,

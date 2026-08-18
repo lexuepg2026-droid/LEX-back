@@ -73,17 +73,53 @@ const definirStatusInstallment = (installment, totalAlocado) => {
 // Honorário SEM parcela nenhuma é `pendente`, nunca `pago` — a leitura da
 // Fase 2C levada até o fim: a parcela única implícita existe e não foi paga.
 //
-// Parcelas `cancelado` ficam fora do conjunto: um honorário cujas parcelas
-// foram todas reparceladas não é "pago", é o que as parcelas NOVAS disserem.
+// Parcelas `cancelado` ficam fora do conjunto que decide `pago`: um honorário
+// cujas parcelas foram todas reparceladas não é "pago", é o que as parcelas
+// NOVAS disserem.
+//
+// ── EMENDA DE 17/08/2026 À DEC-028 (Fase F-1a.2, achado A-4) ──────────────
+//
+// O defeito: na ficha da "Ação de Cobrança de Dívida", o honorário "Assessoria
+// tributária — processo administrativo" exibia **"Recebido: R$ 1.500,00"** e o
+// badge **"Pendente"** — contradição na mesma linha, no mesmo honorário.
+//
+// A causa: depois do reparcelamento (DEC-037), o dinheiro recebido vive nas
+// parcelas CANCELADAS COM VÍNCULO — a parcela 1, que era `parcial` com 1.500
+// alocados, é cancelada com esses 1.500 intactos, porque o dinheiro não volta
+// e o saldo renegociado já o descontou. As parcelas novas nascem sem alocação.
+// Filtrando as canceladas fora, o conjunto que sobrava era "tudo pendente", e
+// a derivação dizia `pendente` sobre um honorário que já recebera 1.500.
+//
+// A emenda: para distinguir `pendente` de `parcialmente_pago`, a derivação
+// passa a considerar o **pago líquido alocado do HONORÁRIO** — a soma de
+// `valorPago` de TODAS as parcelas dele, inclusive as canceladas — e não só o
+// status das vigentes. É a mesma grandeza que a ficha publica como "Recebido"
+// (`financeiroService.js`), e é por isso que as duas leituras passam a
+// concordar: elas agora saem da mesma fonte.
+//
+// **O resto da DEC-028 fica intacto**, e é de propósito:
+//   • `cancelado` continua sendo o único status escrevível, e nunca é
+//     sobrescrito — a guarda é o `return` próprio em `recalcularStatusFee`,
+//     acima desta função, e ela não foi tocada;
+//   • `pago` continua exigindo EM ABERTO ZERO: só quando todas as parcelas
+//     VIGENTES estão `pago`. Dinheiro em parcela cancelada nunca promove um
+//     honorário a `pago` — ele só o tira de `pendente`.
 const derivarStatusFee = (parcelas) => {
+  // Inclui as canceladas de propósito: é onde mora o dinheiro do
+  // reparcelamento. Ver a emenda acima.
+  const pagoLiquidoAlocado = emCentavos(
+    parcelas.reduce((t, p) => t + Number(p.valorPago || 0), 0)
+  );
+  const jaRecebeuAlgo = pagoLiquidoAlocado > 0;
+
   const vigentes = parcelas.filter((p) => p.status !== "cancelado");
-  if (vigentes.length === 0) return "pendente";
+  if (vigentes.length === 0) return jaRecebeuAlgo ? "parcialmente_pago" : "pendente";
 
   const quitadas = vigentes.filter((p) => p.status === "pago");
   if (quitadas.length === vigentes.length) return "pago";
 
   const comPagamento = vigentes.filter((p) => p.status === "pago" || p.status === "parcial");
-  if (comPagamento.length > 0) return "parcialmente_pago";
+  if (comPagamento.length > 0 || jaRecebeuAlgo) return "parcialmente_pago";
 
   return "pendente";
 };
@@ -100,11 +136,13 @@ export const recalcularStatusFee = async (feeId, usuarioId, origem = ORIGEM_STAT
   // legível", e some em silêncio. Preservada intacta na F-1.
   if (fee.status === STATUS_CANCELADO) return fee;
 
+  // `valorPago` entra junto com `status` pela emenda de 17/08/2026 à DEC-028:
+  // a derivação precisa do pago do honorário, e não só do estado das vigentes.
   const parcelas = await Installment.find({
     feeId: fee._id,
     usuarioId,
     ativo: true
-  }).select("status");
+  }).select("status valorPago");
 
   if (registrarStatus(fee, derivarStatusFee(parcelas), origem)) {
     await fee.save();
