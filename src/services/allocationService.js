@@ -311,7 +311,12 @@ export const desalocarPorEstorno = async ({
         honorarioId: alocacao.honorarioId,
         valor: resto,
         data: alocacao.data,
-        origem: alocacao.origem
+        origem: alocacao.origem,
+        // DEC-044: a substituta diz de onde veio. Sem estes dois vínculos ela
+        // é indistinguível de uma alocação original do dia do pagamento — e
+        // era isso que fazia o extrato parecer alocar mais do que entrou.
+        substituiAlocacaoId: alocacao._id,
+        estornoOrigemId: estorno._id
       }
     ]);
     desalocadas.push({ substituta: true, doc: substituta });

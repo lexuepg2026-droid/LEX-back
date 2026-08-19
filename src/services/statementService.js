@@ -32,6 +32,24 @@ import { moeda } from "../utils/templateFormatters.js";
 // informação que a advogada precisa para responder "por que esta parcela
 // voltou a dever" sem abrir outras três telas — e é ela que a F-1b desenha.
 //
+// ── DEC-044: toda linha que deixou de valer diz que deixou de valer ───────
+// Uma alocação desfeita por desalocação continuava na lista com exatamente a
+// mesma cara de uma alocação viva. No caso real — estorno de R$ 1.000,00 sobre
+// um pagamento de R$ 4.500,00, anulado em seguida — isso deixava quatro linhas
+// de alocação somando R$ 6.000,00 para um pagamento de R$ 4.500,00. A conta do
+// sistema estava certa; a LEITURA é que não fechava.
+//
+// A linha da alocação passa a carregar `desfeitaEm`, `estornoQueDesfezId` e
+// `valorEstornoQueDesfez`; a substituta de estorno parcial carrega
+// `substituiAlocacaoId` e `estornoQueGerouId`; a desalocação carrega
+// `estornoAnulado`. Nenhum deles é conta nova — são vínculos que já existiam
+// nos registros e que o extrato não estava expondo.
+//
+// `dataPagamento` é a correção de uma AFIRMAÇÃO ERRADA: a alocação nascida de
+// uma anulação grava `data` = data da anulação, e a frase da tela ("Do
+// pagamento de {data}") usava essa data. O extrato passa a expor a data real
+// do pagamento ao lado do `pagamentoId`, e a tela nomeia os dois.
+//
 // ── Ordenação estável ─────────────────────────────────────────────────────
 // Por data, e em empate por `id`, que é único e determinístico. Sem o segundo
 // critério, dois eventos do mesmo dia trocariam de lugar entre requisições — e
@@ -156,6 +174,15 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
   // parcela esteve quitada.
   for (const a of alocacoes) {
     const parcela = resumoParcela(a.parcelaId);
+    // A data do PAGAMENTO, e não a da alocação. São coisas diferentes: uma
+    // alocação nascida de anulação carrega a data da anulação, e a frase "do
+    // pagamento de ${data da alocação}" afirmava, nesse caso, uma data em que
+    // pagamento nenhum aconteceu. Ver o cabeçalho da DEC-044.
+    const dataPagamento = pagamentoPorId.get(String(a.pagamentoId))?.data ?? null;
+    const estornoQueDesfez = a.estornoId ? estornoPorId.get(String(a.estornoId)) : null;
+    const estornoQueGerou = a.estornoOrigemId
+      ? estornoPorId.get(String(a.estornoOrigemId))
+      : null;
 
     eventos.push({
       id: `alocacao:${a._id}`,
@@ -169,9 +196,25 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
       origem: a.origem,
       // O par pagamento↔parcela, explícito, nos dois sentidos.
       pagamentoId: a.pagamentoId ?? null,
+      dataPagamento,
       ...parcela,
       alocacaoId: a._id,
-      ativa: a.estornoId === null
+      ativa: a.estornoId === null,
+      // ── DEC-044: a linha que deixou de valer diz que deixou de valer ─────
+      //
+      // `ativa: false` já existia e é booleano puro — a tela sabia QUE a
+      // alocação foi desfeita e não tinha como dizer QUANDO nem POR QUÊ. Sem
+      // isso, o extrato do caso real (estorno de R$ 1.000,00 sobre um
+      // pagamento de R$ 4.500,00, depois anulado) exibia quatro alocações
+      // somando R$ 6.000,00, todas com a mesma cara.
+      desfeitaEm: a.desalocadoEm ?? null,
+      estornoQueDesfezId: a.estornoId ?? null,
+      valorEstornoQueDesfez: estornoQueDesfez ? emCentavos(estornoQueDesfez.valor) : null,
+      // A substituta de estorno parcial (DEC-035): de qual alocação ela é o
+      // resto, e qual estorno a produziu.
+      substituiAlocacaoId: a.substituiAlocacaoId ?? null,
+      estornoQueGerouId: a.estornoOrigemId ?? null,
+      valorEstornoQueGerou: estornoQueGerou ? emCentavos(estornoQueGerou.valor) : null
     });
 
     if (a.estornoId) {
@@ -183,12 +226,17 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
         descricao: `${moeda(a.valor)} desalocados da parcela ${parcela.numeroParcela ?? "?"}`,
         origem: a.origem,
         pagamentoId: a.pagamentoId ?? null,
+        dataPagamento,
         ...parcela,
         alocacaoId: a._id,
         // O estorno que causou esta saída — a terceira ponta do vínculo, e a
         // que responde "por que esta parcela voltou a dever".
         estornoId: a.estornoId,
-        motivo: estornoPorId.get(String(a.estornoId))?.motivo ?? null,
+        motivo: estornoQueDesfez?.motivo ?? null,
+        // Se ESSE estorno foi anulado depois, a saída de dinheiro que esta
+        // linha registra já foi compensada — e quem lê precisa saber, ou
+        // subtrai duas vezes. Simetria com o `anulado` da linha do estorno.
+        estornoAnulado: anulados.has(String(a.estornoId)),
         ativa: false
       });
     }

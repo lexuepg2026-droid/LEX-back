@@ -86,6 +86,33 @@ const allocationSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    // ── A LINHA SUBSTITUTA (DEC-044) ────────────────────────────────────
+    //
+    // Estorno PARCIAL dentro de uma alocação carimba a original e cria uma
+    // linha nova com o resto (ver `allocationService.desalocarPorEstorno`).
+    // Até a F-1b.2 essa linha nascia indistinguível de uma alocação original:
+    // mesmo `pagamentoId`, mesma `parcelaId` e — porque ela herda `data` da
+    // original — a mesma DATA do pagamento. No extrato ela aparecia no meio
+    // das originais do dia, e o bloco daquele dia passava a alocar mais do
+    // que o pagamento tinha.
+    //
+    // Distinguir por heurística (mesma parcela, mesmo pagamento, `createdAt`
+    // posterior) seria adivinhação: duas alocações legítimas na mesma parcela
+    // existem quando uma anulação realoca. Por isso o vínculo é GRAVADO, uma
+    // vez, no ato da criação — como todo vínculo deste modelo.
+    substituiAlocacaoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Allocation",
+      default: null
+    },
+    // O estorno que produziu esta substituta. Não é o estorno que a desfez —
+    // é o que a fez nascer, e é ele que o extrato nomeia na frase
+    // "é o que restou da alocação desfeita pelo estorno de R$ X".
+    estornoOrigemId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Reversal",
+      default: null
+    },
     // De onde a alocação veio. `pagamento` = alocada no ato do POST;
     // `saldoAdiantado` = auto-alocação de saldo quando parcelas nasceram
     // (DEC-036). A tela precisa distinguir: uma parcela quitada por saldo

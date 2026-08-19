@@ -3304,13 +3304,17 @@ abaixo é deliberado, e cada fase termina com suíte verde e merge.
 preview de alocação, o estorno e a anulação em modal, e o nome do honorário
 virando link em toda tela onde ele aparece.
 
-**F-1b.2 — as listagens.** Paginador real (hoje o extrato usa "carregar mais",
-declarado como tal), filtro por honorário, barra de busca em pagamentos, filtro
-por período (mês atual / últimos 6 meses / intervalo) nas três listagens
-financeiras, badge "estornado integralmente" na coluna do valor, coluna de
-honorário legível, e **moeda que nunca trunca** — hoje a coluna Líquido corta
-valores ("R$ 3.50…"). A regra da moeda já vale nas telas escritas pela F-1b e
-tem teste; o que falta é aplicá-la às listagens antigas.
+**F-1b.2 — as listagens.** *(Escrito durante a F-1b. Só parte disto virou a
+F-1b.2; ver a **DEC-044** e "O que fica para a F-1b.3" no fim deste arquivo.)*
+Paginador real, filtro por honorário, barra de busca em pagamentos, filtro por
+período nas três listagens financeiras, badge "estornado integralmente" na
+coluna do valor, coluna de honorário legível, e **moeda que nunca trunca**.
+
+**O que a F-1b.2 de fato fez:** o badge, a coluna de honorário legível e a
+moeda que nunca trunca — mais o que este texto não previa, e que a execução do
+roteiro em 18/08/2026 revelou: a **DEC-044** (o extrato se lê sem somar errado)
+e a **responsividade** das cinco telas da fase. **Os filtros e o paginador
+foram para a F-1b.3.**
 
 **F-1c — o reparcelamento ponta a ponta.** O backend já reparcela (DEC-037); o
 botão existe na página do honorário **desabilitado, dizendo que chega na F-1c**.
@@ -3318,6 +3322,147 @@ Junto vai a leitura do "parcela 1 de N" pós-reparcelamento (a observação do
 passo 156, item 6, endereçada à Laís) e a seção do roteiro que valida o módulo
 financeiro inteiro.
 
+---
+
+### DEC-044 — toda linha do extrato que deixou de valer DIZ que deixou de valer (F-1b.2)
+
+#### O defeito, com o caso real
+
+Estornar R$ 1.000,00 de um pagamento de R$ 4.500,00 e depois **anular** o
+estorno deixa o extrato do honorário assim:
+
+```
+Alocação   R$ 3.000,00   ← viva
+Alocação   R$ 1.500,00   ← desfeita pelo estorno (nada dizia isso)
+Alocação   R$   500,00   ← substituta: o resto da de 1.500 (nada dizia isso)
+Alocação   R$ 1.000,00   ← nasceu da anulação
+           ───────────
+           R$ 6.000,00   para um pagamento de R$ 4.500,00
+```
+
+**A conta do sistema está certa.** A alocação de 1.500 tem `estornoId`
+preenchido, não entra em `pagoLiquidoAlocado`, e `totais.pago` responde 4.500.
+Há uma desalocação de 1.500 compensando na lista. O que estava errado é a
+**leitura**: quem lê de cima a baixo soma 6.000 e não tem como saber que uma
+das linhas foi desfeita.
+
+A assimetria era o ponto. O **estorno anulado** já recebia o tratamento certo
+desde a F-1b (`anulado: true`, e a tela escreve "este estorno foi anulado
+depois"). A **alocação desfeita** não recebia nenhum: o contrato expunha
+`ativa: false` — um booleano que diz **que** ela caiu e não diz **quando** nem
+**por quê** —, e com isso a tela não tinha como escrever a frase sem inventar
+ou sem abrir uma segunda leitura por linha.
+
+#### A regra
+
+> **Nenhuma linha do extrato pode ser somada por quem lê e dar um total que o
+> sistema não reconhece. Se uma linha não vale mais, ela diz isso.**
+
+#### O que mudou no contrato
+
+Nenhum campo novo é **conta nova**. Todos são vínculos que já existiam nos
+registros e que o extrato não estava expondo.
+
+Na linha de **alocação**:
+
+| Campo | O que responde |
+|---|---|
+| `desfeitaEm` | *quando* (é `Allocation.desalocadoEm`, a data do estorno) |
+| `estornoQueDesfezId` | *por qual estorno* |
+| `valorEstornoQueDesfez` | o valor dele, para a frase da tela |
+| `substituiAlocacaoId` | de qual alocação esta é o **resto** |
+| `estornoQueGerouId` | qual estorno a produziu |
+| `valorEstornoQueGerou` | o valor dele |
+| `dataPagamento` | a data **real** do pagamento (ver abaixo) |
+
+Na linha de **desalocação**: `estornoAnulado` — se o estorno que a causou foi
+anulado depois, o dinheiro que ela tirou já voltou, e sem a ressalva quem lê
+subtrai duas vezes. Simetria com o `anulado` da linha do estorno.
+
+#### `Allocation` ganhou dois campos, e por que não dava para derivá-los
+
+`substituiAlocacaoId` e `estornoOrigemId`, gravados **uma vez, na criação**,
+em `allocationService.desalocarPorEstorno`.
+
+A substituta nascia indistinguível de uma alocação original: mesmo
+`pagamentoId`, mesma `parcelaId` e — porque ela **herda `data` da original** —
+a mesma data do pagamento. No extrato ela aparecia no meio das originais
+daquele dia, e o bloco do dia passava a alocar mais do que o pagamento tinha.
+
+Derivar por heurística (mesma parcela, mesmo pagamento, `createdAt` posterior)
+seria adivinhação: duas alocações legítimas na mesma parcela **existem** quando
+uma anulação realoca. Por isso o vínculo é gravado, como todo vínculo deste
+modelo. São campos opcionais com `default: null` — registro antigo continua
+válido e simplesmente não se declara substituto.
+
+#### `dataPagamento` corrigiu uma AFIRMAÇÃO ERRADA
+
+A alocação criada pela **anulação** grava `data: anulacao.data`. A frase da tela
+("Do pagamento de {data}") usava a data do evento: no caso acima ela dizia "Do
+pagamento de 18/08/2026" para um pagamento de **08/05/2026** — uma data em que
+pagamento nenhum aconteceu. O extrato passa a expor a data real do pagamento ao
+lado do `pagamentoId`, nas linhas de alocação **e** de desalocação.
+
+#### A ordem cronológica é DECISÃO consciente
+
+O extrato lista **do mais antigo para o mais novo**, contrário ao que o prompt
+da F-1b pediu. **Fica assim, e por escrito:** extrato conta uma história, e
+história se lê do começo. É também o que torna verificável a regra acima —
+somar as alocações vivas de cima para baixo e bater com o pagamento.
+
+Detalhe que o teste fixa: a criação do honorário **não** é necessariamente a
+primeira linha. `historicoStatus` é carimbado com o instante real da criação
+(DEC-038), e um pagamento com `data` retroativa — o caso normal, lançar em
+agosto o PIX que caiu em maio — o antecede. Ordenar por instante de gravação
+contaria a história na ordem em que foi digitada, não na em que aconteceu.
+
+#### Custo
+
+Nenhum. O extrato já carregava estornos e pagamentos em memória (`estornoPorId`,
+`pagamentoPorId`) para resolver os outros vínculos; os campos novos são leitura
+desses mapas. Continuam sendo seis consultas por chamada, todas por índice e
+escopadas a um honorário.
+
+#### Testes
+
+`tests/financial/f1b2.test.js`, 13 testes em 6 blocos. O que dá nome à fase:
+
+```
+soma das alocações exibidas  = R$ 6.000,00   ← o defeito
+soma das alocações VIVAS     = R$ 4.500,00   ← o pagamento
+totais.pago                  = R$ 4.500,00   ← e a ficha concorda (DEC-040)
+```
+
+Mais: toda desfeita tem marca, alocação viva não tem marca disfarçada de `null`,
+a substituta aponta a alocação certa, dois pagamentos no mesmo dia têm sufixos
+de 6 caracteres distintos, e os totais da DEC-040 não mudaram.
+
+---
+
+## O que fica para a F-1b.3 e adiante (atualizado em 18/08/2026)
+
+**F-1b.3 — as listagens.** Paginador real nas três listagens financeiras (o
+extrato usa "carregar mais", declarado como tal e mantido: é o padrão honesto
+para uma história lida de cima para baixo), filtro por honorário, barra de busca
+em pagamentos e filtro por período (mês atual / últimos 6 meses / intervalo).
+
+**Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
+integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
+esta última agora vale nas sete listagens, com teste que falha se qualquer
+célula juntar `cell-num` e `cell-truncate`.
+
+**F-1c — o reparcelamento ponta a ponta.** O backend já reparcela (DEC-037); o
+botão existe na página do honorário **desabilitado, dizendo que chega na F-1c**.
+Junto vai a leitura do "parcela 1 de N" pós-reparcelamento (a observação do
+passo 156, item 6, endereçada à Laís) e a seção do roteiro que valida o módulo
+financeiro inteiro.
+
+**Continua sem lint.** `node --check` é o que existe hoje; ESLint viola "zero
+dependência nova" e segue como **exceção nomeada a decidir na F-2**.
+
+**Concorrência de suítes.** Duas execuções simultâneas contra o mesmo
+`lex_test` se destroem pelos hooks de limpeza. Hoje a disciplina é rodar uma de
+cada vez; quando existir CI, precisa de trava.
 ---
 
 ## Registro de sessões — original (2026-05)
