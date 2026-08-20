@@ -11,7 +11,12 @@ import { recalcularStatusInstallment, recalcularStatusFee } from "./paymentServi
 import { autoAlocarSaldo } from "./allocationService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
-import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
+import {
+  filtroTexto,
+  filtroObjectIdExigido,
+  filtroPeriodo
+} from "../utils/filtrosDeConsulta.js";
+import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -161,7 +166,10 @@ export const origemDoSaldo = async (feeId, usuarioId) => {
   return primeiro?._id ?? null;
 };
 
-export const listarInstallments = async (usuarioId, { page = 1, limit = 20, processoId, status, inativos } = {}) => {
+export const listarInstallments = async (
+  usuarioId,
+  { page = 1, limit = 20, processoId, honorarioId, status, inativos, busca, de, ate } = {}
+) => {
   // ── `?inativos=true` — a listagem do desativado (Fase 4.5) ────────────────
   //
   // Existe para a tela poder oferecer "Reativar". Sem ela, o registro
@@ -193,6 +201,37 @@ export const listarInstallments = async (usuarioId, { page = 1, limit = 20, proc
   // 400 com `campo`, uniforme com os outros três módulos.
   const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
+
+  // ── `?honorarioId=` (F-1b.3) ─────────────────────────────────────────────
+  //
+  // O campo do schema é `feeId`; o parâmetro é `honorarioId`, o mesmo nome que
+  // a listagem de pagamentos já usa. Dois nomes para o mesmo recorte, um por
+  // rota, obrigaria a tela a lembrar qual é qual — e o `campo` do 400 é
+  // justamente o que a tela precisa para saber qual controle montou a URL
+  // errada, então ele nomeia o PARÂMETRO, não a coluna.
+  //
+  // A F-1b deixou isto anotado como dívida em `feeService.getFeeById`: as
+  // parcelas da página do honorário vinham aninhadas porque este filtro não
+  // existia. Ele existe agora; a página continua aninhando, pelo motivo que
+  // aquele comentário dá (os totais do cabeçalho têm de fechar com as linhas).
+  const honorarioFiltro = filtroObjectIdExigido(honorarioId, "honorarioId");
+  if (honorarioFiltro) filter.feeId = honorarioFiltro;
+
+  // Período por VENCIMENTO. É a data pela qual a advogada procura uma parcela
+  // ("o que vence neste mês"); `dataPagamento` responde outra pergunta e tem
+  // valor nulo enquanto a parcela não fecha — filtrar por ela esconderia
+  // exatamente as parcelas em aberto, que são as que ela está procurando.
+  const periodo = filtroPeriodo(de, ate);
+  if (periodo) filter.dataVencimento = periodo;
+
+  // Busca livre. Sem `observacoes`: o campo não existe em `Installment` — ver
+  // o cabeçalho de `buscaFinanceira.js`.
+  const alvos = await alvosDaBusca(busca, usuarioId);
+  if (alvos) {
+    filter.$and = [
+      { $or: clausulasDaBusca(alvos, { campoHonorario: "feeId" }) }
+    ];
+  }
 
   const skip = (page - 1) * limit;
   const [data, total] = await Promise.all([

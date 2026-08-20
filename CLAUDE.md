@@ -3316,6 +3316,13 @@ roteiro em 18/08/2026 revelou: a **DEC-044** (o extrato se lê sem somar errado)
 e a **responsividade** das cinco telas da fase. **Os filtros e o paginador
 foram para a F-1b.3.**
 
+**F-1b.3 — achar o lançamento (19/08/2026, feita).** Os filtros e o paginador
+que sobraram, mais duas coisas que a execução do roteiro em 19/08 revelou: a
+**DEC-045** (a referência do pagamento é valor e forma, não o sufixo do id — o
+passo 166) e o **menu de três pontos** (a coluna Ações da listagem de
+pagamentos cortava o terceiro botão — o passo 168). Ver a seção própria no fim
+deste arquivo.
+
 **F-1c — o reparcelamento ponta a ponta.** O backend já reparcela (DEC-037); o
 botão existe na página do honorário **desabilitado, dizendo que chega na F-1c**.
 Junto vai a leitura do "parcela 1 de N" pós-reparcelamento (a observação do
@@ -3439,12 +3446,126 @@ de 6 caracteres distintos, e os totais da DEC-040 não mudaram.
 
 ---
 
-## O que fica para a F-1b.3 e adiante (atualizado em 18/08/2026)
+## Fase F-1b.3 — os filtros que faltavam (19/08/2026)
 
-**F-1b.3 — as listagens.** Paginador real nas três listagens financeiras (o
-extrato usa "carregar mais", declarado como tal e mantido: é o padrão honesto
-para uma história lida de cima para baixo), filtro por honorário, barra de busca
-em pagamentos e filtro por período (mês atual / últimos 6 meses / intervalo).
+**A pergunta da fase:** achar um lançamento sem precisar lembrar de qual
+honorário ele é. No backend, isso são três filtros novos nas três listagens
+financeiras, no padrão da F-0 (id inválido → **400 com `campo`**, guardas de
+tipo, filtros compostos em **AND**, filtro ausente não filtra).
+
+### O que cada rota ganhou
+
+| Rota | Filtros novos | Recorte do período |
+|---|---|---|
+| `GET /api/payments` | `busca`, `de`/`ate` (`honorarioId` já existia desde a F-1a) | `data` — a data do pagamento |
+| `GET /api/installments` | `honorarioId`, `busca`, `de`/`ate` | `dataVencimento` |
+| `GET /api/fees` | `de`/`ate`; `busca` **alargou** | `dataVencimento` |
+
+**`?honorarioId=` em `/installments` é o `feeId` do schema, com o nome que a
+tela usa.** Dois nomes para o mesmo recorte, um por rota, obrigaria a tela a
+lembrar qual é qual — e o `campo` do 400 nomeia o **parâmetro**, não a coluna,
+porque é o parâmetro que a tela precisa para saber qual controle montou a URL
+errada.
+
+Isso fecha a dívida anotada em `feeService.getFeeById` na F-1b ("esse filtro
+não existe, e criá-lo é trabalho de listagem"). A página do honorário **continua
+aninhando** as parcelas, pelo motivo que aquele comentário dá: os totais do
+cabeçalho têm de fechar com as linhas embaixo, e meia lista quebraria isso.
+
+### `?busca=` — três alvos, e o que ficou de fora
+
+`services/buscaFinanceira.js`. Casa a **descrição do honorário**, o **número do
+processo** e — só onde o campo existe — as **observações**.
+
+**Por que projeção, e não `$lookup`.** Descrição e número vivem em outras
+coleções, e `Payment` guarda delas só o id. Três saídas:
+
+1. agregação com `$lookup` — join com varredura por página, sem índice
+   utilizável para o regex;
+2. campo sombra desnormalizado — rápido de ler, caro de manter: toda edição de
+   descrição teria de reescrever os pagamentos, e o dia em que uma falhar a
+   busca mente;
+3. **duas consultas de projeção (`_id` apenas)** sobre coleções pequenas —
+   honorários e processos são dezenas por usuária —, e o filtro principal vira
+   `$in` sobre índice.
+
+Escolhida a 3. **Alcance reduzido e declarado:** `observacoes` só existe em
+`Payment`; em parcelas e honorários a busca casa descrição e número, e nada
+mais. Um teste fixa isso nos dois sentidos, para o alcance não crescer por
+acidente nem encolher em silêncio.
+
+`regexTermoSimples`/`escaparRegex` (unificados na F-0) continuam sendo a única
+porta: `?busca=.*` devolve **0**, não a base inteira.
+
+### `?de=`/`?ate=` — e a divergência de fuso, declarada
+
+`utils/filtrosDeConsulta.js`: `filtroDataExigida` e `filtroPeriodo`.
+
+O enunciado da fase pediu "interpretação em fuso local, o mesmo tratamento que o
+resumo do dashboard já usa para `mesReferencia`". **Medido no código, o resumo
+faz o contrário do que o enunciado supõe:** ele recorta em **UTC**
+(`Date.UTC(ano, mes, 1)`), e o comentário de lá diz por quê — `dataVencimento` e
+`dataPagamento` são datas SEM hora, chegam como `"2026-08-31"`, o Mongoose as
+grava em meia-noite UTC e o frontend as renderiza com `timeZone: "UTC"`.
+
+**Adotado UTC**, que é o que o dashboard de fato faz. Recortar em fuso local
+devolveria, num servidor a oeste de Greenwich, uma parcela de 01/09 dentro de
+`ate=2026-08-31` — porque 01/09T00:00Z é 31/08 às 21h em Brasília. A data é
+gravada, exibida e agora filtrada no mesmo fuso; é essa coerência, e não o fuso
+em si, que faz o filtro devolver o que a linha da tabela mostra.
+
+Regras:
+
+- bordas **inclusivas**: `de` → 00:00:00.000Z, `ate` → 23:59:59.999Z do mesmo
+  dia. Um `ate` em meia-noite excluiria o dia inteiro que a pessoa digitou;
+- um sem o outro é período aberto de um lado;
+- data fora do formato `AAAA-MM-DD` → 400 com `campo`;
+- **data que não existe** (`2026-02-31`) → 400. `Date.UTC` a normalizaria para
+  03/03 em silêncio; a volta pelo `getUTC*` recusa em vez de deslizar;
+- `de` > `ate` → 400 que **explica** ("inverta as duas datas"), e não lista
+  vazia: uma lista vazia para um período impossível é indistinguível de "não há
+  lançamentos nesse período", e faria procurar o lançamento em vez de olhar as
+  duas datas.
+
+### DEC-045 — a referência do pagamento é o que o humano reconhece
+
+**O defeito, com o caso real (passo 166 do roteiro).** Dois pagamentos do mesmo
+dia saíram referenciados no extrato como **#e66b7a** e **#e66b7c** — diferem no
+**último** caractere. A suíte provava que não colidiam, e ninguém casava as
+linhas de relance.
+
+**A causa é estrutural, não azar:** os seis últimos hex de um ObjectId são o
+**contador**, que incrementa de 1 em 1. Pagamentos criados em sequência
+**sempre** colidem no prefixo desses seis — que é por onde o olho lê. O próprio
+passo previu a revisão: "se os seis caracteres não servirem para casar as
+linhas, eles são ruído".
+
+**A decisão.** O vínculo passa a nomear o pagamento por **valor** e **forma**,
+além da data. O sufixo do id permanece como **desempate** do caso degenerado
+(dois pagamentos idênticos em valor, forma e data), mas deixa de ser a
+referência principal.
+
+**No backend, isso é uma linha de contrato:** as entradas `alocacao` e
+`desalocacao` do extrato passaram a carregar `valorPagamento` e
+`formaPagamento`, ao lado do `dataPagamento` que a DEC-044 já tinha posto.
+Ambos vêm **`null`** quando não há pagamento por trás (alocação de saldo
+adiantado) — a tela escreve "de saldo adiantado" nesse caso, e um valor
+inventado ali afirmaria um pagamento que não aconteceu.
+
+Quem monta a frase é o frontend (`components/financeiro/statementEntry.js`),
+função pura, testada como função pura. O backend não escreve frase.
+
+### `totalPages` de conjunto vazio continua **0**
+
+Comportamento da F-0, preservado de propósito nas quatro rotas: `Math.ceil(0 /
+limit)` é 0. Quem normaliza para 1 é o frontend (`paginacao.js`), porque
+"página 1 de 0" não é uma posição em que alguém possa estar — mas isso é
+decisão de **exibição**. Mudar o envelope mexeria em quatro rotas e em todo
+teste que lê `totalPages`, para resolver um problema que não é do contrato.
+
+---
+
+## O que fica para a F-1c e adiante (atualizado em 19/08/2026)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —

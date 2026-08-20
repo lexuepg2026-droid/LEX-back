@@ -15,8 +15,12 @@ import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { recalcularStatusFee } from "./paymentService.js";
 import { registrarStatus, registrarCriacao, ORIGEM_STATUS } from "./statusHistory.js";
-import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
-import { regexTermoSimples } from "../utils/texto.js";
+import {
+  filtroTexto,
+  filtroObjectIdExigido,
+  filtroPeriodo
+} from "../utils/filtrosDeConsulta.js";
+import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DEC-027 (Fase 4.1) — as três peças que saíram no MESMO commit
@@ -192,17 +196,41 @@ const createFee = async (usuarioId, feeData) => {
   return derivado || fee;
 };
 
-const listFees = async (usuarioId, { page = 1, limit = 20, processoId, busca, tipo, status } = {}) => {
+const listFees = async (
+  usuarioId,
+  { page = 1, limit = 20, processoId, busca, tipo, status, de, ate } = {}
+) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
   // Guarda de tipo (Fase 4.5), que na F-0 passou a RECUSAR em vez de descartar.
   const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
 
+  // ── A busca ALARGOU na F-1b.3 ────────────────────────────────────────────
+  //
+  // Era `filter.descricao = regex`: casava só a descrição. Passou a casar
+  // também o NÚMERO DO PROCESSO, que é o dado que o cliente manda por
+  // mensagem — quem chega com um número na mão não tem como adivinhar a
+  // descrição que a advogada digitou meses atrás.
+  //
   // `escapeRegex` era uma cópia local, idêntica às de `clientService`,
-  // `processService` e `utils/texto.js`. Unificada na Fase F-0.
-  const regexBusca = regexTermoSimples(busca);
-  if (regexBusca) filter.descricao = regexBusca;
+  // `processService` e `utils/texto.js`. Unificada na Fase F-0; o alcance
+  // novo sai de `buscaFinanceira.js`, compartilhado com as outras duas
+  // listagens — três buscas com três alcances diferentes seria o formato de
+  // dívida que a F-0 desfez no `escapeRegex`.
+  //
+  // Sem `observacoes`: o campo não existe em `Fee`.
+  const alvos = await alvosDaBusca(busca, usuarioId);
+  if (alvos) {
+    filter.$and = [
+      { $or: clausulasDaBusca(alvos, { campoHonorario: "_id" }) }
+    ];
+  }
+
+  // Período por VENCIMENTO do honorário — mesma escolha da listagem de
+  // parcelas, e pelo mesmo motivo.
+  const periodo = filtroPeriodo(de, ate);
+  if (periodo) filter.dataVencimento = periodo;
 
   const tipoFiltro = filtroTexto(tipo);
   if (tipoFiltro) filter.tipo = tipoFiltro;

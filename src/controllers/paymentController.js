@@ -50,7 +50,12 @@ const findAll = async (req, res, next) => {
     // ("pagamentos que tocaram esta parcela"). `honorarioId` e `tipo` são
     // novos — o pagamento passou a nascer contra o honorário, e a listagem
     // precisa poder recortar por ele.
-    const { installmentId, honorarioId, processoId, formaPagamento, tipo } = req.query;
+    //
+    // F-1b.3: `busca` (descrição do honorário, número do processo e as
+    // observações do próprio pagamento) e o par de período `de`/`ate`, que
+    // recorta por `data` — a data do pagamento.
+    const { installmentId, honorarioId, processoId, formaPagamento, tipo, busca, de, ate } =
+      req.query;
     const result = await paymentService.findAll(req.user._id, {
       page,
       limit,
@@ -58,7 +63,10 @@ const findAll = async (req, res, next) => {
       honorarioId,
       processoId,
       formaPagamento,
-      tipo
+      tipo,
+      busca,
+      de,
+      ate
     });
     return res.status(200).json(result);
   } catch (error) {

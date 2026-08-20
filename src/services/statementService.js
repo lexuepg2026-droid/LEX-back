@@ -178,7 +178,22 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
     // alocação nascida de anulação carrega a data da anulação, e a frase "do
     // pagamento de ${data da alocação}" afirmava, nesse caso, uma data em que
     // pagamento nenhum aconteceu. Ver o cabeçalho da DEC-044.
-    const dataPagamento = pagamentoPorId.get(String(a.pagamentoId))?.data ?? null;
+    const pagamentoDaLinha = pagamentoPorId.get(String(a.pagamentoId)) ?? null;
+    const dataPagamento = pagamentoDaLinha?.data ?? null;
+    // ── DEC-045: o vínculo se lê por VALOR e FORMA ─────────────────────────
+    //
+    // A frase da alocação nomeava o pagamento por data + sufixo curto do id.
+    // Os seis últimos hex de um ObjectId são o CONTADOR, que incrementa de 1
+    // em 1: dois pagamentos criados em sequência saem `#e66b7a` e `#e66b7c` —
+    // diferem no último caractere. Não colidem (a suíte prova), e ninguém casa
+    // isso de relance.
+    //
+    // O que a advogada reconhece de um pagamento é quanto foi e por onde
+    // entrou. Os dois campos já existiam no documento; o que faltava era o
+    // extrato carregá-los na linha da ALOCAÇÃO, que é onde o vínculo é escrito
+    // — a linha do próprio pagamento já os tinha.
+    const valorPagamentoDaLinha = pagamentoDaLinha ? emCentavos(pagamentoDaLinha.valor) : null;
+    const formaPagamentoDaLinha = pagamentoDaLinha?.formaPagamento ?? null;
     const estornoQueDesfez = a.estornoId ? estornoPorId.get(String(a.estornoId)) : null;
     const estornoQueGerou = a.estornoOrigemId
       ? estornoPorId.get(String(a.estornoOrigemId))
@@ -197,6 +212,12 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
       // O par pagamento↔parcela, explícito, nos dois sentidos.
       pagamentoId: a.pagamentoId ?? null,
       dataPagamento,
+      // DEC-045: como a frase do vínculo nomeia o pagamento. `null` quando o
+      // dinheiro veio de saldo adiantado e não há pagamento por trás — a tela
+      // escreve "de saldo adiantado" nesse caso, e um valor inventado ali
+      // afirmaria um pagamento que não existe.
+      valorPagamento: valorPagamentoDaLinha,
+      formaPagamento: formaPagamentoDaLinha,
       ...parcela,
       alocacaoId: a._id,
       ativa: a.estornoId === null,
@@ -227,6 +248,9 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
         origem: a.origem,
         pagamentoId: a.pagamentoId ?? null,
         dataPagamento,
+        // DEC-045, pelo mesmo motivo: a desalocação também nomeia o pagamento.
+        valorPagamento: valorPagamentoDaLinha,
+        formaPagamento: formaPagamentoDaLinha,
         ...parcela,
         alocacaoId: a._id,
         // O estorno que causou esta saída — a terceira ponta do vínculo, e a
