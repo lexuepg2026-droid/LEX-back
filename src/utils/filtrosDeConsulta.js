@@ -101,4 +101,115 @@ export const filtroObjectIdExigido = (valor, campo) => {
   return limpo;
 };
 
-export default { filtroTexto, filtroObjectId, filtroObjectIdExigido };
+// ═══════════════════════════════════════════════════════════════════════════
+// O PAR DE PERÍODO `de` / `ate` (Fase F-1b.3)
+//
+// ── Por que o recorte é em UTC, e não no fuso local do servidor ───────────
+// O enunciado desta fase pediu "interpretação em fuso local, o mesmo
+// tratamento que o resumo do dashboard já usa para `mesReferencia`". Medido
+// no código, o resumo faz o CONTRÁRIO do que o enunciado supõe: ele recorta o
+// mês em UTC (`Date.UTC(ano, mes, 1)`), e o comentário de lá diz por quê —
+// `dataVencimento` e `dataPagamento` são datas SEM hora, chegam como
+// `"2026-08-31"`, o Mongoose as grava em meia-noite UTC e o frontend as
+// renderiza com `timeZone: "UTC"`.
+//
+// Recortar em fuso local devolveria, num servidor a oeste de Greenwich, uma
+// parcela de 01/09 dentro de um filtro `ate=2026-08-31` — porque 01/09T00:00Z
+// é 31/08 às 21h em Brasília. A data é gravada, exibida e agora filtrada no
+// mesmo fuso; é essa coerência, e não o fuso em si, que faz o filtro devolver
+// o que a linha da tabela mostra.
+//
+// Então: **adotado UTC**, que é o que o dashboard de fato faz. A divergência
+// está declarada no relatório da fase.
+//
+// ── As bordas são INCLUSIVAS ─────────────────────────────────────────────
+// `de` vira 00:00:00.000Z do dia; `ate` vira 23:59:59.999Z do MESMO dia. Um
+// `ate` em meia-noite excluiria o dia inteiro que a pessoa acabou de digitar —
+// e "de 01/06 a 10/06" que não mostra o pagamento de 10/06 é o tipo de recorte
+// que faz alguém concluir que o lançamento sumiu.
+//
+// Um sem o outro é período aberto de um lado: só `de` é "daqui em diante", só
+// `ate` é "até aqui".
+// ═══════════════════════════════════════════════════════════════════════════
+
+const AAAA_MM_DD = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// Converte `"2026-06-10"` no instante UTC pedido. Ausente ⇒ `undefined` (sem
+// borda). Presente e inválido ⇒ 400 com `campo`, no mesmo padrão do id: data
+// torta significa que a tela montou uma URL errada, e adivinhar um dia
+// devolveria um recorte que ninguém pediu.
+//
+// A checagem de `typeof` vem antes de tudo pelo mesmo motivo de
+// `filtroObjectId`: um valor não-string é o que a injeção de operador
+// entregaria, e `new Date({...})` não recusa nada de forma útil.
+export const filtroDataExigida = (valor, campo, { fimDoDia = false } = {}) => {
+  if (valor === undefined || valor === null) return undefined;
+
+  if (typeof valor !== "string") {
+    throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser uma data no formato AAAA-MM-DD.`);
+  }
+
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+
+  const partes = AAAA_MM_DD.exec(limpo);
+  if (!partes) {
+    throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser uma data no formato AAAA-MM-DD.`);
+  }
+
+  const ano = Number(partes[1]);
+  const mes = Number(partes[2]);
+  const dia = Number(partes[3]);
+
+  // `Date.UTC` normaliza silenciosamente: 2026-02-31 vira 03/03. A volta pelo
+  // `getUTC*` é o que recusa a data que não existe em vez de deslizá-la —
+  // filtrar por um dia que o calendário não tem e receber outro é pior que 400.
+  const instante = new Date(
+    Date.UTC(ano, mes - 1, dia, fimDoDia ? 23 : 0, fimDoDia ? 59 : 0, fimDoDia ? 59 : 0, fimDoDia ? 999 : 0)
+  );
+
+  const real =
+    instante.getUTCFullYear() === ano &&
+    instante.getUTCMonth() === mes - 1 &&
+    instante.getUTCDate() === dia;
+
+  if (!real) {
+    throw erroDeFiltro(campo, `O filtro "${campo}" não é uma data existente.`);
+  }
+
+  return instante;
+};
+
+// O par completo, já no formato que o Mongo espera (`{ $gte, $lte }`), ou
+// `undefined` quando nenhuma das duas bordas veio — filtro ausente não filtra.
+//
+// `de` posterior a `ate` é 400 e não lista vazia: uma lista vazia para um
+// período impossível é indistinguível de "não há lançamentos nesse período", e
+// a pessoa procuraria o lançamento em vez de olhar as duas datas que digitou.
+export const filtroPeriodo = (de, ate, { campoDe = "de", campoAte = "ate" } = {}) => {
+  const inicio = filtroDataExigida(de, campoDe);
+  const fim = filtroDataExigida(ate, campoAte, { fimDoDia: true });
+
+  if (!inicio && !fim) return undefined;
+
+  if (inicio && fim && inicio > fim) {
+    throw erroDeFiltro(
+      campoDe,
+      `O início do período ("${campoDe}") é posterior ao fim ("${campoAte}"). ` +
+      "Inverta as duas datas."
+    );
+  }
+
+  const intervalo = {};
+  if (inicio) intervalo.$gte = inicio;
+  if (fim) intervalo.$lte = fim;
+  return intervalo;
+};
+
+export default {
+  filtroTexto,
+  filtroObjectId,
+  filtroObjectIdExigido,
+  filtroDataExigida,
+  filtroPeriodo
+};

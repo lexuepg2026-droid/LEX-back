@@ -4,7 +4,12 @@ import Installment from "../models/Installment.js";
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
 import Allocation from "../models/Allocation.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
-import { filtroTexto, filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
+import {
+  filtroTexto,
+  filtroObjectIdExigido,
+  filtroPeriodo
+} from "../utils/filtrosDeConsulta.js";
+import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
 import { validateCreatePayment, validateUpdatePayment } from "../validations/paymentValidation.js";
 import { registrarStatus, ORIGEM_STATUS } from "./statusHistory.js";
 import {
@@ -322,7 +327,18 @@ const idsDePagamentoPorParcela = async (parcelaId, usuarioId) => {
 
 export const findAll = async (
   usuarioId,
-  { page = 1, limit = 20, installmentId, honorarioId, processoId, formaPagamento, tipo } = {}
+  {
+    page = 1,
+    limit = 20,
+    installmentId,
+    honorarioId,
+    processoId,
+    formaPagamento,
+    tipo,
+    busca,
+    de,
+    ate
+  } = {}
 ) => {
   const filter = { usuarioId, ativo: true };
 
@@ -341,6 +357,26 @@ export const findAll = async (
   const parcelaFiltro = filtroObjectIdExigido(installmentId, "installmentId");
   if (parcelaFiltro) {
     filter._id = { $in: await idsDePagamentoPorParcela(parcelaFiltro, usuarioId) };
+  }
+
+  // ── Período por data do PAGAMENTO (F-1b.3) ───────────────────────────────
+  //
+  // O campo é `data`, e não `dataPagamento`: `dataPagamento` existe em
+  // `Installment` (o dia em que a PARCELA fechou) e significa outra coisa. O
+  // par da query string continua `de`/`ate`, que é o vocabulário da tela — os
+  // nomes de campo do banco não vazam para a URL.
+  const periodo = filtroPeriodo(de, ate);
+  if (periodo) filter.data = periodo;
+
+  // ── Busca livre (F-1b.3) ─────────────────────────────────────────────────
+  //
+  // Único dos três a ter `observacoes` próprio, e por isso o único com os três
+  // alvos. Ver o cabeçalho de `buscaFinanceira.js`.
+  const alvos = await alvosDaBusca(busca, usuarioId);
+  if (alvos) {
+    filter.$and = [
+      { $or: clausulasDaBusca(alvos, { campoObservacoes: "observacoes" }) }
+    ];
   }
 
   const skip = (page - 1) * limit;
