@@ -101,6 +101,45 @@ Fluxo: `routes → controllers → services → models`
 
 ---
 
+## Convenção de fase — o relatório vira arquivo markdown (a partir da F-1b.3.1)
+
+Ao final de **toda fase**, além de exibir o relatório no terminal, o relatório
+**inteiro** é gravado em:
+
+```
+lexa_31maio/relatorios/AAAA-MM-DD-<fase>.md
+```
+
+Na F-1b.3.1: `lexa_31maio/relatorios/2026-08-20-F-1b.3.1.md`.
+
+**Onde, e por quê.** `lexa_31maio/` é a pasta que **contém** os dois repos e
+**não é repositório de nenhum deles**. O relatório fica **fora do controle de
+versão**: não entra em commit por acidente, não polui histórico, não aparece em
+`git status`. **Não se grava dentro do repo do backend nem do frontend.**
+
+Regras do arquivo:
+
+- É o relatório **completo**, com as **saídas reais coladas** — o mesmo
+  conteúdo que iria para o terminal, **não um resumo dele**. Se algo foi
+  truncado na exibição, o arquivo traz a versão inteira.
+- Markdown de verdade: títulos por parte, tabelas onde há tabela, blocos de
+  código para saídas de comando. **Vai ser lido fora do terminal, por outra
+  pessoa.**
+- Cabeçalho de identificação: nome da fase, data, **commits de merge dos dois
+  repos**, contagem final das suítes, e uma linha de **veredito** — "concluída
+  e mergeada" / "parcial, não mergeada" / "parada no portão X".
+- **A regra de segredos vale igual aqui**: nenhum segredo no relatório, nem
+  mascarado — prova por **definido/comprimento/comparação booleana**. Arquivo
+  em disco é justamente onde essa disciplina costuma relaxar.
+- No terminal, ao terminar, basta uma confirmação curta com **o caminho do
+  arquivo gerado**.
+
+A pasta é externa aos repos, mas **a regra é de processo** e por isso fica
+registrada nos **dois** CLAUDE.md: ela precisa sobreviver a troca de sessão.
+
+
+---
+
 ## Regras centrais de negócio
 
 1. **Isolamento por usuário:** toda entidade tem `usuarioId`. Toda busca,
@@ -3564,6 +3603,42 @@ decisão de **exibição**. Mudar o envelope mexeria em quatro rotas e em todo
 teste que lê `totalPages`, para resolver um problema que não é do contrato.
 
 ---
+
+---
+
+## DEC-046 — o menu de ações é renderizado em portal (F-1b.3.1, só frontend)
+
+**O backend não foi tocado nesta fase.** A decisão fica registrada aqui porque
+o log de DEC é **compartilhado** e numerado em série pelos dois repos: quem
+procurar "DEC-046" a partir daqui precisa achar, e não concluir que o número
+foi pulado. A implementação e o detalhe estão no **CLAUDE.md do frontend**.
+
+**O defeito.** O painel do menu de três pontos das listagens financeiras
+(Pagamentos, Parcelas, Honorários) **saía da tela, cortado**. O botão recebia
+foco e abria o painel — o comportamento estava certo, o posicionamento não.
+
+**A causa.** O painel era `position: absolute` e **todo ancestral com
+`overflow` diferente de `visible` recorta descendente posicionado**. Havia
+três, aninhados: a própria célula (`.data-table--fixed td`,
+`overflow: hidden`), o wrapper de rolagem da tabela (`.table-wrapper`,
+`overflow-x: auto` — e um eixo `auto` faz o outro computar `auto` junto) e o
+`.main-content` (`overflow-y: auto`). **Recorte não é ordem de pintura:**
+nenhum `z-index` atravessa isso.
+
+**A solução.** `createPortal` no `document.body` + `position: fixed` +
+coordenadas do gatilho por `getBoundingClientRect()`, com virada **horizontal**
+(360 px) e **vertical** (última linha), coordenada nunca fora do viewport, e
+**fechar ao rolar** (`scroll` em captura, porque `scroll` não borbulha) e ao
+redimensionar. Zero dependência nova — `react-dom` já estava lá.
+
+**A consequência de projeto.** Qualquer flutuante futuro dentro de tabela
+rolável — tooltip, popover, seletor de data — tem o mesmo problema e a mesma
+solução.
+
+**Suítes na F-1b.3.1:** frontend **479** testes (31 novos em
+`tests/regressions/f1b31.test.js`), backend **469**, os dois com zero skip e
+zero todo. O backend continuou verde **sem ser alterado**, que era exatamente o
+que a fase precisava provar.
 
 ## O que fica para a F-1c e adiante (atualizado em 19/08/2026)
 
