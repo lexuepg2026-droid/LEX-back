@@ -3640,6 +3640,75 @@ solução.
 zero todo. O backend continuou verde **sem ser alterado**, que era exatamente o
 que a fase precisava provar.
 
+---
+
+## Emenda à DEC-046 e DEC-047 (F-1b.3.2, só frontend)
+
+**O backend não foi tocado nesta fase.** Os dois registros ficam aqui porque o
+log de decisões é **compartilhado e numerado em série** pelos dois repos: quem
+procurar "DEC-047" a partir daqui precisa achar. A implementação está no
+CLAUDE.md do frontend.
+
+### Emenda à DEC-046 — o portal custa a ordem de tabulação
+
+A DEC-046 pôs o painel do menu em `createPortal` no `body` para escapar do
+`overflow` que o recortava. A validação manual (passo 178) achou o preço: **o
+painel deixou de ser acessível por Tab, só por mouse**.
+
+`createPortal` propaga **eventos** pela árvore do React, mas a **ordem de
+tabulação é a do DOM real** — e no DOM real o painel é o último filho do
+`body`, enquanto o gatilho está numa célula no meio da tabela. **Tirar o painel
+do contêiner que recortava tirou junto a ordem de foco natural.**
+
+O foco passou a ser **conduzido**: entra no primeiro item ao abrir (depois de a
+posição estar calculada), circula dentro do painel com Tab e Shift+Tab, e volta
+ao gatilho no Esc — que, com o Tab preso, é o único caminho de volta.
+
+**Quem usar portal de novo herda este custo junto com a solução.**
+
+### DEC-047 — a coluna de ações de toda listagem é o menu ⋮
+
+O ⋮ existia só no Financeiro; Clientes, Processos, Documentos e Seções ainda
+tinham a fileira de botões. A razão de padronizar não é estética: **a advogada
+aprendia um gesto numa tela e ele não valia nas outras**.
+
+Ação vai para dentro do menu; **explicação fica fora, na célula**; Excluir
+sempre em vermelho e por último; **o componente é o mesmo, sem cópia**. Sete
+listagens ao todo.
+
+**Suítes na F-1b.3.2:** frontend **501** testes (22 novos em
+`tests/regressions/f1b32.test.js`), backend **469**, os dois com zero skip e
+zero todo. O backend continuou verde **sem ser alterado**.
+
+---
+
+## O ambiente de testes e o de desenvolvimento são REMOTOS (registrado na F-1b.3.2)
+
+Dois fatos de infraestrutura que não estavam escritos em lugar nenhum e
+custaram tempo numa sessão:
+
+### `.env.test` aponta para Atlas, não para Mongo local
+
+A suíte **não** precisa de `mongod` local — `.env.test` usa `mongodb+srv` e o
+banco de teste é o **`lex_test` remoto**. A guarda que impede rodar sobre `lex`
+continua valendo e não foi tocada.
+
+**A consequência prática:** **duas sessões rodando a suíte ao mesmo tempo se
+atropelam**, porque compartilham o mesmo `lex_test` remoto. Antes de rodar
+`npm test` em paralelo com outra pessoa (ou com outro agente), combine — não há
+isolamento por sessão.
+
+### `npm run seed:fresh` reseta um banco REMOTO e compartilhado
+
+`reset:dev` + `seed:demo` rodam contra o banco de **desenvolvimento**, que é
+**Atlas remoto** (`…/lex`), não um Mongo da máquina. **Só o banco de teste tem
+guarda**; o de desenvolvimento não tem nenhuma.
+
+É o comando documentado e é a pré-condição de quase todo passo do roteiro — mas
+quem o roda está apagando o banco de desenvolvimento **de todo mundo**.
+**Candidato a confirmação obrigatória quando o alvo não for local**, na linha
+da guarda que o banco de teste já tem.
+
 ## O que fica para a F-1c e adiante (atualizado em 19/08/2026)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
