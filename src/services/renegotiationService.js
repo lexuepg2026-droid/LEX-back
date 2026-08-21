@@ -176,29 +176,72 @@ export const criarReparcelamento = async (honorarioId, dados, usuarioId) => {
     }
   ]);
 
+  // ── O "de N" das antigas é CONGELADO aqui (DEC-048) ──────────────────────
+  //
+  // Este é o instante em que o plano delas deixa de ser editável: a partir do
+  // cancelamento, ele é história e o número precisa parar de se mexer. O
+  // tamanho congelado é o do PLANO INTEIRO a que elas pertenciam — não o das
+  // que estão sendo canceladas agora.
+  //
+  // A diferença importa: um plano de 3 com a parcela 1 já PAGA cancela só 2, e
+  // congelar 2 faria a parcela 2 dizer "2 de 2" quando ela sempre foi "2 de 3".
+  // A parcela paga não é cancelada e por isso não passa por aqui — ela guarda
+  // o mesmo N pelo mesmo motivo, e recebe o carimbo junto.
+  const planoDasAntigas = antigas[0]?.planoId ?? null;
+  const tamanhoDoPlanoAntigo = await Installment.countDocuments({
+    feeId: fee._id,
+    usuarioId,
+    planoId: planoDasAntigas,
+    ativo: true
+  });
+
+  // As pagas do mesmo plano também congelam: elas continuam na tela, e o "de N"
+  // delas não pode passar a contar o plano novo.
+  await Installment.updateMany(
+    {
+      feeId: fee._id,
+      usuarioId,
+      planoId: planoDasAntigas,
+      ativo: true,
+      totalParcelas: null
+    },
+    { $set: { totalParcelas: tamanhoDoPlanoAntigo } }
+  );
+
   for (const parcela of antigas) {
     parcela.status = "cancelado";
     parcela.reparcelamentoId = reparcelamento._id;
     await parcela.save();
   }
 
-  // ── 4. As novas nascem ────────────────────────────────────────────────────
+  // ── 4. As novas nascem, NUMERADAS A PARTIR DE 1 (DEC-048) ─────────────────
   //
-  // A numeração continua de onde parou, e não recomeça em 1: o índice único
-  // `{feeId, numeroParcela}` NÃO é parcial (ver Fase 4.5), então a parcela
-  // cancelada nunca solta o número dela. Recomeçar em 1 colidiria na primeira.
-  const ultimo = await Installment.findOne({ feeId: fee._id, usuarioId })
-    .sort({ numeroParcela: -1 })
-    .select("numeroParcela");
-  let proximoNumero = (ultimo?.numeroParcela ?? 0) + 1;
+  // Até a F-1c.1 a numeração continuava de onde parou: um honorário de 2
+  // parcelas que virava 3 ficava com 1, 2 canceladas e 3, 4, 5 vivas. Para
+  // quem lê, "parcela 3" de um plano de três é a PRIMEIRA — e a advogada, ao
+  // telefone com o cliente, precisa dizer "são três parcelas, esta é a
+  // primeira".
+  //
+  // O que impedia recomeçar em 1 era o índice único `{feeId, numeroParcela}`.
+  // Ele passou a ser `{feeId, planoId, numeroParcela}`: a unicidade vale
+  // DENTRO do plano, e a parcela 1 do plano novo convive com a parcela 1 do
+  // plano que saiu.
+  //
+  // `totalParcelas` nasce preenchido aqui — este é um dos dois momentos em que
+  // o tamanho do plano é conhecido de verdade (o outro é o cancelamento). É o
+  // "de N" congelado, e nada o recalcula depois.
+  const totalNovas = parcelasNovas.length;
 
   const criadas = [];
+  let proximoNumero = 1;
   for (const nova of parcelasNovas) {
     const criada = await Installment.create({
       usuarioId,
       feeId: fee._id,
       processoId: fee.processoId,
       numeroParcela: proximoNumero++,
+      totalParcelas: totalNovas,
+      planoId: reparcelamento._id,
       valor: emCentavos(nova.valor),
       dataVencimento: new Date(nova.dataVencimento),
       status: "pendente",

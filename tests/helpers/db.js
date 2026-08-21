@@ -42,7 +42,30 @@ export const conectar = async () => {
   }
 
   conectado = true;
+  await sincronizarIndices();
   return mongoose.connection;
+};
+
+// ── Os índices do banco de teste acompanham o SCHEMA (DEC-048, F-1c.1) ─────
+//
+// `limparColecoes` usa `deleteMany`, que apaga documento e **não toca em
+// índice**. Quando a DEC-048 trocou o índice único de `{feeId, numeroParcela}`
+// para `{feeId, planoId, numeroParcela}`, o Mongoose criou o novo na subida e
+// deixou o VELHO de pé — e o velho recusava a renumeração com um 409
+// "Valor duplicado para feeId" que não tinha nada a ver com o código novo.
+//
+// `syncIndexes()` derruba o que não está mais no schema e cria o que falta. É
+// o equivalente, no banco de teste, ao que
+// `scripts/migrarTotalParcelas.js` faz em desenvolvimento e produção — lá a
+// troca é explícita e auditada, porque derrubar índice em base real não pode
+// ser efeito colateral de subir o app.
+//
+// Só `Installment`: é o único model cuja definição de índice mudou, e um
+// `syncIndexes` geral derrubaria índice de qualquer coleção cuja definição
+// tenha divergido por outro motivo — silenciosamente.
+const sincronizarIndices = async () => {
+  const { default: Installment } = await import("../../src/models/Installment.js");
+  await Installment.syncIndexes();
 };
 
 export const desconectar = async () => {

@@ -293,13 +293,23 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
           // `honorarioId` entrou na F-1b: o dashboard passou a LINKAR o nome do
           // honorário para a página dele, e um nome sem id obrigaria a tela a
           // exibir o texto sem caminho para o registro que o explica.
+          //
+          // `totalParcelas` entrou na F-1c.1 (DEC-048): o cartão passou a dizer
+          // "Parcela 1 de 3" como as demais telas. Só o CONGELADO — o cartão
+          // atravessa honorários e não tem como contar o plano vigente de cada
+          // um, e um "de N" contado sobre gerações somadas é exatamente o que a
+          // DEC-048 tirou do recibo.
           "_id", "dataVencimento", "descricaoHonorario", "emAberto", "honorarioId",
-          "numeroParcela", "numeroProcesso", "processoId", "status", "valor", "valorPago"
+          "numeroParcela", "numeroProcesso", "processoId", "status", "totalParcelas",
+          "valor", "valorPago"
         ],
         "o formato do próximo vencimento mudou"
       );
       assert.equal(p.descricaoHonorario, "Honorários contratuais");
       assert.ok(p.honorarioId, "o id do honorário, para o nome dele virar link (F-1b)");
+      // Presente SEMPRE, mesmo que `null`: `undefined` some do JSON, e a tela
+      // não distingue "plano ainda aberto" de "esqueci de projetar".
+      assert.ok("totalParcelas" in p, "o `de N` congelado precisa vir na projeção (DEC-048)");
       assert.equal(String(p.processoId), String(processo._id));
       assert.equal(p.numeroProcesso, processo.numeroProcesso);
       assert.ok(p.emAberto > 0, "parcela quitada não é próximo vencimento");

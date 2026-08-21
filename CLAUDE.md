@@ -98,6 +98,8 @@ Fluxo: `routes → controllers → services → models`
 - Validação **escrita à mão**, no padrão de `clientValidation.js`.
   **Sem zod, joi ou yup** — nenhuma dependência de validação.
 - Campo apagado grava **`null`**, nunca `undefined`.
+- **`planoId` ≠ `reparcelamentoId`** (DEC-048): o primeiro é quem me criou, o
+  segundo é quem me cancelou. Uma parcela pode ter os dois, diferentes.
 
 ---
 
@@ -3698,6 +3700,17 @@ atropelam**, porque compartilham o mesmo `lex_test` remoto. Antes de rodar
 `npm test` em paralelo com outra pessoa (ou com outro agente), combine — não há
 isolamento por sessão.
 
+**Como o atropelo APARECE** (medido na F-1c.1, duas vezes na mesma sessão): a
+suíte quebra em dezenas de testes com **`401 — "Usuário do token não
+encontrado"`**, e às vezes com **409 de duplicidade** em campos que o teste nem
+tocou. A causa é o `limparColecoes` da outra execução apagando os usuários no
+meio desta. **Não é regressão do código** — é a segunda suíte. O sintoma engana
+porque as falhas caem em arquivos sem relação com o que se acabou de mexer
+(numa das vezes, 43 falhas todas em `tests/documents/`).
+
+Antes de investigar uma quebra assim, **confira que não há outra suíte
+rodando**: `pgrep -f "node --test"`.
+
 ### `npm run seed:fresh` reseta um banco REMOTO e compartilhado
 
 `reset:dev` + `seed:demo` rodam contra o banco de **desenvolvimento**, que é
@@ -3708,6 +3721,142 @@ guarda**; o de desenvolvimento não tem nenhuma.
 quem o roda está apagando o banco de desenvolvimento **de todo mundo**.
 **Candidato a confirmação obrigatória quando o alvo não for local**, na linha
 da guarda que o banco de teste já tem.
+
+---
+
+## DEC-048 — "Parcela 1 de 3": o número da parcela depois do reparcelamento (F-1c.1)
+
+### O defeito
+
+O reparcelamento (DEC-037) cancelava as parcelas em aberto e criava as novas
+**continuando a numeração**. Um honorário de 2 parcelas que virava 3 ficava
+com **1, 2** (canceladas) e **3, 4, 5** (vivas).
+
+Para quem lê, **"parcela 3" de um plano de três é a PRIMEIRA**. A advogada, ao
+telefone com o cliente, precisa dizer "são três parcelas, esta é a primeira" —
+e a tela dizia 3.
+
+### A decisão
+
+1. **As parcelas novas renumeram a partir de 1.** O plano vigente é 1, 2, 3.
+2. **As canceladas mantêm o número que tinham**, congelado, com "Reparcelada"
+   ao lado. A história não é reescrita.
+3. **O "de N" é congelado.** N é o tamanho do plano ao qual aquela parcela
+   pertence — nunca recalculado. Uma parcela cancelada de um plano de 2
+   continua dizendo "de 2", para sempre.
+
+### Por que o campo é GRAVADO e não contado na leitura
+
+Contar as parcelas do honorário no momento da leitura devolveria o total **de
+todas as gerações somadas**. O número mudaria a cada reparcelamento, inclusive
+nas parcelas antigas — e **um recibo emitido em maio passaria a dizer outra
+coisa em setembro**.
+
+**Recibo que muda de significado depois de entregue ao cliente é o defeito mais
+grave que este projeto já corrigiu.** Congelado no nascimento é a única forma
+que não reescreve o passado.
+
+Foi exatamente esse o bug encontrado em `receiptService`: `totalDeParcelas` era
+`countDocuments({feeId, ativo: true})`, a contagem de todas as gerações. O
+recibo passou a usar o `totalParcelas` **da própria parcela**.
+
+### Os dois campos, e a diferença que mais confunde
+
+| Campo | Significa | Preenchido em |
+|---|---|---|
+| `reparcelamentoId` | a operação que me **CANCELOU** | só nas canceladas |
+| `planoId` | a operação que me **CRIOU** | só da 2ª geração em diante (`null` = plano original) |
+
+Uma parcela cancelada da 2ª geração tem os **dois** preenchidos, com valores
+**diferentes**: nasceu no reparcelamento A e morreu no B. Um campo só não
+conseguiria dizer isso — e foi por supor que `reparcelamentoId` queria dizer
+"nasceu em" que a migração desta fase quase contou o conjunto errado.
+
+`totalParcelas` é o "de N" congelado. É `null` **enquanto o plano está aberto**:
+a advogada cria parcela por parcela (não há criação em lote), e quando a
+primeira nasce ninguém sabe que serão três. Passa a ter valor, e aí nunca mais
+muda, nos dois instantes em que o plano deixa de ser editável: quando o
+reparcelamento **cria** as novas (M é conhecido) e quando **cancela** as
+antigas (congela o N que elas tinham).
+
+Enquanto é `null`, o rótulo conta o **plano vigente** na leitura — que é a
+resposta verdadeira enquanto ele cresce. Os dois campos **não podem ser
+enviados por rota**: `installmentService` recusa com 400, pela mesma razão do
+`valorPago`.
+
+### O índice único teve de mudar — era ele que impedia a decisão
+
+Era `{feeId, numeroParcela}`, **único e não parcial**. Com ele, um honorário
+não podia ter duas parcelas nº 1 — e o próprio `renegotiationService` dizia:
+*"Recomeçar em 1 colidiria na primeira."*
+
+Passou a ser **`{feeId, planoId, numeroParcela}`**: a unicidade vale **dentro
+do plano**.
+
+**A premissa da Fase 4.5 continua valendo**, e era o que este índice não podia
+quebrar: ele segue **sem `partialFilterExpression`**, então a parcela
+**desativada** (`ativo: false`) nunca solta o número dela — não existe segunda
+parcela para colidir numa reativação. Um índice parcial em `ativo: true` teria
+resolvido a DEC-048 e reaberto aquele buraco.
+
+A checagem de duplicidade do serviço também passou a ser **por plano**: conferir
+pelo honorário inteiro recusaria com 409 a criação de uma parcela válida no
+plano vigente.
+
+### O problema que a decisão cria, e como ele se resolve
+
+Renumerar faz existirem **duas parcelas nº 1** no mesmo honorário: uma
+cancelada e uma viva. Referenciar por ordinal passa a ser ambíguo — **é
+exatamente o defeito que a DEC-045 resolveu para pagamentos.**
+
+A solução é a mesma: **referência por atributo humano, não por ordinal.**
+
+- viva: **"parcela 1 de 3, vencendo 15/09/2026"**
+- cancelada: **"parcela 1 de 2, vencendo 10/05/2026 (reparcelada)"**
+
+O **vencimento** distingue — duas parcelas nº 1 do mesmo honorário nunca vencem
+no mesmo dia, porque a nova nasce de um plano futuro. O **"(reparcelada)"**
+avisa que aquela linha pertence a uma história encerrada.
+
+**Se a advogada precisar do id para saber de qual parcela a frase fala, a
+DEC-048 falhou mesmo com a suíte verde.**
+
+A frase sai de função pura, em `services/installmentReference.js` (backend) e
+`components/financeiro/installmentLabel.js` (frontend) — as duas pontas montam
+texto, e o que não pode haver é uma **terceira** cópia dentro de um componente.
+
+**A referência do PAGAMENTO (DEC-045) não muda.** São duas referências
+diferentes e elas convivem na mesma frase: *"Do pagamento de R$ 300,00 em
+dinheiro (10/06/2026, #698600), aplicado na parcela 1 de 3, vencendo
+15/09/2026."*
+
+### A migração NÃO renumerou o passado
+
+`scripts/migrarTotalParcelas.js` preencheu `planoId` e `totalParcelas` nas
+parcelas já gravadas, e trocou o índice. **Não renumerou nada** — renumerar
+dado gravado quebraria a referência de recibos já emitidos.
+
+Um honorário reparcelado **antes** da F-1c.1 continua com 1, 2 (canceladas) e
+3, 4, 5 (vivas), só que agora dizendo "de 2" e "de 3" corretamente. **A
+renumeração vale só para reparcelamentos daqui em diante.**
+
+O script é **idempotente** e derruba o índice velho explicitamente: o Mongoose
+cria o novo na subida mas **não remove o antigo**, e sem essa parte o
+reparcelamento continuaria falhando em produção com a suíte verde.
+
+### Onde o rótulo aparece
+
+Página do honorário, listagem de Parcelas, extrato, recibo, ficha do processo e
+o cartão de próximos vencimentos do dashboard.
+
+**O portal do cliente não entra** — e não por esquecimento: a **DEC-029 ponto
+8** mantém o portal **sem nada financeiro**, com teste travando
+(`tests/portal/isolamento.test.js`). Não há parcela para rotular lá, e se
+aparecer número de parcela no portal **isso é o defeito**, não a melhoria.
+
+A listagem de Parcelas atravessa honorários, então o "de N" efetivo dela vem
+**calculado do backend** (`totalNoPlano`): contar a partir do array da página
+daria o tamanho da PÁGINA, e o número mudaria a cada filtro.
 
 ## O que fica para a F-1c e adiante (atualizado em 19/08/2026)
 

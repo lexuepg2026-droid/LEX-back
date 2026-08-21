@@ -81,13 +81,48 @@ const recusarValorPagoNoCorpo = (dados) => {
   );
 };
 
+// ── Os dois campos da DEC-048 também não vêm por rota (F-1c.1) ────────────
+//
+// `planoId` e `totalParcelas` são escritos em UM lugar só: o
+// `renegotiationService`, nos dois instantes em que o tamanho do plano é
+// conhecido de verdade — quando as parcelas novas nascem e quando as antigas
+// são canceladas.
+//
+// Recusa explícita, pela mesma razão do `valorPago`: aceitar em silêncio
+// deixaria quem mandou achando que congelou o "de N", e um "de N" gravado à
+// mão é justamente o que reescreveria um recibo já entregue.
+const recusarCamposDoPlanoNoCorpo = (dados) => {
+  for (const campo of ["planoId", "totalParcelas"]) {
+    if (!Object.prototype.hasOwnProperty.call(dados ?? {}, campo)) continue;
+
+    throw erro(
+      400,
+      `\`${campo}\` é definido pelo reparcelamento e não pode ser enviado. ` +
+      "O tamanho do plano é congelado quando o plano deixa de ser editável.",
+      { campo }
+    );
+  }
+};
+
+// A checagem é por PLANO, e não pelo honorário inteiro (DEC-048, F-1c.1).
+//
+// Depois da DEC-048 um honorário pode ter duas parcelas nº 1 — a cancelada
+// pelo reparcelamento e a que nasceu no lugar dela —, e conferir pelo
+// honorário inteiro passaria a recusar com 409 a criação de uma parcela
+// perfeitamente válida no plano vigente.
+//
+// `planoId` default `null` é o plano ORIGINAL, que é onde toda parcela criada
+// pela rota nasce: a rota não cria parcela dentro de um reparcelamento, quem
+// faz isso é o `renegotiationService`.
 const verificarNumeroParcelaDuplicado = async ({
   feeId,
   numeroParcela,
+  planoId = null,
   installmentId = null
 }) => {
   const filtro = {
     feeId,
+    planoId,
     numeroParcela
   };
 
@@ -108,6 +143,7 @@ const verificarNumeroParcelaDuplicado = async ({
 
 export const criarInstallment = async (usuarioId, dados) => {
   recusarValorPagoNoCorpo(dados);
+  recusarCamposDoPlanoNoCorpo(dados);
 
   const erros = validarCriacaoInstallment(dados);
 
@@ -164,6 +200,66 @@ export const origemDoSaldo = async (feeId, usuarioId) => {
     .sort({ data: 1, createdAt: 1 })
     .select("_id");
   return primeiro?._id ?? null;
+};
+
+// ── O "de N" efetivo de cada parcela da página (DEC-048, F-1c.1) ──────────
+//
+// `totalParcelas` é o CONGELADO, e é `null` enquanto o plano está aberto. Para
+// a tela poder escrever "Parcela 1 de 3" mesmo antes do congelamento, a
+// listagem devolve `totalNoPlano`: o congelado quando existe, e o tamanho do
+// plano vigente quando não.
+//
+// **Por que a conta é feita aqui, e não na tela.** A listagem de parcelas
+// atravessa HONORÁRIOS — vinte linhas podem ser de oito honorários diferentes.
+// Contar o plano a partir do array da página daria o tamanho da PÁGINA, não o
+// do plano, e o número sairia diferente a cada filtro aplicado. A página do
+// honorário conseguiria contar sozinha; a listagem, não. Uma conta só, no
+// lugar que tem os dados, é o que mantém as duas telas dizendo a mesma coisa.
+//
+// Uma consulta agregada por página, e não uma por linha.
+const comTotalDoPlano = async (parcelas, usuarioId) => {
+  const semCongelado = parcelas.filter((p) => (p.totalParcelas ?? null) === null);
+  if (semCongelado.length === 0) {
+    return parcelas.map((p) => ({ ...p.toObject(), totalNoPlano: p.totalParcelas }));
+  }
+
+  // Os pares (honorário, plano) que ainda precisam da contagem.
+  const paresPendentes = [
+    ...new Map(
+      semCongelado.map((p) => [
+        `${p.feeId?._id ?? p.feeId}|${p.planoId ?? "null"}`,
+        { feeId: p.feeId?._id ?? p.feeId, planoId: p.planoId ?? null }
+      ])
+    ).values()
+  ];
+
+  const grupos = await Installment.aggregate([
+    {
+      $match: {
+        usuarioId,
+        ativo: true,
+        $or: paresPendentes.map((par) => ({ feeId: par.feeId, planoId: par.planoId }))
+      }
+    },
+    {
+      $group: {
+        _id: { feeId: "$feeId", planoId: { $ifNull: ["$planoId", null] } },
+        total: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const tamanhoPorPlano = new Map(
+    grupos.map((g) => [`${g._id.feeId}|${g._id.planoId ?? "null"}`, g.total])
+  );
+
+  return parcelas.map((p) => {
+    const chave = `${p.feeId?._id ?? p.feeId}|${p.planoId ?? "null"}`;
+    return {
+      ...p.toObject(),
+      totalNoPlano: p.totalParcelas ?? tamanhoPorPlano.get(chave) ?? null
+    };
+  });
 };
 
 export const listarInstallments = async (
@@ -242,7 +338,14 @@ export const listarInstallments = async (
       .limit(limit),
     Installment.countDocuments(filter)
   ]);
-  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+  return {
+    data: await comTotalDoPlano(data, usuarioId),
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit)
+  };
 };
 
 export const buscarInstallmentPorId = async (usuarioId, installmentId) => {
@@ -274,6 +377,7 @@ export const atualizarInstallment = async (
   validarObjectId(installmentId, "installmentId");
 
   recusarValorPagoNoCorpo(dados);
+  recusarCamposDoPlanoNoCorpo(dados);
 
   const erros = validarAtualizacaoInstallment(dados);
 
@@ -305,9 +409,13 @@ export const atualizarInstallment = async (
       ? dados.numeroParcela
       : installment.numeroParcela;
 
+  // O plano da parcela editada é o dela mesma — a edição não muda de plano, e
+  // conferir contra o plano original recusaria editar uma parcela nascida de
+  // reparcelamento (DEC-048).
   await verificarNumeroParcelaDuplicado({
     feeId: feeIdFinal,
     numeroParcela: numeroParcelaFinal,
+    planoId: installment.planoId ?? null,
     installmentId
   });
 

@@ -219,7 +219,10 @@ export const getFinanceiroResumo = async (usuarioId) => {
     usuarioId: uid,
     ativo: true,
     feeId: { $in: feeIds }
-  }).select("feeId numeroParcela valor valorPago dataVencimento status");
+  // `totalParcelas` entrou na DEC-048: o cartão de próximos vencimentos passa
+  // a dizer "Parcela 1 de 3" como as demais telas. Só o CONGELADO — o cartão
+  // atravessa honorários e não tem como contar o plano vigente de cada um.
+  }).select("feeId numeroParcela totalParcelas valor valorPago dataVencimento status");
 
   const linhas = parcelas.map((parcela) => {
     const fee = honorarioPorId.get(String(parcela.feeId));
@@ -234,6 +237,7 @@ export const getFinanceiroResumo = async (usuarioId) => {
       // exibir um nome sem caminho para o registro que o explica.
       honorarioId: fee?._id ?? null,
       numeroParcela: parcela.numeroParcela,
+      totalParcelas: parcela.totalParcelas ?? null,
       valor: parcela.valor,
       valorPago: parcela.valorPago ?? 0,
       // Piso em zero (DEC-040), pelo mesmo motivo da ficha: `PATCH

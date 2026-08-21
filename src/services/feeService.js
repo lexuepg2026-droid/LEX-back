@@ -355,6 +355,11 @@ const getFeeById = async (feeId, usuarioId) => {
     parcelas: parcelas.map((p) => ({
       _id: p._id,
       numeroParcela: p.numeroParcela,
+      // DEC-048: o "de N" congelado e o plano a que a parcela pertence. A
+      // página do honorário tem a lista inteira e por isso consegue contar o
+      // plano vigente sozinha quando o congelado ainda é `null`.
+      totalParcelas: p.totalParcelas ?? null,
+      planoId: p.planoId ?? null,
       valor: emCentavos(p.valor),
       valorPago: emCentavos(p.valorPago),
       // Piso zero, pela mesma razão da ficha: `PATCH /installments/:id` aceita

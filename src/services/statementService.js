@@ -7,6 +7,7 @@ import Allocation from "../models/Allocation.js";
 import Renegotiation from "../models/Renegotiation.js";
 import { emCentavos } from "./allocationService.js";
 import { moeda } from "../utils/templateFormatters.js";
+import { referenciaDaParcela } from "./installmentReference.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXTRATO DO HONORÁRIO — `GET /api/fees/:id/statement` (Fase F-1a)
@@ -95,23 +96,58 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
     Reversal.find({ honorarioId: fee._id, usuarioId }).sort({ data: 1 }),
     Allocation.find({ honorarioId: fee._id, usuarioId }).sort({ data: 1 }),
     Renegotiation.find({ honorarioId: fee._id, usuarioId }).sort({ data: 1 }),
-    Installment.find({ feeId: fee._id, usuarioId }).select("numeroParcela valor dataVencimento status")
+    Installment.find({ feeId: fee._id, usuarioId })
+      // `planoId`, `totalParcelas` e `ativo` entraram na DEC-048: são o que a
+      // referência da parcela precisa para dizer "1 de 3" e "(reparcelada)".
+      .select("numeroParcela totalParcelas planoId valor dataVencimento status ativo")
   ]);
 
   const parcelaPorId = new Map(parcelas.map((p) => [String(p._id), p]));
   const pagamentoPorId = new Map(pagamentos.map((p) => [String(p._id), p]));
   const estornoPorId = new Map(estornos.map((e) => [String(e._id), e]));
 
+  // O tamanho do plano VIGENTE, para as parcelas cujo "de N" ainda não foi
+  // congelado (plano em construção — ver `installmentReference.js`). Contado
+  // uma vez, aqui, e não por parcela: são as parcelas do plano `null` que
+  // ainda estão de pé.
+  const tamanhoDoPlanoVigente = parcelas.filter(
+    (p) => (p.planoId ?? null) === null && p.ativo !== false
+  ).length;
+
   const resumoParcela = (parcelaId) => {
     const p = parcelaPorId.get(String(parcelaId));
-    return p
-      ? {
-          parcelaId: p._id,
-          numeroParcela: p.numeroParcela,
-          valorParcela: emCentavos(p.valor),
-          dataVencimento: p.dataVencimento
-        }
-      : { parcelaId: parcelaId ?? null, numeroParcela: null, valorParcela: null, dataVencimento: null };
+    if (!p) {
+      return {
+        parcelaId: parcelaId ?? null,
+        numeroParcela: null,
+        totalParcelas: null,
+        valorParcela: null,
+        dataVencimento: null,
+        status: null,
+        // A referência da parcela órfã continua legível — "parcela ?" — em vez
+        // de a frase sair pela metade.
+        referencia: referenciaDaParcela({ numeroParcela: null })
+      };
+    }
+    return {
+      parcelaId: p._id,
+      numeroParcela: p.numeroParcela,
+      totalParcelas: p.totalParcelas ?? null,
+      valorParcela: emCentavos(p.valor),
+      dataVencimento: p.dataVencimento,
+      status: p.status,
+      // ── DEC-048: a parcela é nomeada por ATRIBUTO, não por ordinal ────────
+      // Depois da renumeração existem duas parcelas nº 1 no mesmo honorário —
+      // a cancelada e a que nasceu no lugar dela. "parcela 1" deixou de
+      // identificar; "parcela 1 de 3, vencendo 15/09/2026" identifica.
+      referencia: referenciaDaParcela({
+        numeroParcela: p.numeroParcela,
+        totalParcelas: p.totalParcelas ?? null,
+        totalNoPlanoVigente: (p.planoId ?? null) === null ? tamanhoDoPlanoVigente : null,
+        dataVencimento: p.dataVencimento,
+        status: p.status
+      })
+    };
   };
 
   const eventos = [];
@@ -206,8 +242,8 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
       valor: emCentavos(a.valor),
       descricao:
         a.origem === "saldoAdiantado"
-          ? `${moeda(a.valor)} de saldo adiantado alocados na parcela ${parcela.numeroParcela ?? "?"}`
-          : `${moeda(a.valor)} alocados na parcela ${parcela.numeroParcela ?? "?"}`,
+          ? `${moeda(a.valor)} de saldo adiantado alocados na ${parcela.referencia}`
+          : `${moeda(a.valor)} alocados na ${parcela.referencia}`,
       origem: a.origem,
       // O par pagamento↔parcela, explícito, nos dois sentidos.
       pagamentoId: a.pagamentoId ?? null,
@@ -244,7 +280,7 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
         tipo: TIPO_EVENTO.DESALOCACAO,
         data: a.desalocadoEm ?? a.data,
         valor: emCentavos(a.valor),
-        descricao: `${moeda(a.valor)} desalocados da parcela ${parcela.numeroParcela ?? "?"}`,
+        descricao: `${moeda(a.valor)} desalocados da ${parcela.referencia}`,
         origem: a.origem,
         pagamentoId: a.pagamentoId ?? null,
         dataPagamento,
@@ -285,7 +321,13 @@ export const montarExtrato = async (honorarioId, usuarioId, { page = 1, limit = 
         numeroParcela: p.numeroParcela,
         valor: p.valor,
         emAberto: p.emAberto,
-        statusAnterior: p.statusAnterior
+        statusAnterior: p.statusAnterior,
+        // A referência nomeia a parcela que SAIU na forma da DEC-048. Vem do
+        // documento vivo, e não do snapshot: o snapshot guarda o número, mas o
+        // "de N" congelado e o vencimento estão na parcela. Sem isso a linha
+        // do reparcelamento diria "parcela 1" — o ordinal ambíguo que a
+        // DEC-048 veio tirar de circulação.
+        referencia: resumoParcela(p.parcelaId).referencia
       })),
       parcelasNovas: r.parcelasNovas.map((id) => resumoParcela(id))
     });
