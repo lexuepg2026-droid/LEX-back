@@ -1,3 +1,21 @@
+// ════════════════════════════════════════════════════════════════════════════
+// A SESSÃO DA ADVOGADA — e a ÚNICA origem legítima de 401 nesta área (DEC-050)
+//
+// **Todo 401 deste middleware significa uma coisa só: não sei quem você é.**
+// Token faltando, expirado, malformado, do domínio errado, ou apontando para um
+// usuário que não existe mais — em todos, a sessão está ausente ou inválida, e
+// descartá-la é a reação certa.
+//
+// A DEC-050 reserva o 401 a exatamente isto. Qualquer outra falha de credencial
+// que aconteça DEPOIS daqui — ou seja, dentro de uma sessão que este middleware
+// já aprovou — responde 422, nunca 401. O caso que originou a regra é a senha
+// atual errada em `POST /auth/alterar-senha` (`services/authService.js`).
+//
+// O que a regra compra: o interceptor do frontend desloga em 401 e pronto. Ele
+// não precisa conhecer rota nenhuma, e nenhuma rota nova pode expulsá-la por
+// engano — para isso, teria de vir deste arquivo.
+// ════════════════════════════════════════════════════════════════════════════
+
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 

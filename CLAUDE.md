@@ -3885,7 +3885,145 @@ de `parcelas[]`, pela mesma regra do `renegotiationService` — sai o que não e
 `tests/regressions/f1c2.test.js`), backend **486**, os dois com zero skip e zero
 todo. O backend continuou verde **sem ser alterado**.
 
-## O que fica para adiante (atualizado em 21/08/2026 — o Financeiro 2.0 ENCERROU)
+**Suítes na F-2a:** backend **508** testes (22 novos: 13 em
+`tests/auth/semantica401.test.js`, 9 em `tests/financial/planoDeParcelas.test.js`),
+frontend **566** (20 novos em `tests/regressions/f2a.test.js`). Zero skip, zero
+todo nos dois.
+
+## DEC-050 — a semântica do 401 (F-2a)
+
+**A regra, em uma frase:** *o 401 é reservado **exclusivamente** para sessão
+ausente ou inválida. Qualquer outra falha de credencial dentro de uma sessão
+válida é **422**.*
+
+**O defeito (V-2).** Errar a **senha atual** em `POST /auth/alterar-senha`
+devolvia 401. O interceptor do axios trata todo 401 como sessão perdida e
+**deslogava a advogada** — ela errava a digitação e era expulsa do sistema.
+
+**A causa é semântica, não de interceptor.** O 401 respondia a duas perguntas
+diferentes: *"não sei quem você é"* e *"sei quem você é, e este dado que você me
+mandou está errado"*. Só a primeira justifica descartar a sessão.
+
+**Por que não uma lista de exceção de rotas no frontend.** Ela resolveria este
+caso e apodreceria no próximo: a rota seguinte que devolvesse 401 por engano não
+estaria nela, e o defeito voltaria calado, num lugar diferente. A regra
+semântica não tem esse problema — e com ela o interceptor fica trivialmente
+correto: desloga em 401 e **não precisa conhecer rota nenhuma**.
+
+### O inventário completo dos 401 do backend, classificado
+
+**Categoria 1 — sessão ausente ou inválida. CONTINUA 401.**
+
+*Por arquivo e função, não por linha: linha em documento vivo apodrece — este
+CLAUDE.md já carregou uma referência `axiosConfig.js:14-26` que deixou de existir.
+O levantamento com as linhas exatas do dia está no relatório da F-2a.*
+
+| Onde | O que significa |
+|---|---|
+| `middleware/authMiddleware.js` — `authMiddleware` | token não informado |
+| idem | token do PORTAL apresentado na área da advogada (2ª tranca do isolamento) |
+| idem | usuário do token não existe mais |
+| idem | token malformado, expirado ou com assinatura que não confere (`catch`) |
+| `services/authService.js` — `loginUser` | `POST /auth/login`: e-mail inexistente |
+| idem | `POST /auth/login`: senha errada |
+| `services/portalAuthService.js` — `credenciaisInvalidas` | `POST /portal/login`: o 401 unificado da DEC-029 ponto 11 |
+| `services/portalAuthService.js` — `trocarSenha` | `PATCH /portal/senha`: cliente inexistente ou inativo — a sessão perdeu o sujeito |
+| `services/portalAuthService.js` — `reemitirSessao` | vínculo inexistente |
+| `middleware/portalAuthMiddleware.js` — `sessaoInvalida` | sessão do portal ausente, expirada ou inválida |
+
+**As rotas de LOGIN continuam 401 de propósito.** Ali não há sessão — é o pedido
+para criar uma —, e "não sei quem você é" é literalmente a resposta certa. O
+interceptor não desloga ninguém por elas porque **não havia sessão a perder**;
+ver a nota sobre `sessionLoss.js` no CLAUDE.md do frontend.
+
+**Categoria 2 — credencial conferida dentro de sessão válida. PASSOU A 422.**
+
+| Onde | Rota | O que significa | Era |
+|---|---|---|---|
+| `services/authService.js` — `changePassword` | `POST /auth/alterar-senha` | senha atual errada, sessão válida | **401** — o defeito V-2 |
+| `services/portalAuthService.js` — `trocarSenha` | `PATCH /portal/senha` | senha atual errada, sessão válida | **400** |
+
+**O 400 do portal entrou por consistência, não por defeito.** Ele não causava o
+V-2 (o interceptor do portal só reage a 401 com `sessaoPortalInvalida`). Mas é a
+**mesma pergunta** respondida com dois números diferentes, e isso é o que faz a
+próxima pessoa copiar o que vir primeiro.
+
+**422 e não 400** nos dois: o corpo está bem formado e os campos são válidos; o
+que falha é a **conferência** do valor contra o que está gravado. É a mesma
+leitura que o módulo de documentos dá ao 422 desde a Fase 4.6.
+
+**Onde a regra está escrita no código:** no cabeçalho de
+`middleware/authMiddleware.js`, que é a única origem legítima de 401 na área da
+advogada — se um 401 novo aparecer, tem de vir de lá.
+
+**O inventário é executável:** `tests/auth/semantica401.test.js` tem um teste
+por linha das duas tabelas, mais uma varredura que falha se qualquer rota
+autenticada responder 401 com sessão válida.
+
+## DEC-051 — a ordenação das parcelas por geração (F-2a, só frontend)
+
+**O backend não foi tocado por esta decisão.** O registro fica aqui porque o log
+é **compartilhado e numerado em série** pelos dois repos; a implementação está no
+CLAUDE.md do frontend.
+
+**O defeito:** na página do honorário as parcelas vinham ordenadas por número.
+Depois da DEC-048, que faz cada plano numerar a partir de 1, três gerações se
+**intercalavam** — `1 de 2` (morta), `1 de 3` (morta), `1 de 2` (viva),
+`2 de 2` (morta)… e a advogada tinha de **caçar quais valem**.
+
+**A regra:** agrupar por plano — **o plano vigente primeiro**, em ordem
+numérica; os planos substituídos depois, também em ordem numérica, cada grupo
+com um separador ("Substituídas pelo reparcelamento de 21/08/2026").
+
+**O motivo:** a pergunta que a tela responde é *"quanto ainda se deve, e
+quando"*. O histórico responde outra pergunta e não pode disputar espaço com a
+primeira.
+
+**Não apaga nada** — as canceladas continuam visíveis, com o rótulo congelado e
+o badge "Reparcelada", como a DEC-048 exige.
+
+**O que o backend fornece, e já fornecia:** `GET /fees/:id` devolve `planoId`
+(quem me criou), `reparcelamentoId` (quem me cancelou) e `reparceladaEm`. Os
+três bastam — nenhum endpoint mudou.
+
+**A sutileza que a regra precisou tratar:** um plano de 3 com a primeira parcela
+já **paga** cancela só as outras duas, e a paga continua de pé **no plano
+velho**. Por isso é o **grupo** que é "substituído", não a parcela: o separador
+diz o que aconteceu com o plano, e o badge de cada linha continua dizendo o que
+aconteceu com ela.
+
+## O seed grava o plano inteiro — a migração deixou de ser pré-condição (F-2a)
+
+**O remendo que saiu.** `npm run seed:fresh` criava as parcelas uma a uma por
+`criarInstallment`, que deixa `totalParcelas` em `null` **de propósito** — a
+advogada cria parcela por parcela pela interface, e quando a primeira nasce
+ninguém sabe que serão três. Só que o **seed sabe**: ele tem o array literal do
+plano. O resultado de gravar incompleto foi que
+`node scripts/migrarTotalParcelas.js` virou **pré-condição de todo reset**, e o
+roteiro de validação repetia as duas linhas em **seis passos**.
+
+**`criarPlanoDeParcelas(usuarioId, feeId, parcelas[])`**
+(`services/installmentService.js`) é o **terceiro instante** em que o tamanho do
+plano é conhecido de verdade — os outros dois são a criação e o cancelamento de
+um plano pelo `renegotiationService` (DEC-048). Ela cria cada parcela pelo
+caminho normal (validação, duplicidade, **auto-alocação do saldo adiantado** e
+recálculo) e só no fim carimba `totalParcelas` no plano, com o mesmo
+`updateMany` idempotente do cancelamento.
+
+**O seed usa o SERVIÇO e não escreve no model.** Dois lugares que sabem criar
+parcela divergem, e o que se perde na divergência é a auto-alocação da DEC-036,
+que dispara no nascimento da parcela e é metade do que o cenário de demonstração
+existe para mostrar. Há teste travando isso.
+
+**`scripts/migrarTotalParcelas.js` CONTINUA no repositório, e continua
+necessário.** Ele existe para dados gravados **antes da DEC-048** e é obrigatório
+em qualquer banco que não tenha sido semeado do zero. Ele também **troca o
+índice único** (`{feeId, numeroParcela}` → `{feeId, planoId, numeroParcela}`),
+coisa que o `seed:fresh` só dispensa porque `resetDev.js` faz `dropCollection` e
+o Mongoose recria o índice novo na subida. **Não apagar.** O que ele deixou de
+ser é remendo de um seed que gravava incompleto.
+
+## O que fica para adiante (atualizado em 21/08/2026 — depois da F-2a)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
@@ -3904,10 +4042,73 @@ pagamento → alocação → estorno → anulação → reparcelamento → recib
 numa sentada só, provando que **os números fecham entre si** depois da cadeia —
 que é o que nenhum passo isolado prova.
 
-**A próxima fase é a F-2 (Processos)**, e não mais financeiro: status com ⋮ (o
-componente já existe pela DEC-047), cor por status, histórico de→para,
-reativação de cliente e processo, e o **V-2** — o 401 que desloga em qualquer
-erro, inclusive senha atual errada, que é a primeira coisa da fase.
+**✅ F-2a — FEITA.** O **V-2** morreu: a **DEC-050** reservou o 401 a sessão
+ausente ou inválida, e a senha atual errada passou a 422 — a advogada não é mais
+expulsa por um erro de digitação. Junto vieram a **DEC-051** (as gerações de
+parcelas agrupadas, o plano vigente primeiro), a coluna do rótulo que parou de
+exibir "Parce…", e o **seed que grava o plano inteiro** — a migração deixou de
+ser pré-condição de todo reset.
+
+**A próxima fase é a F-2b**, e o que ela tem depende de gente:
+
+- **status do processo — BLOQUEADO pelo vocabulário da Laís.** Não se inventa
+  enum que ela vai trocar: os valores viram dado gravado, tela, filtro e
+  histórico de→para, e trocá-los depois é migração em quatro lugares. **As sete
+  perguntas já estão com o Daniel.** Enquanto não voltarem, a F-2b não começa
+  pelo status.
+- **cor por status** e **histórico de→para**, que dependem do mesmo vocabulário.
+- **reativação de cliente e de processo** (achado B2): desativar existe,
+  reativar não — um registro desativado por engano fica assim para sempre. Era
+  a **Parte 4 da F-2a** e o portão de escopo mandou parar. **Mas não parou por
+  falta de espaço: parou num achado**, e ele precisa de decisão antes de a F-2b
+  começar.
+
+### O achado que trava a reativação de PROCESSO: a cascata de desativação é PERDIDA
+
+`deleteProcess` (`services/processService.js`) desativa o processo **e**, na
+mesma transação, chama `desativarVinculosDoProcesso` — que faz
+`updateMany({processoId, ativo: true}, {ativo: false})` em `processo_clientes`.
+A cascata existe por um bom motivo, escrito lá: vínculo ativo apontando para
+processo inativo faria o cliente parecer ocupado, e o `DELETE /clients/:id`
+recusaria a exclusão por um processo que já não existe.
+
+**O problema:** essa cascata **não registra o que fez**. Remover um participante
+individualmente (`processoClienteService.js:352`, pelo
+`DELETE /processes/:id/clientes/:clienteId`) grava **exatamente o mesmo**
+`ativo: false` no vínculo. Depois do fato, **nada distingue** um vínculo
+desativado pela cascata de um que a advogada removeu de propósito.
+
+Então reativar um processo não tem saída correta hoje:
+
+| Opção | O que quebra |
+|---|---|
+| **restaurar todos** os vínculos inativos | ressuscita participantes que a advogada **removeu deliberadamente** antes de desativar o processo |
+| **não restaurar nenhum** | o processo volta **sem participante nenhum** — estado que o próprio sistema declara impossível ("Processo sem cliente não faz sentido", `processoClienteService.js`), com `clientePrincipalId` (campo `required`) apontando para um vínculo morto e a geração de documento falhando com o 422 "O processo não tem cliente ativo vinculado" |
+
+**Não há terceira opção sem tocar na desativação.** Para a reativação ser
+correta, a cascata precisa passar a marcar o que ela desativou — um campo no
+vínculo (ex.: `desativadoPorCascata: true`) ou um registro da operação. Isso
+mexe num caminho **transacional e bem testado**, e é decisão de modelo, não
+detalhe de implementação.
+
+**A reativação de CLIENTE não tem esse problema** e poderia ter sido feita
+isolada: `deleteClient` só faz `ativo = false`, sem cascata, e ainda exige zero
+processos ativos antes. Ficou junto por coerência — entregar metade de uma ação
+que a interface anuncia como um par ("Desativar"/"Reativar") em dois registros
+que a advogada trata igual seria pior que entregar as duas de uma vez.
+
+**A regra do prompt continua valendo e não é o que está em questão:** reativar
+cliente **não** reativa os processos dele, e a tela precisa dizer isso. O que
+falta decidir é outra coisa — o que acontece com os **participantes** de um
+processo que volta.
+
+**Também falta o histórico.** "Registre no histórico do registro, como qualquer
+mudança de estado" não tem onde ser escrito: `Process` e `Client` **não têm
+campo de histórico**. O único que existe é `Fee.historicoStatus`
+(append-only, escrito por `statusHistory.js`), e ele é do honorário. Um
+histórico de **ativação** não depende do vocabulário da Laís — é `ativo`, não
+status —, mas convém desenhá-lo junto com o `de→para` de status que a F-2b vai
+precisar, para não nascerem dois mecanismos de histórico no mesmo model.
 
 **Duas regras de negócio da F-1c.2 precisam da Laís**, porque são combinação com
 cliente e não decisão técnica: a **sobra da divisão na primeira parcela**

@@ -366,7 +366,9 @@ describe("portal: autenticação", () => {
         senhaAtual: "NaoEhAAtual1",
         novaSenha: SENHA_DO_CLIENTE
       });
-      assert.equal(r.status, 400);
+      // 422 desde a DEC-050: a sessão do portal é válida e o que falha é a
+      // conferência da senha. Mesma pergunta, mesma resposta dos dois lados.
+      assert.equal(r.status, 422);
       assert.equal(r.body.campo, "senhaAtual");
 
       assert.equal(

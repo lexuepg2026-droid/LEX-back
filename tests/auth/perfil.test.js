@@ -176,12 +176,19 @@ describe("contrato de /auth — perfil e troca de senha", () => {
   // ═════════════════════════════════════════════════════════════════════════
   // POST /auth/alterar-senha — validação e EFEITO
   // ═════════════════════════════════════════════════════════════════════════
-  test("senha atual errada é recusada", async () => {
+  // A asserção era `[400, 401]` — frouxa de propósito, quando o número ainda
+  // não tinha regra. A DEC-050 deu regra: sessão válida com dado errado é 422,
+  // e 401 aqui é o defeito V-2, que expulsava a advogada do sistema.
+  // O inventário completo dos 401 está em `tests/auth/semantica401.test.js`.
+  test("senha atual errada é recusada com 422, sem derrubar a sessão", async () => {
     const r = await api.post("/auth/alterar-senha", {
       senhaAtual: "SenhaQueNaoEhAMinha1",
       novaSenha: "OutraSenha123"
     });
-    assert.ok([400, 401].includes(r.status), `esperado 400 ou 401, veio ${r.status}`);
+    assert.equal(r.status, 422, "401 aqui deslogaria quem só errou a digitação");
+    assert.equal(r.body.campo, "senhaAtual");
+
+    esperado(await api.get("/auth/me"), 200, "a sessão sobrevive à senha errada");
   });
 
   test("nova senha fraca é recusada, com a regra na mensagem", async () => {
