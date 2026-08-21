@@ -187,6 +187,71 @@ export const criarInstallment = async (usuarioId, dados) => {
   return atualizado || installment;
 };
 
+// ── UM PLANO INTEIRO, DE UMA VEZ (DEC-048) ────────────────────────────────
+//
+// ── O terceiro instante em que o tamanho do plano é conhecido ────────────
+// `totalParcelas` — o "de N" congelado — nasce preenchido nos dois momentos em
+// que o tamanho do plano é sabido de verdade: quando um reparcelamento CRIA o
+// plano novo, e quando ele CANCELA o antigo (`renegotiationService.js`).
+//
+// Fora deles, `criarInstallment` deixa o campo `null` de propósito: a advogada
+// cria parcela por parcela pela interface, e quando a primeira nasce ninguém
+// sabe que serão três. A tela resolve o "de N" na leitura, contando o plano.
+//
+// Este é o TERCEIRO instante: quem já tem o plano inteiro na mão e o cria de
+// uma vez. Aqui o tamanho é conhecido no momento da criação, e deixá-lo `null`
+// seria fingir que não é.
+//
+// ── Por que isto existe (e por que não é o seed que faz a conta) ─────────
+// O `seed:fresh` sabia o tamanho do plano — tem o array literal — e mesmo assim
+// gravava `totalParcelas` vazio, porque só conhecia `criarInstallment`. O
+// resultado: **todo reset do banco de demonstração virou pré-condição dupla**,
+// `npm run seed:fresh` **e** `node scripts/migrarTotalParcelas.js`, com o
+// roteiro de validação repetindo as duas linhas em seis passos.
+//
+// A migração existe para dados gravados ANTES da DEC-048 e continua no
+// repositório para eles. O que ela não pode ser é remendo de um seed que grava
+// incompleto — banco semeado do zero tem de nascer certo.
+//
+// O seed chama esta função em vez de escrever no model: dois lugares que sabem
+// criar parcela divergem, e o que se perde na divergência é a auto-alocação do
+// saldo adiantado (DEC-036), que dispara no nascimento da parcela e é metade do
+// que o cenário de demonstração existe para mostrar.
+//
+// ── O congelamento vem DEPOIS, e é de propósito ──────────────────────────
+// Cada parcela nasce por `criarInstallment` — validação, checagem de
+// duplicidade, auto-alocação e recálculo, tudo pelo caminho normal —, e só no
+// fim o plano é carimbado. Congelar antes exigiria repetir aqui o que aquela
+// função já faz, e é essa repetição que faz os dois caminhos divergirem com o
+// tempo.
+//
+// O carimbo é o mesmo `updateMany` do cancelamento no `renegotiationService`, e
+// pelo mesmo motivo: preenche só o que ainda está `null`, e por isso rodar de
+// novo não altera nada.
+export const criarPlanoDeParcelas = async (usuarioId, feeId, parcelas = []) => {
+  const criadas = [];
+
+  for (const dados of parcelas) {
+    criadas.push(await criarInstallment(usuarioId, { ...dados, feeId }));
+  }
+
+  if (criadas.length === 0) return criadas;
+
+  // O plano é o par (honorário, planoId). Toda parcela criada por esta função
+  // nasce no plano ORIGINAL — `planoId: null` —, que é onde `criarInstallment`
+  // as coloca: a rota não cria parcela dentro de um reparcelamento, quem faz
+  // isso é o `renegotiationService`.
+  await Installment.updateMany(
+    { feeId, usuarioId, planoId: null, ativo: true, totalParcelas: null },
+    { $set: { totalParcelas: criadas.length } }
+  );
+
+  // Releitura: as instâncias em memória são anteriores ao carimbo, e devolver
+  // parcela com `totalParcelas: null` faria quem chama achar que o campo não
+  // foi gravado.
+  return Installment.find({ _id: { $in: criadas.map((p) => p._id) } }).sort({ numeroParcela: 1 });
+};
+
 // Qual pagamento originou o saldo que está sendo consumido. É o mais ANTIGO
 // que ainda alimenta o honorário — sem ele a alocação de origem
 // `saldoAdiantado` ficaria sem "de onde veio", e é justamente a linha do

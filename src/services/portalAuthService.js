@@ -46,6 +46,9 @@ export const NOME_COOKIE_PORTAL = "lex-portal-token";
 export const TIPO_TOKEN_PORTAL = "portal";
 
 // ── O 401 unificado (DEC-029 ponto 11) ────────────────────────────────────
+// CONTINUA 401 sob a DEC-050: é o LOGIN do portal, e ali não há sessão — é o
+// pedido para criar uma. O interceptor do portal já não reage a ele (a rota
+// está fora da reação por não trazer `sessaoPortalInvalida`).
 // UMA função, um ponto único. Código inexistente, vínculo inativo, cliente sem
 // senha, senha errada, cliente inativo e processo inativo devolvem o MESMO
 // corpo e o MESMO status.
@@ -182,6 +185,9 @@ export const login = async ({ codigoAcesso, senha }) => {
 export const trocarSenha = async ({ clienteId, senhaAtual, novaSenha }) => {
   const cliente = await Client.findById(clienteId).select("+senhaPortalHash");
 
+  // CONTINUA 401 sob a DEC-050: o token era válido, mas o cliente por trás dele
+  // sumiu ou foi desativado. A sessão perdeu o sujeito e não vale mais — o
+  // portal deve mesmo descartá-la e voltar ao login.
   if (!cliente || cliente.ativo !== true) {
     const error = new Error("Sessão inválida.");
     error.statusCode = 401;
@@ -189,10 +195,19 @@ export const trocarSenha = async ({ clienteId, senhaAtual, novaSenha }) => {
     throw error;
   }
 
+  // 422 pela DEC-050, e não 400: a sessão do portal é VÁLIDA (o middleware já
+  // a conferiu), o corpo está bem formado, e o que falha é a CONFERÊNCIA da
+  // senha contra o hash gravado. É o mesmo caso da troca de senha da advogada,
+  // e responde o mesmo número.
+  //
+  // Era 400 — não chegou a causar o defeito V-2, porque o interceptor do portal
+  // só reage a 401 com `sessaoPortalInvalida`. Mas deixar a MESMA condição
+  // respondendo 400 aqui e 422 do outro lado é o que faz a próxima pessoa
+  // copiar o que vir primeiro. Uma pergunta, uma resposta.
   const atualConfere = await compararSenha(senhaAtual, cliente.senhaPortalHash);
   if (!atualConfere) {
     const error = new Error("A senha atual está incorreta.");
-    error.statusCode = 400;
+    error.statusCode = 422;
     error.campo = "senhaAtual";
     throw error;
   }

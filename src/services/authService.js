@@ -24,6 +24,35 @@ const badRequest = (message) => {
   return error;
 };
 
+// ── 422: credencial conferida DENTRO de uma sessão válida (DEC-050) ────────
+//
+// Não é 401, e a diferença não é de gosto. O 401 estava sendo usado para duas
+// perguntas diferentes:
+//
+//   "não sei quem você é"                        → sessão ausente ou inválida
+//   "sei quem você é, e este dado está errado"   → credencial conferida aqui
+//
+// Só a primeira justifica descartar a sessão. Enquanto as duas responderam
+// 401, o interceptor do axios — que trata todo 401 como sessão perdida — EXPULSAVA
+// a advogada do sistema por ela ter errado a digitação da própria senha atual
+// na tela de troca de senha (defeito V-2).
+//
+// A correção é semântica, e não no interceptor: com o 401 reservado a sessão,
+// o interceptor fica trivialmente correto e não precisa conhecer rota nenhuma.
+// Lista de exceção de rota no frontend resolveria ESTE caso e apodreceria no
+// próximo — a rota seguinte que devolvesse 401 por engano não estaria nela, e
+// o defeito voltaria calado.
+//
+// 422 e não 400: o corpo está bem formado e os campos são válidos: o que falha
+// é a CONFERÊNCIA do valor contra o que está gravado. É a mesma leitura que o
+// módulo de documentos já dá ao 422 desde a Fase 4.6.
+const unprocessable = (message, campo) => {
+  const error = new Error(message);
+  error.statusCode = 422;
+  if (campo) error.campo = campo;
+  return error;
+};
+
 // `campo` acompanha o 409 para o cliente rotear sem depender do texto da
 // mensagem (o RegisterPage decidia a etapa de retorno por regex; qualquer
 // reescrita do texto quebrava o roteamento em silêncio). A mensagem continua
@@ -139,6 +168,11 @@ const loginUser = async ({ email, senha }) => {
   // E-mail inexistente e senha errada respondem exatamente igual (401,
   // "Credenciais inválidas") para não permitir enumeração de contas.
   // authLimiter já cobre força bruta; não vale complexidade extra aqui.
+  //
+  // CONTINUA 401 sob a DEC-050, e é o significado certo: aqui não HÁ sessão —
+  // é justamente o pedido para criar uma. "Não sei quem você é" é literalmente
+  // a resposta. O interceptor não desloga ninguém por isto porque não há
+  // sessão para perder; ver `api/axiosConfig.js` no frontend.
   if (!usuario) {
     const error = new Error("Credenciais inválidas");
     error.statusCode = 401;
@@ -283,11 +317,13 @@ const changePassword = async (userId, payload) => {
     throw error;
   }
 
+  // A sessão desta requisição é VÁLIDA — `authMiddleware` já a conferiu antes
+  // de chegar aqui. O que está errado é o dado enviado, e por isso a resposta
+  // é 422 e não 401 (DEC-050). A advogada continua logada: erro de digitação
+  // não é motivo para expulsá-la do sistema.
   const senhaValida = await bcrypt.compare(payload.senhaAtual, usuario.senhaHash);
   if (!senhaValida) {
-    const error = new Error("Senha atual incorreta");
-    error.statusCode = 401;
-    throw error;
+    throw unprocessable("Senha atual incorreta", "senhaAtual");
   }
 
   usuario.senhaHash = await bcrypt.hash(payload.novaSenha, 10);

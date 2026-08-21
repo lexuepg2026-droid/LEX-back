@@ -16,7 +16,7 @@ import Payment from '../src/models/Payment.js';
 import ConfirmacaoVisualizacao from '../src/models/ConfirmacaoVisualizacao.js';
 import feeService from '../src/services/feeService.js';
 import { createProcess } from '../src/services/processService.js';
-import { criarInstallment } from '../src/services/installmentService.js';
+import { criarPlanoDeParcelas } from '../src/services/installmentService.js';
 import { create as criarPayment, recalcularParcelas } from '../src/services/paymentService.js';
 import { criarEstorno } from '../src/services/reversalService.js';
 import { criarReparcelamento } from '../src/services/renegotiationService.js';
@@ -960,14 +960,29 @@ async function main() {
 
     // 3. Parcelas via installmentService. É aqui que a auto-alocação dispara:
     //    a parcela nasce e o saldo adiantado encontra destino sozinho.
-    for (const instSpec of spec.installments ?? []) {
-      await criarInstallment(uid, {
-        feeId:          fee._id.toString(),
-        numeroParcela:  instSpec.numeroParcela,
-        valor:          instSpec.valor,
-        dataVencimento: instSpec.dataVencimento,
-      });
-      totalInstallments++;
+    //
+    //    `criarPlanoDeParcelas` e não `criarInstallment` uma a uma: o seed
+    //    CONHECE o tamanho do plano (o array literal está logo acima), e
+    //    gravá-lo é o que faz `totalParcelas` — o "de N" congelado da DEC-048 —
+    //    nascer preenchido.
+    //
+    //    Sem isso, `npm run seed:fresh` deixava o campo vazio e
+    //    `node scripts/migrarTotalParcelas.js` virava pré-condição de todo
+    //    reset — duas linhas repetidas em seis passos do roteiro de validação
+    //    para consertar o que o seed devia ter gravado certo. A migração
+    //    continua no repositório, para os dados gravados antes da DEC-048.
+    const parcelasDoPlano = spec.installments ?? [];
+    if (parcelasDoPlano.length > 0) {
+      await criarPlanoDeParcelas(
+        uid,
+        fee._id.toString(),
+        parcelasDoPlano.map((instSpec) => ({
+          numeroParcela:  instSpec.numeroParcela,
+          valor:          instSpec.valor,
+          dataVencimento: instSpec.dataVencimento,
+        }))
+      );
+      totalInstallments += parcelasDoPlano.length;
     }
 
     // 4. Pagamentos normais — o motor aloca do vencimento mais antigo em
