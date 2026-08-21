@@ -4059,9 +4059,56 @@ ser pré-condição de todo reset.
 - **cor por status** e **histórico de→para**, que dependem do mesmo vocabulário.
 - **reativação de cliente e de processo** (achado B2): desativar existe,
   reativar não — um registro desativado por engano fica assim para sempre. Era
-  a Parte 4 da F-2a e **não coube**; o portão de escopo da fase mandava parar.
-  Sem cascata: reativar cliente **não** reativa os processos dele, e a tela
-  precisa dizer isso.
+  a **Parte 4 da F-2a** e o portão de escopo mandou parar. **Mas não parou por
+  falta de espaço: parou num achado**, e ele precisa de decisão antes de a F-2b
+  começar.
+
+### O achado que trava a reativação de PROCESSO: a cascata de desativação é PERDIDA
+
+`deleteProcess` (`services/processService.js`) desativa o processo **e**, na
+mesma transação, chama `desativarVinculosDoProcesso` — que faz
+`updateMany({processoId, ativo: true}, {ativo: false})` em `processo_clientes`.
+A cascata existe por um bom motivo, escrito lá: vínculo ativo apontando para
+processo inativo faria o cliente parecer ocupado, e o `DELETE /clients/:id`
+recusaria a exclusão por um processo que já não existe.
+
+**O problema:** essa cascata **não registra o que fez**. Remover um participante
+individualmente (`processoClienteService.js:352`, pelo
+`DELETE /processes/:id/clientes/:clienteId`) grava **exatamente o mesmo**
+`ativo: false` no vínculo. Depois do fato, **nada distingue** um vínculo
+desativado pela cascata de um que a advogada removeu de propósito.
+
+Então reativar um processo não tem saída correta hoje:
+
+| Opção | O que quebra |
+|---|---|
+| **restaurar todos** os vínculos inativos | ressuscita participantes que a advogada **removeu deliberadamente** antes de desativar o processo |
+| **não restaurar nenhum** | o processo volta **sem participante nenhum** — estado que o próprio sistema declara impossível ("Processo sem cliente não faz sentido", `processoClienteService.js`), com `clientePrincipalId` (campo `required`) apontando para um vínculo morto e a geração de documento falhando com o 422 "O processo não tem cliente ativo vinculado" |
+
+**Não há terceira opção sem tocar na desativação.** Para a reativação ser
+correta, a cascata precisa passar a marcar o que ela desativou — um campo no
+vínculo (ex.: `desativadoPorCascata: true`) ou um registro da operação. Isso
+mexe num caminho **transacional e bem testado**, e é decisão de modelo, não
+detalhe de implementação.
+
+**A reativação de CLIENTE não tem esse problema** e poderia ter sido feita
+isolada: `deleteClient` só faz `ativo = false`, sem cascata, e ainda exige zero
+processos ativos antes. Ficou junto por coerência — entregar metade de uma ação
+que a interface anuncia como um par ("Desativar"/"Reativar") em dois registros
+que a advogada trata igual seria pior que entregar as duas de uma vez.
+
+**A regra do prompt continua valendo e não é o que está em questão:** reativar
+cliente **não** reativa os processos dele, e a tela precisa dizer isso. O que
+falta decidir é outra coisa — o que acontece com os **participantes** de um
+processo que volta.
+
+**Também falta o histórico.** "Registre no histórico do registro, como qualquer
+mudança de estado" não tem onde ser escrito: `Process` e `Client` **não têm
+campo de histórico**. O único que existe é `Fee.historicoStatus`
+(append-only, escrito por `statusHistory.js`), e ele é do honorário. Um
+histórico de **ativação** não depende do vocabulário da Laís — é `ativo`, não
+status —, mas convém desenhá-lo junto com o `de→para` de status que a F-2b vai
+precisar, para não nascerem dois mecanismos de histórico no mesmo model.
 
 **Duas regras de negócio da F-1c.2 precisam da Laís**, porque são combinação com
 cliente e não decisão técnica: a **sobra da divisão na primeira parcela**
