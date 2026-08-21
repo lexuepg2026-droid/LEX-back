@@ -3858,18 +3858,61 @@ A listagem de Parcelas atravessa honorários, então o "de N" efetivo dela vem
 **calculado do backend** (`totalNoPlano`): contar a partir do array da página
 daria o tamanho da PÁGINA, e o número mudaria a cada filtro.
 
-## O que fica para a F-1c e adiante (atualizado em 19/08/2026)
+---
+
+## DEC-049 — a tela do reparcelamento (F-1c.2, só frontend)
+
+**O backend não foi tocado nesta fase.** O registro fica aqui porque o log de
+decisões é **compartilhado e numerado em série** pelos dois repos. A
+implementação está no CLAUDE.md do frontend.
+
+**O que mudou:** o botão "Reparcelar" da página do honorário, desabilitado desde
+a F-1b, passou a levar a uma tela. O endpoint continua exatamente o mesmo —
+`POST /api/fees/:id/renegotiations`, com `{ parcelas: [{valor, dataVencimento}],
+motivo? }`, 422 quando a soma diverge do saldo.
+
+**Rota dedicada, e não modal**, porque o plano novo tem N linhas editáveis e uma
+soma corrente que precisa ficar visível o tempo todo — num modal ela sai da tela
+justamente quando há mais linhas para conferir.
+
+**O contrato do backend não precisou de nada novo.** A tela deriva tudo de
+`GET /fees/:id`: o saldo de `totais.emAberto` (a mesma fórmula que
+`saldoEmAberto` usa para validar, DEC-040) e as listas do que sai e do que fica
+de `parcelas[]`, pela mesma regra do `renegotiationService` — sai o que não está
+`pago` nem `cancelado`.
+
+**Suítes na F-1c.2:** frontend **546** testes (31 novos em
+`tests/regressions/f1c2.test.js`), backend **486**, os dois com zero skip e zero
+todo. O backend continuou verde **sem ser alterado**.
+
+## O que fica para adiante (atualizado em 21/08/2026 — o Financeiro 2.0 ENCERROU)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
 esta última agora vale nas sete listagens, com teste que falha se qualquer
 célula juntar `cell-num` e `cell-truncate`.
 
-**F-1c — o reparcelamento ponta a ponta.** O backend já reparcela (DEC-037); o
-botão existe na página do honorário **desabilitado, dizendo que chega na F-1c**.
-Junto vai a leitura do "parcela 1 de N" pós-reparcelamento (a observação do
-passo 156, item 6, endereçada à Laís) e a seção do roteiro que valida o módulo
-financeiro inteiro.
+**✅ F-1c — FEITA, nas duas metades.** A F-1c.1 trouxe a **DEC-048** ("Parcela 1
+de 3": o plano vigente renumera, o "de N" é congelado por `planoId`); a F-1c.2
+trouxe a **DEC-049** — a tela do reparcelamento, em **rota dedicada** e não
+modal, porque o plano tem N linhas e uma soma corrente que precisa ficar
+visível. O botão desabilitado da página do honorário **ligou**.
+
+**O ciclo Financeiro 2.0 fecha aqui**, da DEC-032 à DEC-049. A seção **28** do
+roteiro do frontend é a travessia de encerramento: honorário vazio → parcelas →
+pagamento → alocação → estorno → anulação → reparcelamento → recibo → extrato,
+numa sentada só, provando que **os números fecham entre si** depois da cadeia —
+que é o que nenhum passo isolado prova.
+
+**A próxima fase é a F-2 (Processos)**, e não mais financeiro: status com ⋮ (o
+componente já existe pela DEC-047), cor por status, histórico de→para,
+reativação de cliente e processo, e o **V-2** — o 401 que desloga em qualquer
+erro, inclusive senha atual errada, que é a primeira coisa da fase.
+
+**Duas regras de negócio da F-1c.2 precisam da Laís**, porque são combinação com
+cliente e não decisão técnica: a **sobra da divisão na primeira parcela**
+(R$ 1.000,00 em 3 vira 333,34 + 333,33 + 333,33) e o **"Parcela 1 de 3"** da
+DEC-048.
 
 **Continua sem lint.** `node --check` é o que existe hoje; ESLint viola "zero
 dependência nova" e segue como **exceção nomeada a decidir na F-2**.
