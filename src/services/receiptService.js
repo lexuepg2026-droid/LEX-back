@@ -162,16 +162,22 @@ export const descreverDestino = ({ destinos = [], creditoMantido = 0, totalDePar
     return totalDeParcelas === 0 ? "adiantamento" : "adiantamento, sem parcela quitada";
   }
 
+  // O "de N" de CADA destino, congelado no plano dela (DEC-048). Cai no total
+  // do honorário só quando a parcela ainda não congelou — plano em construção,
+  // que é o caso de todo honorário que nunca foi reparcelado.
+  const deN = (d) => d.totalParcelas ?? totalDeParcelas;
+
   if (!enumerar) {
     // Honorário não parcelado continua sendo "pagamento único": escrever
     // "parcela 1 de 1" é ruído, e era assim desde a 4.1.
-    return totalDeParcelas <= 1
+    const total = deN(destinos[0]);
+    return total <= 1
       ? "pagamento único"
-      : `parcela ${destinos[0].numeroParcela} de ${totalDeParcelas}`;
+      : `parcela ${destinos[0].numeroParcela} de ${total}`;
   }
 
   const partes = destinos.map(
-    (d) => `${moeda(d.valor)} na parcela ${d.numeroParcela} de ${totalDeParcelas}`
+    (d) => `${moeda(d.valor)} na parcela ${d.numeroParcela} de ${deN(d)}`
   );
 
   if (creditoMantido > 0) {
@@ -372,7 +378,7 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     // VALOR que encostou na parcela e o estado atual dela — os dois são
     // necessários para o recibo descrever o que de fato quitou (DEC-041).
     Allocation.find({ pagamentoId: pagamento._id, usuarioId, estornoId: null })
-      .populate("parcelaId", "numeroParcela valor valorPago")
+      .populate("parcelaId", "numeroParcela totalParcelas planoId valor valorPago")
       .sort({ data: 1 })
   ]);
 
@@ -390,6 +396,15 @@ export const carregarDadosDoRecibo = async (pagamentoId, usuarioId) => {
     if (numero === undefined || numero === null) continue;
     const atual = porParcela.get(numero) ?? {
       numeroParcela: numero,
+      // ── DEC-048: o "de N" é o do PLANO DELA, congelado ───────────────────
+      // Era `totalDeParcelas`, a contagem de TODAS as parcelas ativas do
+      // honorário no momento da emissão. Depois de um reparcelamento essa
+      // contagem soma as gerações, e um recibo emitido em maio passaria a
+      // dizer outra coisa em setembro — **recibo que muda de significado
+      // depois de entregue ao cliente**, que é o defeito mais grave que este
+      // projeto já corrigiu.
+      totalParcelas: a.parcelaId?.totalParcelas ?? null,
+      planoId: a.parcelaId?.planoId ?? null,
       valor: 0,
       valorParcela: Number(a.parcelaId?.valor ?? 0),
       // `valorPago` da parcela é a soma de TODAS as alocações ativas dela,
