@@ -87,6 +87,58 @@ const processoClienteSchema = new mongoose.Schema(
       type: Boolean,
       required: true,
       default: true
+    },
+
+    // ── DEC-052: a cascata REGISTRA o que derrubou ─────────────────────────
+    //
+    // ── O defeito que este campo existe para impedir ─────────────────────
+    // Desativar um processo derruba os vínculos dele junto (soft delete em
+    // cascata, `processService.deleteProcess`). Até a F-2b essa cascata gravava
+    // **o mesmo `ativo: false`** que a remoção manual de um participante grava
+    // (`desvincularCliente`). Depois do fato, os dois estados eram
+    // **indistinguíveis**.
+    //
+    // Na hora de reativar o processo, o sistema via três vínculos desativados e
+    // não sabia qual caiu por cascata e qual a advogada tirou de propósito. As
+    // duas saídas possíveis eram erradas:
+    //
+    //   restaurar todos   → devolve gente que a advogada removeu de propósito
+    //   restaurar nenhum  → devolve um processo VAZIO, estado que o próprio
+    //                       sistema declara impossível ("Processo sem cliente
+    //                       não faz sentido"), com `clientePrincipalId`
+    //                       (required) apontando para vínculo morto
+    //
+    // Era isso que bloqueava a reativação, e foi por isso que a Parte 4 da F-2a
+    // parou.
+    //
+    // ── A regra, e por que ela é a terceira vez ──────────────────────────
+    // **Estado passado não se infere, se registra.** É a MESMA conclusão a que
+    // este projeto chegou no estorno (a alocação desfeita guarda que foi
+    // desfeita, em vez de ser recalculada) e na DEC-044 (a linha do extrato que
+    // deixou de valer DIZ que deixou). Inferência sobre estado passado é o que
+    // produziu o pior defeito deste projeto.
+    //
+    // ── Por que UM campo, e não dois ─────────────────────────────────────
+    // Ele responde as duas perguntas de uma vez:
+    //
+    //   preenchido        → caiu pela cascata do processo X (e diz qual)
+    //   `null` + inativo  → foi removido À MÃO
+    //   `null` + ativo    → vínculo comum, em uso
+    //
+    // A reativação restaura só os marcados com o próprio id e **limpa a marca**
+    // — vínculo restaurado volta a ser vínculo comum. Sem a limpeza, a próxima
+    // remoção manual dele ficaria com marca de cascata velha e ele voltaria
+    // sozinho no reativar seguinte. É o caso que o ciclo
+    // desativar → reativar → desativar → reativar expõe, e há teste para ele.
+    //
+    // Guardar o id do processo, e não um booleano, é redundante com
+    // `processoId` **hoje** — e é de propósito: o dia em que outra coisa
+    // cascatear para cá (a desativação de um cliente, por exemplo), um booleano
+    // não saberia dizer QUEM derrubou, e voltaríamos a inferir.
+    desativadoPorCascataDe: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Process",
+      default: null
     }
   },
   {

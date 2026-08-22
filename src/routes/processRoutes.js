@@ -29,4 +29,12 @@ router.put("/:id", processController.update);
 router.patch("/:id", processController.update);
 router.delete("/:id", processController.remove);
 
+// DEC-052 — reativação e a contagem que a tela mostra antes de confirmar.
+//
+// O preview vem ANTES de `/:id/reactivate` na ordem de declaração? Não precisa:
+// os dois são sub-rotas literais distintas, e nenhuma delas casa com `/:id`
+// sozinho — `/:id` só pega um segmento.
+router.get("/:id/activation-preview", processController.previewAtivacao);
+router.patch("/:id/reactivate", processController.reactivate);
+
 export default router;

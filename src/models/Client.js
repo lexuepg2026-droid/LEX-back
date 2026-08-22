@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import historicoAtivacaoSchema from "./shared/historicoAtivacaoSchema.js";
 import enderecoSchema from "./shared/enderecoSchema.js";
 
 const representanteLegalSchema = new mongoose.Schema(
@@ -147,6 +148,17 @@ const clientSchema = new mongoose.Schema(
     ativo: {
       type: Boolean,
       default: true
+    },
+
+    // DEC-052 — append-only. Desativar e reativar são mudanças de estado, e
+    // mudança de estado sem registro é o que este projeto já decidiu três vezes
+    // que não se faz. Ver `models/shared/historicoAtivacaoSchema.js`.
+    //
+    // Fora da allowlist de update: nenhuma rota aceita este campo. Quem escreve
+    // são os pontos de desativação e reativação do serviço.
+    historicoAtivacao: {
+      type: [historicoAtivacaoSchema],
+      default: []
     }
   },
   {

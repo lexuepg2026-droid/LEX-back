@@ -22,4 +22,9 @@ router.put("/:id", clientController.updateClient);
 
 router.delete("/:id", clientController.deleteClient);
 
+// DEC-052 — reativação. `PATCH` (verbo de atualização) em sub-rota própria, e
+// não `PATCH /:id { ativo: true }`: `ativo` está fora da allowlist de update
+// desde a Fase 4.5, e reabri-lo devolveria a porta que a auditoria fechou.
+router.patch("/:id/reactivate", clientController.reactivateClient);
+
 export default router;

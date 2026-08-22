@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
-import { filtroTexto } from "../utils/filtrosDeConsulta.js";
+import { filtroTexto, filtroSituacao } from "../utils/filtrosDeConsulta.js";
 import { regexTermoSimples } from "../utils/texto.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
@@ -13,10 +13,13 @@ import {
 import {
   assertClientesDoUsuario,
   CAMPOS_CLIENTE_POPULADO,
+  contarVinculosAtivosDoProcesso,
+  contarVinculosDaCascata,
   desativarVinculosDoProcesso,
   ehColisaoDeCodigoAcesso,
   listarVinculosDeProcessos,
-  montarVinculos
+  montarVinculos,
+  reativarVinculosDaCascata
 } from "./processoClienteService.js";
 
 const createError = (message, statusCode, extra = {}) => {
@@ -182,9 +185,17 @@ const anexarParticipantes = async (usuarioId, processos) => {
   return processos;
 };
 
-export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status } = {}) => {
+export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status, situacao } = {}) => {
   const skip = (page - 1) * limit;
-  const filter = { usuarioId, ativo: true };
+  // DEC-052: `ativo: true` deixou de ser fixo, para a reativação ter onde
+  // acontecer. Sem `situacao`, o filtro é exatamente o de antes.
+  //
+  // Não confundir com `status`, logo abaixo: `status` é o andamento jurídico
+  // ("ativo", "encerrado", "suspenso") e `situacao` é se o REGISTRO existe para
+  // o sistema. Um processo `status: "encerrado"` está vivo no cadastro; um
+  // desativado não aparece em lugar nenhum — e é por isso que ele precisa deste
+  // filtro para voltar a ser alcançável.
+  const filter = { usuarioId, ...filtroSituacao(situacao) };
   // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
   const regex = regexTermoSimples(busca);
   if (regex) {
@@ -198,7 +209,10 @@ export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, st
     // `-__v` na projeção porque `lean()` não passa por `toJSON`, que é onde a
     // chave sai em todo o resto da API (config/mongooseDefaults.js).
     Process.find(filter)
-      .select("-__v")
+      // `-historicoAtivacao`: o histórico da DEC-052 é append-only e cresce a
+      // cada desativação. Ele não é lido na listagem, e mandá-lo em toda linha
+      // de toda página é peso por nada. Continua disponível no detalhe.
+      .select("-__v -historicoAtivacao")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -327,13 +341,28 @@ export const deleteProcess = async (usuarioId, processId) => {
     throw createError("Processo não encontrado", 404);
   }
 
+  // Quantos vão cair junto. Lido ANTES da transação porque é o número que vai
+  // para o histórico — depois da cascata ele já é zero.
+  const vinculosAfetados = await contarVinculosAtivosDoProcesso(usuarioId, processId);
+
   const session = await mongoose.startSession();
 
   try {
     await session.withTransaction(async () => {
       await Process.updateOne(
         { _id: processId, usuarioId, ativo: true },
-        { $set: { ativo: false } },
+        {
+          $set: { ativo: false },
+          // Append-only (DEC-052). Dentro da MESMA transação: histórico gravado
+          // fora dela poderia registrar uma desativação que não aconteceu.
+          $push: {
+            historicoAtivacao: {
+              acao: "desativacao",
+              data: new Date(),
+              vinculosAfetados
+            }
+          }
+        },
         { session }
       );
 
@@ -347,10 +376,87 @@ export const deleteProcess = async (usuarioId, processId) => {
   return process;
 };
 
+// ── DEC-052: a volta ──────────────────────────────────────────────────────
+//
+// Restaura o processo e SÓ os vínculos que a cascata dele derrubou. Participante
+// removido à mão continua fora — é o ponto inteiro da decisão, e o motivo de a
+// Parte 4 da F-2a ter parado.
+//
+// **Não cascateia para o cliente**, e isso é regra, não omissão: reativar um
+// processo não reativa o cliente dele, do mesmo jeito que reativar um cliente
+// não reativa os processos. Cada registro se reativa por si — a tela diz isso,
+// senão a advogada reativa um e presume que voltou tudo.
+export const reactivateProcess = async (usuarioId, processId) => {
+  const errors = validateProcessId(processId);
+
+  if (errors.length > 0) {
+    throw createError(errors.join(", "), 400);
+  }
+
+  // `ativo: false` no filtro: reativar o que já está ativo não é operação
+  // idempotente inofensiva — é sinal de que a tela ofereceu uma ação que não
+  // existia, e responder 200 esconderia isso. O 404 é o mesmo que o
+  // `deleteProcess` dá para processo já desativado.
+  const process = await Process.findOne({
+    _id: processId,
+    usuarioId,
+    ativo: false
+  });
+
+  if (!process) {
+    throw createError("Processo não encontrado ou já está ativo", 404);
+  }
+
+  const vinculosAfetados = await contarVinculosDaCascata(usuarioId, processId);
+
+  const session = await mongoose.startSession();
+
+  try {
+    await session.withTransaction(async () => {
+      await Process.updateOne(
+        { _id: processId, usuarioId, ativo: false },
+        {
+          $set: { ativo: true },
+          $push: {
+            historicoAtivacao: {
+              acao: "reativacao",
+              data: new Date(),
+              vinculosAfetados
+            }
+          }
+        },
+        { session }
+      );
+
+      await reativarVinculosDaCascata(usuarioId, processId, session);
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  return getProcessById(usuarioId, processId);
+};
+
+// O que a tela precisa saber ANTES de confirmar qualquer uma das duas ações.
+// Um número só, e o verbo que ele acompanha depende do estado do processo.
+export const previewDeAtivacao = async (usuarioId, processId) => {
+  const errors = validateProcessId(processId);
+  if (errors.length > 0) throw createError(errors.join(", "), 400);
+
+  const process = await Process.findOne({ _id: processId, usuarioId }).select("ativo");
+  if (!process) throw createError("Processo não encontrado", 404);
+
+  return process.ativo
+    ? { ativo: true, vinculosAfetados: await contarVinculosAtivosDoProcesso(usuarioId, processId) }
+    : { ativo: false, vinculosAfetados: await contarVinculosDaCascata(usuarioId, processId) };
+};
+
 export default {
   createProcess,
   listProcesses,
   getProcessById,
   updateProcess,
-  deleteProcess
+  deleteProcess,
+  reactivateProcess,
+  previewDeAtivacao
 };
