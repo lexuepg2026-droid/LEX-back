@@ -38,6 +38,7 @@
 
 import 'dotenv/config';
 import mongoose from 'mongoose';
+import { exigirConfirmacaoDeBanco } from './lib/guardaDeBanco.js';
 
 // ── Guarda de ambiente ────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
@@ -56,6 +57,17 @@ if (!uri) {
 const linha = (t = '─') => console.log(t.repeat(70));
 
 async function main() {
+  // ── Guarda de banco destrutivo (F-2b) ────────────────────────────────────
+  // A migração reescreve parcelas e TROCA UM ÍNDICE ÚNICO. `--dry-run` não
+  // escreve nada e por isso não pergunta — é justamente o modo que existe para
+  // olhar antes de agir.
+  if (!DRY_RUN) {
+    await exigirConfirmacaoDeBanco({
+      uri,
+      acao: 'migração da DEC-048 (reescreve parcelas e troca um índice único)'
+    });
+  }
+
   await mongoose.connect(uri);
   const db = mongoose.connection.db;
   // O nome do banco é a única coisa que se imprime da conexão: a URI carrega

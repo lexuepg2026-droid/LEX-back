@@ -3,6 +3,7 @@
 // A base atual contém apenas dados de teste — não há backfill/migração.
 import 'dotenv/config';
 import mongoose from 'mongoose';
+import { exigirConfirmacaoDeBanco } from './lib/guardaDeBanco.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
@@ -51,10 +52,23 @@ const COLLECTIONS = [
 ];
 
 async function main() {
+  // ── Guarda de banco destrutivo (F-2b) ────────────────────────────────────
+  // ANTES de conectar: perguntar depois de abrir a conexão não muda nada, mas
+  // perguntar antes deixa claro que nada foi tocado se a resposta não vier.
+  //
+  // Banco local passa direto. Remoto interrompe e exige o nome digitado.
+  await exigirConfirmacaoDeBanco({
+    uri: process.env.MONGO_URI,
+    acao: 'reset do banco de desenvolvimento (derruba 13 coleções)'
+  });
+
   // Conexão direta (sem connectDB) para não disparar syncIndexes sobre dados
   // legados antes de derrubar as coleções — a sincronização acontece no seed.
   await mongoose.connect(process.env.MONGO_URI);
-  console.log(`MongoDB conectado: ${mongoose.connection.host}`);
+  // O NOME do banco, e não o host: a URI carrega credencial, e host de cluster
+  // é infraestrutura que não precisa aparecer em log de bancada. É a mesma
+  // regra que `migrarTotalParcelas.js` já seguia.
+  console.log(`MongoDB conectado — banco: ${mongoose.connection.db.databaseName}`);
 
   const db = mongoose.connection.db;
   const existentes = new Set((await db.listCollections().toArray()).map((c) => c.name));

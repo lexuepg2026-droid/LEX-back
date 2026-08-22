@@ -2,6 +2,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import authController from "../controllers/authController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import { janelaMs, teto } from "../config/rateLimit.js";
 
 const router = express.Router();
 
@@ -11,34 +12,19 @@ const router = express.Router();
 // A mensagem diz qual limite estourou, senão o usuário não sabe o que esperar.
 //
 // ── Limites por ambiente ───────────────────────────────────────────────────
-// Os tetos vêm de variável de ambiente, com os valores de produção como
+// Os tetos vêm de variável de ambiente, com os valores de PRODUÇÃO como
 // default: quem não configurar nada continua com 5/10/5 por 15 minutos, que é
 // o que já valia. NÃO baixar os defaults — eles são a proteção real contra
 // força bruta.
 //
-// Fora de produção o teto é multiplicado por MULTIPLICADOR_DEV. Testar o
-// cadastro seis vezes seguidas em desenvolvimento é rotina, e travar por 15
-// minutos no meio de uma sessão de trabalho custa mais do que protege numa
-// base local.
-const MULTIPLICADOR_DEV = 20;
-const ehProducao = () => process.env.NODE_ENV === "production";
-
-const inteiroPositivo = (valor, padrao) => {
-  const n = Number.parseInt(valor, 10);
-  return Number.isInteger(n) && n > 0 ? n : padrao;
-};
-
-const JANELA_MS = inteiroPositivo(process.env.RATE_LIMIT_JANELA_MINUTOS, 15) * 60 * 1000;
-
-const limite = (variavel, padrao) => {
-  const base = inteiroPositivo(process.env[variavel], padrao);
-  return ehProducao() ? base : base * MULTIPLICADOR_DEV;
-};
-
+// O multiplicador por ambiente e a janela moram em `config/rateLimit.js`
+// (F-2b). Este bloco era DUPLICADO aqui e em `portalRoutes.js`, linha por
+// linha; bastaria ajustar um dos dois para o portal e a área da advogada
+// passarem a se comportar diferente sem ninguém notar.
 const criarLimiter = (variavel, padrao, message) =>
   rateLimit({
-    windowMs: JANELA_MS,
-    max: limite(variavel, padrao),
+    windowMs: janelaMs(),
+    max: teto(variavel, padrao),
     message: { message },
     standardHeaders: true,
     legacyHeaders: false,
