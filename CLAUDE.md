@@ -3890,6 +3890,11 @@ todo. O backend continuou verde **sem ser alterado**.
 frontend **566** (20 novos em `tests/regressions/f2a.test.js`). Zero skip, zero
 todo nos dois.
 
+**Suítes na F-2b:** backend **549** testes, **+41** sobre os 508 da F-2a — 15 em
+`tests/processClient/dec052.test.js`, 12 em `tests/infra/rateLimit.test.js` e 14
+em `tests/infra/guardaDeBanco.test.js`. Frontend **583**, +17 em
+`tests/regressions/dec052.test.js`. Zero skip, zero todo nos dois.
+
 ## DEC-050 — a semântica do 401 (F-2a)
 
 **A regra, em uma frase:** *o 401 é reservado **exclusivamente** para sessão
@@ -4023,7 +4028,204 @@ coisa que o `seed:fresh` só dispensa porque `resetDev.js` faz `dropCollection` 
 o Mongoose recria o índice novo na subida. **Não apagar.** O que ele deixou de
 ser é remendo de um seed que gravava incompleto.
 
-## O que fica para adiante (atualizado em 21/08/2026 — depois da F-2a)
+## DEC-052 — a cascata registra o que derrubou (F-2b)
+
+**A regra, em uma frase:** *a desativação em cascata **marca** cada vínculo que
+derrubou; a reativação restaura **exatamente esses** e limpa a marca.*
+
+### O achado que a F-2a levantou e não resolveu
+
+`deleteProcess` desativa o processo **e**, na mesma transação, chama
+`desativarVinculosDoProcesso`. A cascata existe por um bom motivo: vínculo ativo
+apontando para processo inativo faria o cliente **parecer ocupado**, e o
+`DELETE /clients/:id` recusaria a exclusão por um processo que já não existe.
+
+**O problema era que ela não registrava o que fazia.** Remover um participante
+individualmente (`desvincularCliente`, pelo
+`DELETE /processes/:id/clientes/:clienteId`) gravava **exatamente o mesmo**
+`ativo: false` no mesmo campo do mesmo documento. Depois do fato, **nada
+distinguia os dois** — e reativar não tinha saída correta:
+
+| Opção | O que quebra |
+|---|---|
+| restaurar **todos** os inativos | ressuscita participantes que a advogada **removeu de propósito** |
+| restaurar **nenhum** | processo volta **vazio** — estado que o próprio sistema declara impossível, com `clientePrincipalId` (`required`) apontando para vínculo morto e a geração de documento falhando em 422 |
+
+Não havia terceira saída sem tocar na desativação. Foi por isso que a Parte 4 da
+F-2a parou.
+
+### É a TERCEIRA vez que este projeto chega à mesma conclusão
+
+> **Estado passado não se infere, se registra.**
+
+| Onde | O que se registrou em vez de inferir |
+|---|---|
+| **Estorno** (F-1a) | a alocação desfeita **guarda** que foi desfeita, em vez de ser recalculada a partir do saldo |
+| **DEC-044** | a linha do extrato que deixou de valer **diz** que deixou, em vez de a tela deduzir pela ausência |
+| **DEC-052** (agora) | a cascata **marca** o que derrubou, em vez de a reativação adivinhar depois |
+
+**Inferência sobre estado passado é o que produziu o pior defeito deste
+projeto.** Quem chegar aqui uma quarta vez: a resposta já é conhecida — grave o
+fato no momento em que ele acontece.
+
+### O campo
+
+`ProcessoCliente.desativadoPorCascataDe` — o id do processo que derrubou o
+vínculo. **Um campo, três leituras:**
+
+```
+preenchido        → caiu pela cascata do processo X (e diz qual)
+null + inativo    → foi removido À MÃO
+null + ativo      → vínculo comum, em uso
+```
+
+**Guardar o id, e não um booleano**, é redundante com `processoId` *hoje* — e é
+de propósito: o dia em que outra coisa cascatear para cá, um booleano não saberia
+dizer QUEM derrubou, e voltaríamos a inferir.
+
+**A marca é limpa na reativação.** Sem a limpeza, uma remoção manual posterior
+do mesmo vínculo carregaria marca de cascata velha e ele voltaria sozinho na
+reativação seguinte. `desvincularCliente` também zera a marca — rede de
+segurança, e há teste travando a **invariante**: *nenhum vínculo ATIVO carrega
+marca de cascata*.
+
+**As duas escritas são transacionais** com a do processo, nas duas direções:
+cascata pela metade é pior que cascata nenhuma. Há teste que força a escrita dos
+vínculos a falhar e confere que o processo continua **ativo** e sem histórico.
+
+### O que a reativação NÃO faz
+
+**Não cascateia para cima.** Reativar um processo não reativa o cliente dele;
+reativar um cliente não reativa os processos. Cada registro se reativa por si, e
+**a tela diz isso antes de confirmar** — sem a frase, a advogada reativa o
+cliente e presume que voltou tudo.
+
+No cliente a ausência de cascata é estrutural, não esquecimento: `deleteClient`
+só aceita desativar quem **não participa de nenhum processo ativo**. No momento
+em que ele saiu não havia processo dele de pé para derrubar, e não há o que
+ressuscitar na volta.
+
+### Três coisas que a reativação exigiu para existir de fato
+
+**1. `historicoAtivacao` em `Process` e `Client`.** Os dois models não tinham
+histórico nenhum — o único do sistema era `Fee.historicoStatus`. Append-only,
+schema compartilhado (`models/shared/historicoAtivacaoSchema.js`), fora da
+allowlist de update. Guarda `acao`, `data` e `vinculosAfetados` (`null` no
+cliente, que não cascateia — e `null` diz "a pergunta não se aplica", enquanto
+`0` diria "cascateou e não pegou ninguém").
+
+**Não é o histórico de STATUS que a F-2c vai trazer**, e ficam separados de
+propósito: status é o andamento jurídico ("em recurso", "arquivado"), ativação é
+se o registro existe para o sistema. Um processo arquivado continua **ativo**.
+
+**2. O filtro `situacao` nas listagens.** `getAllClients` e `listProcesses`
+filtravam `ativo: true` **sem alternativa** — um registro desativado não
+aparecia em lugar nenhum, e a reativação era **impossível pela interface**.
+Três valores (`ativos` — o padrão, inalterado —, `inativos`, `todos`); valor
+desconhecido é **400 com `campo`**, porque `?situacao=ativas` devolveria os
+ativos em silêncio e a advogada concluiria que não há desativados.
+
+**3. As rotas.** `PATCH /clients/:id/reactivate` e
+`PATCH /processes/:id/reactivate`, mais `GET /processes/:id/activation-preview`
+(a contagem que a tela mostra antes de confirmar). **Sub-rota própria, e não
+`PATCH /:id { ativo: true }`**: `ativo` está fora da allowlist de update desde a
+Fase 4.5 (achados #1/#2/#11), e reabri-lo devolveria a porta que a auditoria
+fechou — a de desativar um registro por um PATCH comum, sem passar pela checagem
+de dependências.
+
+Reativar o que já está ativo é **404**, não 200 silencioso: significa que a tela
+ofereceu uma ação que não existia, e esconder isso atrasaria o diagnóstico.
+
+## Rate limit — os tetos por ambiente (F-2b)
+
+**O passo 85 nunca foi código a escrever.** Ele é **pré-voo**: conferir que a
+demonstração não está rodando com `NODE_ENV=production`. O teto por ambiente já
+existia desde a auditoria, e o passo foi validado em 17/08/2026. Lido o código
+na F-2b, o comportamento anterior **não estava** nem atrapalhando o
+desenvolvimento nem desligado onde deveria valer.
+
+Duas coisas reais apareceram na leitura, e as duas foram feitas:
+
+**1. Uma cópia só.** O bloco inteiro — multiplicador, `ehProducao`,
+`inteiroPositivo`, a janela — estava **duplicado** em `authRoutes.js` e
+`portalRoutes.js`, linha por linha. Foi para `src/config/rateLimit.js`. Duas
+cópias da mesma decisão divergem: bastaria ajustar uma para o portal e a área da
+advogada passarem a se comportar diferente sem ninguém notar.
+
+**2. `test` deixou de ser tratado como `development`.**
+
+| Ambiente | Fator | Teto de cadastro (default 5) |
+|---|---|---|
+| `production` | **1×** | **5** — o limite de verdade |
+| `development` | **20×** | 100 |
+| `test` | **500×** | 2500 |
+| desconhecido | 20× (cai no de dev) | 100 |
+
+Os dois primeiros já eram assim. O terceiro é novo, e a conta que o motivou: a
+suíte faz **mais de 60 cadastros** numa execução de ~6 minutos — ou seja, dentro
+de **uma única janela de 15**. Com o fator de dev, o teto era 100: margem de um
+terço, e ela encolhe a cada fase (486 → 549 testes entre a F-1c.2 e a F-2b). No
+dia em que estourasse, a falha **não diria "rate limit"** — apareceria como um
+cadastro recusado num teste que não tem nada a ver com autenticação.
+
+**500 e não `Infinity`:** um número mantém o limitador montado, exercitando o
+mesmo caminho de código que roda em produção. Desligá-lo faria a suíte deixar de
+cobrir o middleware inteiro.
+
+**Ambiente desconhecido cai no fator de DESENVOLVIMENTO, nunca no de produção** —
+errar para o lado seguro: um `NODE_ENV=staging` no teto de produção derrubaria
+uma demonstração.
+
+**`RATE_LIMIT_MULTIPLICADOR` sobrepõe o fator.** Existe para quem precisa de um
+teto exercitável sem declarar `NODE_ENV=production` — é o caso da sonda que
+estoura o balde do portal (`tests/portal/fixtures/rateLimitProbe.mjs`) para
+provar que ele é independente dos baldes da advogada. Declarar produção ali
+arrastaria o `errorHandler` e o resto do sistema junto.
+
+**Os defaults de produção NÃO mudaram** e não devem ser baixados: 5 cadastros,
+10 logins, 5 trocas de senha, 5 acessos ao portal, por 15 minutos.
+
+## Guarda dos comandos destrutivos (F-2b)
+
+`npm run seed:fresh` derruba **treze coleções**; `migrarTotalParcelas.js`
+reescreve parcelas e **troca um índice único**; `seed:demo:clean` apaga tudo do
+usuário demo. Os três rodam contra o banco de **desenvolvimento**, que neste
+projeto é **Atlas remoto e compartilhado** — não um Mongo local descartável.
+
+Só o banco de **teste** tinha guarda (`tests/helpers/env.js`). O de
+desenvolvimento não tinha nenhuma, e **já aconteceu de um `seed:fresh` apagar
+dados no meio de uma validação**.
+
+**Aviso que não interrompe é aviso que ninguém lê.** Os scripts já imprimiam o
+banco em que estavam mexendo, e isso não impediu o acidente: a saída rola, o
+comando já está rodando, e quando a linha aparece o dano está feito. A guarda
+(`scripts/lib/guardaDeBanco.js`) **INTERROMPE**.
+
+**Confirma-se digitando o NOME DO BANCO**, não "s/n". "y" é memória muscular:
+quem roda `seed:fresh` seis vezes num dia responde "y" sem ler. Digitar `lex`
+obriga a olhar **qual** banco está no alvo — e é exatamente esse o erro que a
+guarda existe para pegar.
+
+| Situação | O que acontece |
+|---|---|
+| banco **local** (`localhost`, `127.0.0.1`, `::1`) | passa direto, **sem perguntar** — perguntar num banco descartável treinaria a resposta automática |
+| banco **remoto**, terminal interativo | interrompe e exige o nome digitado |
+| banco remoto, **sem TTY** | **RECUSA** — um script encadeado rodaria a operação sem ninguém ter visto a pergunta |
+| `LEX_CONFIRMA_BANCO=sim` ou `--sim`/`--yes`/`-y` | dispensa, de propósito |
+| conjunto **misto** de hosts | tratado como remoto: basta um nó fora da máquina |
+| URI vazia ou torta | **não** é considerada local — o que não se classifica, pergunta |
+
+**A URI nunca aparece na saída, nem mascarada** — ela carrega usuário e senha do
+cluster. O que se imprime é o **nome do banco**, que é o que a pessoa precisa
+para decidir. O host do cluster saiu do log de `resetDev.js` pelo mesmo motivo.
+
+**`--dry-run` da migração não pergunta**: é justamente o modo que existe para
+olhar antes de agir. **O seed comum também não** — `seed:fresh` é
+`reset:dev && seed:demo`, e o reset já perguntou; perguntar duas vezes na mesma
+execução treina a resposta automática. Só o `--clean` tem guarda própria, porque
+é chamado sozinho.
+
+## O que fica para adiante (atualizado em 22/08/2026 — depois da F-2b)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
@@ -4057,58 +4259,41 @@ ser pré-condição de todo reset.
   perguntas já estão com o Daniel.** Enquanto não voltarem, a F-2b não começa
   pelo status.
 - **cor por status** e **histórico de→para**, que dependem do mesmo vocabulário.
-- **reativação de cliente e de processo** (achado B2): desativar existe,
-  reativar não — um registro desativado por engano fica assim para sempre. Era
-  a **Parte 4 da F-2a** e o portão de escopo mandou parar. **Mas não parou por
-  falta de espaço: parou num achado**, e ele precisa de decisão antes de a F-2b
-  começar.
+- **✅ RESOLVIDO na F-2b — reativação de cliente e de processo** (achado B2).
+  O que travava era a cascata perdida, e a saída foi **registrar em vez de
+  inferir**: ver a **DEC-052**, acima.
 
-### O achado que trava a reativação de PROCESSO: a cascata de desativação é PERDIDA
+  **O achado, guardado para registro:** a cascata de desativação de processo
+  gravava o mesmo `ativo: false` que a remoção manual de um participante, e
+  depois do fato nada os distinguia. Reativar ou ressuscitava gente removida de
+  propósito, ou devolvia um processo vazio. A correção foi a cascata **marcar**
+  o que derrubou (`desativadoPorCascataDe`), e a reativação restaurar só isso.
 
-`deleteProcess` (`services/processService.js`) desativa o processo **e**, na
-mesma transação, chama `desativarVinculosDoProcesso` — que faz
-`updateMany({processoId, ativo: true}, {ativo: false})` em `processo_clientes`.
-A cascata existe por um bom motivo, escrito lá: vínculo ativo apontando para
-processo inativo faria o cliente parecer ocupado, e o `DELETE /clients/:id`
-recusaria a exclusão por um processo que já não existe.
+  Junto vieram as três coisas que faltavam para a reativação existir de fato: o
+  `historicoAtivacao` em `Process` e `Client` (que não tinham histórico
+  nenhum), o filtro `situacao` nas listagens (que escondiam os desativados sem
+  alternativa) e as rotas de reativação.
 
-**O problema:** essa cascata **não registra o que fez**. Remover um participante
-individualmente (`processoClienteService.js:352`, pelo
-`DELETE /processes/:id/clientes/:clienteId`) grava **exatamente o mesmo**
-`ativo: false` no vínculo. Depois do fato, **nada distingue** um vínculo
-desativado pela cascata de um que a advogada removeu de propósito.
+- **✅ RESOLVIDO na F-2b — comandos destrutivos sem guarda.** `seed:fresh`,
+  `seed:demo:clean` e a migração agora INTERROMPEM e pedem confirmação contra
+  banco não-local, dizendo o nome do banco. Ver "Guarda dos comandos
+  destrutivos".
 
-Então reativar um processo não tem saída correta hoje:
+- **✅ RESOLVIDO na F-2b — passo 85 / rate limit.** O teto por ambiente já
+  existia e estava certo; o passo é **pré-voo**, não código a escrever. O que a
+  F-2b fez foi tirar a duplicação entre os dois arquivos de rota e separar
+  `test` de `development`, que compartilhavam um teto perto demais do que a
+  suíte consome.
 
-| Opção | O que quebra |
-|---|---|
-| **restaurar todos** os vínculos inativos | ressuscita participantes que a advogada **removeu deliberadamente** antes de desativar o processo |
-| **não restaurar nenhum** | o processo volta **sem participante nenhum** — estado que o próprio sistema declara impossível ("Processo sem cliente não faz sentido", `processoClienteService.js`), com `clientePrincipalId` (campo `required`) apontando para um vínculo morto e a geração de documento falhando com o 422 "O processo não tem cliente ativo vinculado" |
+**A próxima fase é a F-2c**, e ela continua dependendo de gente: o **vocabulário
+de status da Laís**. As sete perguntas seguem com o Daniel. Sem elas, não se
+começa — os valores viram dado gravado, tela, filtro e histórico de→para, e
+trocá-los depois é migração em quatro lugares.
 
-**Não há terceira opção sem tocar na desativação.** Para a reativação ser
-correta, a cascata precisa passar a marcar o que ela desativou — um campo no
-vínculo (ex.: `desativadoPorCascata: true`) ou um registro da operação. Isso
-mexe num caminho **transacional e bem testado**, e é decisão de modelo, não
-detalhe de implementação.
-
-**A reativação de CLIENTE não tem esse problema** e poderia ter sido feita
-isolada: `deleteClient` só faz `ativo = false`, sem cascata, e ainda exige zero
-processos ativos antes. Ficou junto por coerência — entregar metade de uma ação
-que a interface anuncia como um par ("Desativar"/"Reativar") em dois registros
-que a advogada trata igual seria pior que entregar as duas de uma vez.
-
-**A regra do prompt continua valendo e não é o que está em questão:** reativar
-cliente **não** reativa os processos dele, e a tela precisa dizer isso. O que
-falta decidir é outra coisa — o que acontece com os **participantes** de um
-processo que volta.
-
-**Também falta o histórico.** "Registre no histórico do registro, como qualquer
-mudança de estado" não tem onde ser escrito: `Process` e `Client` **não têm
-campo de histórico**. O único que existe é `Fee.historicoStatus`
-(append-only, escrito por `statusHistory.js`), e ele é do honorário. Um
-histórico de **ativação** não depende do vocabulário da Laís — é `ativo`, não
-status —, mas convém desenhá-lo junto com o `de→para` de status que a F-2b vai
-precisar, para não nascerem dois mecanismos de histórico no mesmo model.
+Quando chegarem: status do processo, **cor por status** e o **histórico
+`de → para`**. Este último tem um ponto já decidido: ele é **separado** do
+`historicoAtivacao` da DEC-052, porque status é o andamento jurídico e ativação
+é se o registro existe para o sistema — um processo arquivado continua ativo.
 
 **Duas regras de negócio da F-1c.2 precisam da Laís**, porque são combinação com
 cliente e não decisão técnica: a **sobra da divisão na primeira parcela**
