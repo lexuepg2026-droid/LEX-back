@@ -113,12 +113,54 @@ export const montarVinculos = async (usuarioId, processoId, clientes, session) =
 
 // ── Cascata e integridade referencial ──────────────────────────────────────
 
+// ── DEC-052: a cascata marca o que derrubou ───────────────────────────────
+//
+// Antes da F-2b esta função gravava só `ativo: false` — o MESMO que
+// `desvincularCliente` grava numa remoção manual —, e os dois estados ficavam
+// indistinguíveis. Ver a nota longa em `models/ProcessoCliente.js`.
+//
+// Só toca em vínculo ATIVO. O que já estava fora (removido à mão antes desta
+// desativação) não é marcado, e por isso não volta na reativação — que é
+// exatamente o comportamento que se quer.
 export const desativarVinculosDoProcesso = (usuarioId, processoId, session) =>
   ProcessoCliente.updateMany(
     { usuarioId, processoId, ativo: true },
-    { $set: { ativo: false } },
+    { $set: { ativo: false, desativadoPorCascataDe: processoId } },
     { session: session ?? null }
   );
+
+// A volta: restaura SÓ os que esta cascata derrubou, e limpa a marca.
+//
+// O filtro exige `desativadoPorCascataDe: processoId` — não basta `ativo:
+// false`. Um vínculo removido à mão tem a marca `null` e **continua fora**, que
+// é o ponto inteiro da DEC-052.
+//
+// A marca é limpa na mesma escrita. Vínculo restaurado volta a ser vínculo
+// comum: se ficasse marcado, uma remoção manual posterior dele carregaria marca
+// de cascata velha e ele ressuscitaria sozinho na reativação seguinte.
+export const reativarVinculosDaCascata = (usuarioId, processoId, session) =>
+  ProcessoCliente.updateMany(
+    { usuarioId, processoId, ativo: false, desativadoPorCascataDe: processoId },
+    { $set: { ativo: true, desativadoPorCascataDe: null } },
+    { session: session ?? null }
+  );
+
+// Quantos vínculos ATIVOS o processo tem — o número que a tela mostra antes de
+// confirmar a desativação. A advogada precisa saber o tamanho do efeito antes
+// de causá-lo; é a regra do modal de estorno (passo 161).
+export const contarVinculosAtivosDoProcesso = (usuarioId, processoId) =>
+  ProcessoCliente.countDocuments({ usuarioId, processoId, ativo: true });
+
+// Quantos voltariam numa reativação — os marcados por esta cascata. É o número
+// que a tela mostra antes de confirmar a reativação, e ele é MENOR que o total
+// de desativados sempre que houve remoção manual.
+export const contarVinculosDaCascata = (usuarioId, processoId) =>
+  ProcessoCliente.countDocuments({
+    usuarioId,
+    processoId,
+    ativo: false,
+    desativadoPorCascataDe: processoId
+  });
 
 export const contarProcessosDoCliente = (usuarioId, clienteId) =>
   ProcessoCliente.countDocuments({ usuarioId, clienteId, ativo: true });
@@ -350,6 +392,15 @@ export const desvincularCliente = async (usuarioId, processoId, clienteId) => {
   }
 
   vinculo.ativo = false;
+  // DEC-052: remoção MANUAL não leva marca de cascata — é o que faz este
+  // vínculo NÃO voltar quando o processo for reativado.
+  //
+  // Escrito explicitamente, e não deixado por conta do default: o vínculo aqui
+  // está ativo, então a marca já deveria ser `null` (a reativação limpa). Este
+  // `null` é a rede — se algum caminho futuro esquecer de limpar, a remoção
+  // manual continua significando "removido à mão", que é a invariante que a
+  // DEC-052 sustenta.
+  vinculo.desativadoPorCascataDe = null;
   await vinculo.save();
 
   return vinculo;
@@ -364,6 +415,9 @@ export default {
   promoverAPrincipal,
   desvincularCliente,
   desativarVinculosDoProcesso,
+  reativarVinculosDaCascata,
+  contarVinculosAtivosDoProcesso,
+  contarVinculosDaCascata,
   contarProcessosDoCliente,
   buscarVinculoAtivo,
   montarVinculos,

@@ -27,6 +27,7 @@ import { gerarDocumentoService, atualizarTextoService } from '../src/services/do
 import { detectarLacunas } from '../src/utils/lacunas.js';
 import { CATALOGO_VARIAVEIS } from '../src/config/templateVariables.js';
 import { TEXTO_CONFIRMACAO } from '../src/config/textoConfirmacao.js';
+import { exigirConfirmacaoDeBanco } from './lib/guardaDeBanco.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'development') {
@@ -633,6 +634,22 @@ const FEES_DATA = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main() {
+  // ── Guarda de banco destrutivo (F-2b) ────────────────────────────────────
+  // Só no `--clean`, e a precisão importa: `npm run seed:fresh` é
+  // `reset:dev && seed:demo`, e o `reset:dev` JÁ pergunta. Guardar o seed comum
+  // faria a mesma execução perguntar duas vezes — e pergunta repetida é
+  // exatamente o que treina a pessoa a responder no automático, que é o hábito
+  // que esta guarda existe para evitar.
+  //
+  // `seed:demo:clean` apaga tudo do usuário demo e é chamado sozinho, então
+  // precisa da própria guarda.
+  if (IS_CLEAN) {
+    await exigirConfirmacaoDeBanco({
+      uri: process.env.MONGO_URI,
+      acao: 'limpeza dos dados do usuário demo (seed:demo:clean)'
+    });
+  }
+
   await connectDB();
 
   const existingUser = await User.findOne({ email: DEMO_EMAIL });

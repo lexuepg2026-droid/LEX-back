@@ -16,7 +16,15 @@ import { createServer } from "node:http";
 
 process.env.NODE_ENV = "test";
 process.env.RATE_LIMIT_JANELA_MINUTOS = "15";
-process.env.RATE_LIMIT_PORTAL_LOGIN = "1"; // ×20 fora de produção = 20
+// O multiplicador de ambiente é sobreposto para 1 (F-2b): em `test` ele passou
+// a ser 500×, e com ele o teto do portal seria 500 — a sonda precisaria de 500
+// requisições para medir o que mede em 40.
+//
+// Sobrepor o multiplicador é melhor que declarar `NODE_ENV=production` aqui:
+// isto muda SÓ o teto, enquanto o outro arrastaria o `errorHandler` e o resto
+// do sistema para o modo de produção junto.
+process.env.RATE_LIMIT_MULTIPLICADOR = "1";
+process.env.RATE_LIMIT_PORTAL_LOGIN = "20"; // ×1 = 20, o mesmo teto de antes
 process.env.RATE_LIMIT_LOGIN = "1000";
 process.env.RATE_LIMIT_CADASTRO = "1000";
 process.env.RATE_LIMIT_SENHA = "1000";

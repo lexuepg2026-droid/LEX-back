@@ -6,6 +6,7 @@ import { contarProcessosDoCliente } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { regexTermoSimples } from "../utils/texto.js";
+import { filtroSituacao } from "../utils/filtrosDeConsulta.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -199,16 +200,20 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
-const getAllClients = async (usuarioId, { page = 1, limit = 20, busca } = {}) => {
+const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao } = {}) => {
   const skip = (page - 1) * limit;
-  const filter = { usuarioId, ativo: true };
+  // DEC-052: `ativo: true` deixou de ser fixo. Sem `situacao`, nada muda —
+  // o padrão do helper é exatamente o filtro de antes.
+  const filter = { usuarioId, ...filtroSituacao(situacao) };
   // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
   const regex = regexTermoSimples(busca);
   if (regex) {
     filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
   }
   const [data, total] = await Promise.all([
-    Client.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    // `-historicoAtivacao` pelo mesmo motivo do processo: append-only, cresce,
+    // e a listagem não o lê.
+    Client.find(filter).select("-historicoAtivacao").sort({ createdAt: -1 }).skip(skip).limit(limit),
     Client.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -363,6 +368,39 @@ const deleteClient = async (usuarioId, clientId) => {
   }
 
   client.ativo = false;
+  // DEC-052 — append-only. `vinculosAfetados` fica `null`: o cliente NÃO
+  // cascateia (a checagem acima recusa a desativação enquanto houver processo
+  // ativo), e `null` diz "a pergunta não se aplica", enquanto `0` diria
+  // "cascateou e não pegou ninguém".
+  client.historicoAtivacao.push({ acao: "desativacao", data: new Date(), vinculosAfetados: null });
+  await client.save();
+  return client;
+};
+
+// ── DEC-052: reativar cliente NÃO reativa os processos dele ───────────────
+//
+// Não há cascata aqui, e a ausência é a regra — não um esquecimento.
+//
+// O motivo é simétrico ao da desativação: `deleteClient` só aceita desativar um
+// cliente que **não participa de nenhum processo ativo**. Então, no momento em
+// que ele saiu, não havia processo dele de pé para derrubar — e não há o que
+// ressuscitar na volta. Um processo desativado à parte foi desativado por
+// decisão própria, e volta por decisão própria.
+//
+// **A tela precisa dizer isso.** Sem a frase, a advogada reativa o cliente e
+// presume que os processos voltaram junto — e só descobre que não quando for
+// procurar um deles.
+const reactivateClient = async (usuarioId, clientId) => {
+  assertIdValido(clientId);
+
+  // Espelha o 404 de `deleteClient` para registro já no estado alvo: reativar o
+  // que já está ativo significa que a tela ofereceu uma ação que não existia, e
+  // um 200 esconderia isso.
+  const client = await Client.findOne({ _id: clientId, usuarioId, ativo: false });
+  if (!client) return null;
+
+  client.ativo = true;
+  client.historicoAtivacao.push({ acao: "reativacao", data: new Date(), vinculosAfetados: null });
   await client.save();
   return client;
 };
@@ -373,5 +411,6 @@ export default {
   getAllClients,
   getClientById,
   updateClient,
-  deleteClient
+  deleteClient,
+  reactivateClient
 };

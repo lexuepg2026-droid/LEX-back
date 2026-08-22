@@ -67,6 +67,39 @@ export const filtroTexto = (valor) => {
   return limpo.length > 0 ? limpo : undefined;
 };
 
+// ── DEC-052: listar o que foi desativado ──────────────────────────────────
+//
+// Até a F-2b as listagens de cliente e processo filtravam `ativo: true` sem
+// alternativa. Isso tornava a reativação **impossível pela interface**: um
+// registro desativado não aparecia em lugar nenhum, e um menu ⋮ com "Reativar"
+// não tinha linha onde existir.
+//
+// Três valores, e o padrão é o comportamento de sempre:
+//
+//   ausente / "ativos"  → `{ ativo: true }`   (o padrão, inalterado)
+//   "inativos"          → `{ ativo: false }`
+//   "todos"             → `{}`                (sem restrição)
+//
+// Valor desconhecido vira **400 com `campo`**, como o id malformado da F-0 e
+// pelo mesmo motivo: `?situacao=ativas` (feminino, plural errado) devolveria
+// silenciosamente a lista de ativos e a advogada concluiria que não há
+// desativados. Filtro que erra calado é pior que filtro que recusa.
+export const SITUACOES = Object.freeze(["ativos", "inativos", "todos"]);
+
+export const filtroSituacao = (valor, campo = "situacao") => {
+  if (valor === undefined || valor === null || valor === "") return { ativo: true };
+
+  if (typeof valor !== "string" || !SITUACOES.includes(valor)) {
+    throw erroDeFiltro(
+      campo,
+      `Situação inválida. Use um de: ${SITUACOES.join(", ")}.`
+    );
+  }
+
+  if (valor === "todos") return {};
+  return { ativo: valor === "ativos" };
+};
+
 // Devolve o id quando é string e ObjectId válido; senão `undefined`.
 //
 // A checagem de `typeof` vem ANTES de `isValid`: `isValid` aceita coisas que
@@ -208,6 +241,7 @@ export const filtroPeriodo = (de, ate, { campoDe = "de", campoAte = "ate" } = {}
 
 export default {
   filtroTexto,
+  filtroSituacao,
   filtroObjectId,
   filtroObjectIdExigido,
   filtroDataExigida,
