@@ -80,7 +80,13 @@ import { nomeDoCliente, nomeDoProcesso } from "../src/services/activationHierarc
 // advogada a procurar cada um deles no banco para saber do que se trata — e
 // aí o relatório não é entregável, é matéria-prima.
 const nomeDoHonorario = (f) => f?.descricao?.trim() || "(sem descrição)";
-const nomeDoDocumento = (d) => d?.titulo?.trim() || d?.nomeArquivo?.trim() || "(sem título)";
+// `nome` é o campo do model — conferido em `models/Document.js`, não
+// presumido. `descricao` entra como segunda opção porque documento gerado
+// nasce sem `nome` preenchido, e um relatório com "(sem título)" na linha
+// obriga a advogada a ir ao banco para saber do que se trata. `tipo` fecha,
+// e sempre existe.
+const nomeDoDocumento = (d) =>
+  d?.nome?.trim() || d?.descricao?.trim() || d?.tipo?.trim() || "(sem nome)";
 const nomeDaSecao = (s) => s?.titulo?.trim() || "(sem título)";
 
 // Índice `_id → documento` para os pais de um lote. Uma consulta por relação,
@@ -250,7 +256,7 @@ const RELACOES = [
     filho: "Documento",
     Filho: Document,
     nomeFilho: nomeDoDocumento,
-    projecaoFilho: "titulo nomeArquivo",
+    projecaoFilho: "nome descricao tipo",
     pais: [
       {
         campo: "processoId",
@@ -285,7 +291,7 @@ const RELACOES = [
         campo: "documentoId",
         rotulo: "Documento",
         Model: Document,
-        projecao: "titulo nomeArquivo",
+        projecao: "nome descricao tipo",
         nome: nomeDoDocumento
       },
       {
