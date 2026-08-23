@@ -11,6 +11,11 @@ import {
   validateUpdateProcess
 } from "../validations/processValidation.js";
 import {
+  findInactiveParentsOfProcess,
+  findInactiveParentsForProcesses,
+  erroDePaiInativo
+} from "./activationHierarchy.js";
+import {
   assertClientesDoUsuario,
   CAMPOS_CLIENTE_POPULADO,
   contarVinculosAtivosDoProcesso,
@@ -185,6 +190,35 @@ const anexarParticipantes = async (usuarioId, processos) => {
   return processos;
 };
 
+// ── DEC-053 na listagem ───────────────────────────────────────────────────
+//
+// Cada processo DESATIVADO leva junto quem impede a reativação dele, se
+// alguém impedir. A tela usa isso para desabilitar "Reativar" com o motivo ao
+// lado, em vez de oferecer uma ação que o backend recusaria.
+//
+// `impedimentosDeReativacao` só existe na linha desativada — num processo
+// ativo a chave não aparece, porque a pergunta não se aplica. Mandar `[]` em
+// toda linha ativa seria mandar um vetor vazio por página inteira para dizer
+// "não pergunte".
+//
+// **A tela é conveniência; a autoridade é do serviço.** `reactivateProcess`
+// recusa de qualquer forma — inclusive para quem chamar a rota direto, sem
+// passar por tela nenhuma. Esta função existe para a advogada não descobrir a
+// recusa depois de clicar, não para ser o lugar onde a regra mora.
+const anexarImpedimentosDeReativacao = async (usuarioId, processos) => {
+  if (processos.length === 0) return processos;
+
+  const porProcesso = await findInactiveParentsForProcesses(usuarioId, processos);
+  if (porProcesso.size === 0) return processos;
+
+  for (const processo of processos) {
+    const bloqueadores = porProcesso.get(String(processo._id));
+    if (bloqueadores) processo.impedimentosDeReativacao = bloqueadores;
+  }
+
+  return processos;
+};
+
 export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, status, situacao } = {}) => {
   const skip = (page - 1) * limit;
   // DEC-052: `ativo: true` deixou de ser fixo, para a reativação ter onde
@@ -222,6 +256,7 @@ export const listProcesses = async (usuarioId, { page = 1, limit = 20, busca, st
   ]);
 
   await anexarParticipantes(usuarioId, data);
+  await anexarImpedimentosDeReativacao(usuarioId, data);
 
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
@@ -407,6 +442,20 @@ export const reactivateProcess = async (usuarioId, processId) => {
     throw createError("Processo não encontrado ou já está ativo", 404);
   }
 
+  // ── DEC-053: o filho não sobe sem o pai ─────────────────────────────────
+  //
+  // ANTES da checagem e FORA da transação, de propósito: é leitura de
+  // validação, e abrir uma transação para desfazê-la em seguida deixaria a
+  // sessão aberta pelo tempo de duas consultas que não escrevem nada. Mesma
+  // escolha que `createProcess` faz com `assertClientesDoUsuario`.
+  //
+  // A recusa nomeia o cliente. Ver `activationHierarchy.js` para por que a
+  // mensagem genérica é o defeito, e não uma variação aceitável.
+  const paisInativos = await findInactiveParentsOfProcess(usuarioId, process);
+  if (paisInativos.length > 0) {
+    throw erroDePaiInativo(paisInativos, "reativar");
+  }
+
   const vinculosAfetados = await contarVinculosDaCascata(usuarioId, processId);
 
   const session = await mongoose.startSession();
@@ -443,12 +492,45 @@ export const previewDeAtivacao = async (usuarioId, processId) => {
   const errors = validateProcessId(processId);
   if (errors.length > 0) throw createError(errors.join(", "), 400);
 
-  const process = await Process.findOne({ _id: processId, usuarioId }).select("ativo");
+  // `clientePrincipalId` entra na projeção por causa da DEC-053: o preview
+  // precisa responder também "isso pode ser reativado?", e o principal é um
+  // dos candidatos a pai inativo.
+  const process = await Process.findOne({ _id: processId, usuarioId }).select(
+    "ativo clientePrincipalId"
+  );
   if (!process) throw createError("Processo não encontrado", 404);
 
-  return process.ativo
-    ? { ativo: true, vinculosAfetados: await contarVinculosAtivosDoProcesso(usuarioId, processId) }
-    : { ativo: false, vinculosAfetados: await contarVinculosDaCascata(usuarioId, processId) };
+  if (process.ativo) {
+    return {
+      ativo: true,
+      vinculosAfetados: await contarVinculosAtivosDoProcesso(usuarioId, processId)
+    };
+  }
+
+  // ── DEC-053 no preview ──────────────────────────────────────────────────
+  //
+  // O modal da reativação já consultava este endpoint para saber quantos
+  // vínculos voltam. Agora ele também descobre aqui se a reativação é
+  // possível — e é isto que impede a tela de abrir um modal cujo botão
+  // "Reativar" levaria a um 409.
+  //
+  // Fica no MESMO endpoint em vez de num novo: as duas perguntas são feitas no
+  // mesmo instante, pelo mesmo motivo, e um segundo endpoint significaria duas
+  // idas ao servidor para montar um modal só.
+  const impedimentos = await findInactiveParentsOfProcess(usuarioId, process);
+
+  return {
+    ativo: false,
+    vinculosAfetados: await contarVinculosDaCascata(usuarioId, processId),
+    // Sempre presente no ramo do desativado, mesmo vazio: aqui a tela PERGUNTOU
+    // se pode reativar, e um vetor vazio é a resposta "pode". Omitir a chave
+    // obrigaria o frontend a distinguir "não perguntei" de "perguntei e não há".
+    impedimentosDeReativacao: impedimentos.map((p) => ({
+      tipo: p.tipo,
+      id: String(p.id),
+      nome: p.nome
+    }))
+  };
 };
 
 export default {

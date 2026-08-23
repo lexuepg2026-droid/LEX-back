@@ -66,7 +66,20 @@ export const REGRA_CONFLITO = Object.freeze({
 
   // 422 — reparcelamento. `errors.saldoEsperado` e `errors.somaInformada`.
   SOMA_DIVERGE_DO_SALDO: "somaDivergeDoSaldo",
-  SEM_SALDO_PARA_REPARCELAR: "semSaldoParaReparcelar"
+  SEM_SALDO_PARA_REPARCELAR: "semSaldoParaReparcelar",
+
+  // ── DEC-053 (F-2c) — nada fica ativo debaixo de coisa inativa ──────────
+  //
+  // 409 nas DUAS bocas da regra: reativar um registro cujo pai está inativo,
+  // e criar um registro novo sob um pai inativo. É a MESMA recusa, e por isso
+  // é o MESMO valor — duas entradas fariam o frontend tratar como dois
+  // assuntos o que a advogada lê como um só.
+  //
+  // Os nomes dos pais que bloqueiam vão em `errors.paisInativos`, não em
+  // chave solta: `errors` já é repassado inteiro pelo `errorHandler`, e é
+  // exatamente essa a razão pela qual a allowlist de `CHAVES_ESTRUTURADAS`
+  // não cresce uma linha aqui.
+  PAI_INATIVO: "paiInativo"
 });
 
 export const REGRAS_CONFLITO = Object.freeze(Object.values(REGRA_CONFLITO));

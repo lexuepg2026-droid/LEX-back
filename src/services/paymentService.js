@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import Installment from "../models/Installment.js";
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
+import { assertFeeAtivoParaCriar } from "./activationHierarchy.js";
 import Allocation from "../models/Allocation.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import {
@@ -217,7 +218,9 @@ export const recalcularParcelas = async (
 // ═══════════════════════════════════════════════════════════════════════════
 
 const carregarFeeParaPagamento = async (honorarioId, usuarioId) => {
-  const fee = await Fee.findOne({ _id: honorarioId, usuarioId, ativo: true });
+  // DEC-053, boca 2: honorário desativado recusa com o NOME, não com um 404
+  // que manda procurar o que está na tela marcado como desativado.
+  const fee = await assertFeeAtivoParaCriar(usuarioId, honorarioId, "registrar o pagamento");
 
   if (!fee) {
     throw criarErro(404, "Honorário não encontrado");

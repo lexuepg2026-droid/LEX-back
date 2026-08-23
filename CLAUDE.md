@@ -4095,10 +4095,21 @@ vínculos a falhar e confere que o processo continua **ativo** e sem histórico.
 
 ### O que a reativação NÃO faz
 
+> ⚠️ **Leia a DEC-053 junto com esta seção.** A DEC-052 governa a **descida**
+> (o pai não arrasta o filho de volta); a **DEC-053** governa a **subida** (o
+> filho não sobe sem o pai). **São a mesma regra vista dos dois lados** — e
+> escrever só esta metade foi o que deixou o órfão passar pela F-2b. Quem mexer
+> numa precisa ler a outra.
+
 **Não cascateia para cima.** Reativar um processo não reativa o cliente dele;
 reativar um cliente não reativa os processos. Cada registro se reativa por si, e
 **a tela diz isso antes de confirmar** — sem a frase, a advogada reativa o
 cliente e presume que voltou tudo.
+
+**Mas reativar o filho sozinho não é livre**: desde a **DEC-053**, reativar um
+processo cujo cliente está desativado é **recusado**, nomeando o cliente. "Cada
+registro se reativa por si" continua valendo — na **ordem** certa: o pai
+primeiro.
 
 No cliente a ausência de cascata é estrutural, não esquecimento: `deleteClient`
 só aceita desativar quem **não participa de nenhum processo ativo**. No momento
@@ -4135,6 +4146,265 @@ de dependências.
 
 Reativar o que já está ativo é **404**, não 200 silencioso: significa que a tela
 ofereceu uma ação que não existia, e esconder isso atrasaria o diagnóstico.
+
+## DEC-053 — nada fica ativo debaixo de coisa inativa (F-2c)
+
+**A regra, em uma frase:** *nenhum registro pode estar **ativo** enquanto o pai
+dele estiver **inativo** — nem subindo (reativar), nem nascendo (criar).*
+
+### O achado
+
+A validação da F-2b (22/08/2026, passo 197) conseguiu **reativar um processo
+cujo cliente estava desativado**. O estado que isso cria é um **órfão visível**:
+o processo volta às listagens, o cliente não, e quem clicar no nome do cliente
+cai num registro que o sistema trata como arquivado.
+
+O caminho que produz o órfão é o caminho normal, e é por isso que ele passou:
+
+1. desativa o **processo** — a cascata da DEC-052 derruba os vínculos;
+2. desativa o **cliente** — agora permitido, porque ele não participa mais de
+   processo ativo nenhum (é a guarda de `deleteClient`);
+3. reativa o **processo** — e nada perguntava pelo cliente.
+
+### Por que a F-2b não pegou: a regra existia numa direção só
+
+A **DEC-052** decidiu que reativar o **pai** não reativa os **filhos** — para
+não ressuscitar o que foi removido de propósito. Está correto e continua
+valendo. Mas **nada foi dito sobre o caminho inverso**: a cascata sabia o que
+derrubou, e nada impedia um filho de subir sozinho.
+
+| | Direção | O que garante |
+|---|---|---|
+| **DEC-052** | a **descida** | o pai não arrasta o filho de volta |
+| **DEC-053** | a **subida** | o filho não sobe sem o pai |
+
+> **São a mesma regra vista dos dois lados. Quem mexer numa precisa ler a
+> outra.** Uma sem a outra deixa metade da porta aberta, e foi exatamente essa
+> metade que produziu o órfão.
+
+### Por que a regra é GERAL, e não "Processo→Cliente"
+
+O caso achado era **instância de um princípio**, não um defeito isolado.
+Escrever só o caso teria deixado as outras portas abertas — e a segunda porta
+não é hipotética: **criar um honorário novo num processo arquivado faz o órfão
+NASCER em vez de ressuscitar**. É a mesma falha, pela outra boca.
+
+Por isso a regra tem **duas bocas**, e as duas são fechadas:
+
+| Boca | Ação | Resposta |
+|---|---|---|
+| **1** | reativar registro cujo pai está inativo | **409**, nomeando o pai |
+| **2** | criar registro sob pai inativo | **409**, nomeando o pai |
+
+### A ÁRVORE DE RELAÇÕES — levantada dos models, não presumida
+
+Vive em `src/services/activationHierarchy.js` (`ARVORE_DE_ATIVACAO`), que é o
+ponto único da regra. Só entram relações em que **pai e filho têm, os dois,
+soft delete de verdade**.
+
+| Filho | Pai(s) | Observação |
+|---|---|---|
+| `Client` | `User` | o pai é o **tenant** — ver abaixo |
+| `Process` | `Client` | pelo `clientePrincipalId` **e** por todo vínculo que a cascata restauraria. **É esta relação que produziu o órfão** |
+| `ProcessoCliente` | `Process`, `Client` | dois pais; é a própria aresta |
+| `Fee` | `Process` | **`Fee` NÃO tem `clienteId`** — conferido no model. O cliente só alcança o honorário através do processo |
+| `Installment` | `Fee`, `Process` | `processoId` é desnormalizado; `feeId` é o pai de verdade |
+| `Payment` | `Fee`, `Process` | `ativo` existe por uniformidade; nenhuma rota o escreve |
+| `Document` | `Process`, `Client`, `Fee` | `clienteId` e `feeId` são opcionais conforme o tipo |
+| `Secao` | `User` | biblioteca da advogada; pai é o tenant |
+| `DocumentoSecao` | `Document`, `Secao` | dois pais; junção documento↔seção |
+
+**Fora da árvore, e a ausência é deliberada:**
+
+| Model | Por que não entra |
+|---|---|
+| `Reversal` | **não tem `ativo`**. "Estorno que não vale mais" é um segundo estorno com `estornoAnuladoId` |
+| `Allocation` | não tem `ativo`. Sai de cena por `estornoId` |
+| `Renegotiation` | não tem `ativo` |
+| `ConfirmacaoVisualizacao` | tem `ativo` por convenção, mas **nenhuma rota o escreve** — é registro probatório, imutável por projeto |
+
+**O tenant não entra na regra, e isso é decisão.** `User.ativo` existe, mas
+nenhuma rota o escreve e o `authMiddleware` não filtra por ele: usuário inativo
+é hoje um estado que só existe se alguém editar o banco à mão. Uma guarda contra
+um estado inalcançável é código que nunca roda e que ninguém consegue testar sem
+fabricar o estado por fora. **Quando existir desativação de usuário, esta é a
+linha que vira guarda** — e a árvore acima mantém a relação no mapa até lá.
+
+### A recusa NOMEIA o pai
+
+> *"Não é possível reativar: o cliente **Beatriz Ramos Pereira** está
+> desativado. Reative o cliente primeiro."*
+
+**Recusar em silêncio é pior que permitir.** Uma mensagem genérica manda a
+advogada procurar, num cadastro de trezentos clientes, qual deles está fora. A
+frase diz **qual** pai, **pelo nome**, e **o que fazer**.
+
+O nome sai de um ponto único (`nomeDoCliente`): PF guarda em `nomeCompleto`, PJ
+em `razaoSocial`. Sem ele, metade das recusas sairia nomeando "(sem nome)" —
+justamente no caso em que o nome mais importa para achar o cadastro.
+
+**O erro:** 409, `regra: "paiInativo"` (`REGRA_CONFLITO.PAI_INATIVO`), com os
+bloqueadores em `errors.paisInativos: [{ tipo, id, nome }]`. Vão dentro de
+`errors` — que o `errorHandler` já repassa inteiro — e **não** em chave solta:
+é o que impede a allowlist de `CHAVES_ESTRUTURADAS` de crescer uma linha por
+regra.
+
+### Quais clientes bloqueiam a reativação de um processo
+
+Não basta `clientePrincipalId`: um cliente pode ser **litisconsorte** sem nunca
+ser principal, e reativar o processo restauraria o vínculo dele — o mesmo órfão,
+uma camada abaixo, onde ninguém procura. É a mesma razão pela qual
+`deleteClient` olha a **junção**, e não o campo do processo.
+
+O conjunto é: **o principal** + **todo cliente cujo vínculo a cascata da DEC-052
+restauraria** (`desativadoPorCascataDe: processoId`).
+
+**Vínculo removido À MÃO fica de fora.** Ele **não volta** na reativação — é o
+ponto inteiro da DEC-052 —, então o estado do cliente dele não importa aqui.
+Incluí-lo recusaria a reativação por causa de alguém que continuaria
+desvinculado. **É a fronteira exata entre as duas decisões, e há teste para
+ela.**
+
+### A boca 2 já era recusa — o que mudou foi a MENSAGEM
+
+Todo `findOne` de pai no projeto sempre filtrou `ativo: true`. O levantamento da
+F-2c confirmou a recusa em `createProcess`, `createFee`, `createInstallment`,
+`createPayment`, `vincularCliente` e `vincularSecao` — **e isso já era assim**.
+
+O que mudou é que "não encontrado" virou "está desativado", com o nome:
+
+| Situação | Antes | Agora |
+|---|---|---|
+| pai **inexistente** | 404 / 400 | **igual** — e continua sem confirmar existência de registro alheio |
+| pai **desativado** | 404 "não encontrado" | **409 nomeando o pai** |
+
+**Um 404 "Processo não encontrado" para um processo que a advogada está vendo na
+tela com a tag "Desativado" manda procurar o que não está perdido.**
+
+Há uma **terceira porta**, fechada junto: `PATCH /fees/:id` com `processoId`
+**movendo** um honorário para um processo desativado. O honorário continuaria
+ativo, agora sob pai inativo.
+
+**Uma exceção documentada e não corrigida:** vincular cliente a processo
+desativado responde **404**, não 409. `assertProcessoDoUsuario` é a mesma guarda
+que serve as **leituras** de participante, e um processo desativado é
+inalcançável por essa rota inteira. Mudar isso mudaria o 404 de toda leitura de
+participante — e não é o que a F-2c foi fazer.
+
+### A autoridade é do SERVIÇO
+
+A listagem (`impedimentosDeReativacao`) e o `activation-preview` carregam quem
+bloqueia, para a tela desabilitar "Reativar" com o motivo ao lado. **Isso é
+conveniência.** `reactivateProcess` recusa de qualquer forma — inclusive para
+quem chamar a rota direto, sem passar por tela nenhuma —, e **há teste que
+chama o serviço direto** para provar exatamente isso.
+
+Na listagem, `impedimentosDeReativacao` **só existe na linha desativada**: num
+processo ativo a pergunta não se aplica. No `activation-preview` do desativado
+ele vem **sempre, mesmo vazio** — ali a tela PERGUNTOU se pode reativar, e vetor
+vazio é a resposta "pode"; omitir a chave obrigaria o frontend a distinguir "não
+perguntei" de "perguntei e não há".
+
+São **duas consultas por página**, não duas por linha: a tela que mais mostra
+desativado é justamente a filtrada por "Somente desativados".
+
+### Os órfãos que já existem — `scripts/auditarOrfaos.js`
+
+`npm run auditar:orfaos` percorre a árvore e **relata** todo registro ativo sob
+pai inativo, com **pai e filho nomeados**.
+
+**Ele não conserta, e isso é decisão.** Corrigir automaticamente significaria
+escolher, sem saber, entre **desativar o filho** (esconde um processo que talvez
+esteja em andamento) e **reativar o pai** (ressuscita um cadastro que talvez
+tenha saído de propósito). **Essa escolha é da advogada** — e cada correção
+feita pela tela fica no `historicoAtivacao`, que uma correção em massa por
+script não deixaria.
+
+> **O script NÃO é destrutivo, e por isso NÃO leva a guarda de banco da F-2b.**
+> Está escrito no alto do arquivo, em voz alta, porque todo script novo em
+> `scripts/` provoca a pergunta "cadê a guarda?".
+>
+> Guarda de comando destrutivo em comando que não destrói **treina a advogada a
+> digitar o nome do banco para rodar um relatório** — e o dia em que digitar
+> `lex` virar reflexo é o dia em que a guarda dos scripts que de fato apagam
+> deixa de proteger.
+>
+> `mongoose.set("autoIndex", false)` está lá para que "só lê" seja
+> **literalmente** verdade: o Mongoose constrói índices na compilação dos
+> models, e construir índice é escrita.
+>
+> **No minuto em que ele ganhar uma escrita, ele ganha a guarda junto.** Não
+> existe meio-termo. Há teste que varre o arquivo por `updateOne`, `deleteMany`,
+> `.save(` e companhia, e que compara o banco **documento por documento** antes
+> e depois — contagem não bastaria: uma "correção" silenciosa viraria `ativo`
+> sem mudar contagem nenhuma.
+
+Um processo desativado sob cliente desativado aparece **duas vezes** no
+relatório: `Processo → Cliente (principal)` e `Vínculo processo-cliente →
+Cliente`. São dois registros ativos sob o mesmo pai inativo — e é a segunda, a
+que não vem à cabeça, que a auditoria existe para achar.
+
+---
+
+## Passos 90–98 (portal) — o levantamento da F-2c
+
+**Conclusão, antes do detalhe: eles NÃO são "controles de acesso do portal por
+implementar". São passos de VALIDAÇÃO MANUAL de funcionalidade que já existe,
+entregue na Fase 3.2 — e nunca executados.**
+
+A pendência vinha sendo carregada fase após fase com a marca *"antes de qualquer
+cliente real usar o portal"*, e a redação foi endurecendo até parecer trabalho
+de código não feito. O levantamento da F-2c leu os nove passos e confrontou cada
+um com o código. **Nenhum deles descreve controle de acesso ausente.**
+
+### O que cada um exige, e onde ele está
+
+| # | O que o passo exige | Marca | Veredito | Onde |
+|---|---|---|---|---|
+| **90** | PDF e DOCX baixam com nome do servidor, abrem no aparelho | `[só olho humano]` | **atendida** (código) | `portalController.js:76` (`Content-Disposition`), `documentRenderService.js:75` (`montarNomeArquivo`) |
+| **91** | Confirmação **depois** do conteúdo, sem modal; declaração inteira; recibo em fuso de Brasília | `[só olho humano]` | **atendida** (código) | `PortalProcessPage.jsx:176` (bloco por último), `portalLabels.js:91` (`America/Sao_Paulo`) |
+| **92** | Confirmar de novo **não apaga** a anterior; as duas aparecem | `[automatizável]` | **atendida + automatizada** | `PortalConfirmation.jsx:99,159`; `tests/portal/confirmacao.test.js:238` |
+| **93** | Botão "Sair" visível na barra; *voltar* não devolve a sessão | `[só olho humano]` | **atendida** (código) | `PortalLayout.jsx:34` |
+| **94** | Definir/entregar/redefinir/revogar senha; senha **nunca** exibida; mensagem pronta **sem** a senha; CPF recusado com mensagem própria | `[automatizável]` | **atendida + automatizada** | `AccessDelivery.jsx:109`; `clientValidation.js:63–71` (CPF/CNPJ); `tests/portal/auth.test.js:338` |
+| **95** | O código cabe numa ligação — legibilidade ao ditar | `[só olho humano]` | **inverificável por código** | `utils/accessCode.js` |
+| **96** | Selos "Confirmou a leitura" × "Acessou, não confirmou" | `[automatizável]` | **atendida**; automatizada **só no backend** | `portalEstados.js:23`; `statusVisual.js:98–99`. **Sem teste de frontend para os selos** |
+| **97** | Contador do dashboard zera ao **olhar a lista**, não ao abrir o processo | `[automatizável]` | **atendida + automatizada** | `ProcessDetailPage.jsx:103,254`; `tests/portal/confirmacao.test.js:352` |
+| **98** | Aviso de visibilidade nas **duas** regerações, com textos **diferentes** | `[só olho humano]` | **atendida + automatizada** | `GenerationPanel.jsx:291,324`; `tests/documents/regeracao.test.js:126–163` |
+
+### O controle de acesso propriamente dito — já existe, e é testado
+
+A dimensão que a redação da pendência sugeria (*"um cliente ver dado de
+outro"*) **não está nesses nove passos**, e está implementada e coberta:
+
+- `portalAuthMiddleware.js:58–90` — **o vínculo é revalidado a cada
+  requisição**, nunca confiado ao token: cliente, processo e vínculo precisam
+  estar **ativos**, o token precisa **coerir** com o vínculo no banco, e o
+  carimbo da senha invalida sessões anteriores. Revogar acesso tem efeito
+  **imediato**, sem esperar as 2 h da sessão;
+- `tests/portal/isolamento.test.js` — token de portal não vale em rota da
+  advogada e vice-versa; a sessão de um vínculo não alcança outro; o código do
+  cliente A nunca devolve o processo do cliente B; a senha de um cliente não
+  abre o código de outro; varredura de `senhaPortalHash`, `codigoAcesso`,
+  `usuarioId`; e um **placar explícito de "zero vazamentos"**.
+
+### O que a F-2c NÃO fez, e por quê
+
+**Nenhuma linha de código.** Não havia exigência desatendida para implementar:
+cinco dos nove são `[só olho humano]` por definição — *"nenhum script abre um
+DOCX no Word do Android para ver se corrompeu"* —, e os quatro `[automatizável]`
+já têm código **e** cobertura.
+
+**A única lacuna real encontrada:** o passo **96** (selos de litisconsórcio) tem
+o vocabulário travado no backend e os rótulos em `statusVisual.js`, mas **não
+tem teste de frontend** provando que a tela do processo os exibe. É pequeno, é
+verificável, e fica registrado aqui em vez de virar código numa fase cujo portão
+de escopo já tinha sido gasto na Parte 1.
+
+> **A pendência continua aberta — como VALIDAÇÃO, que é o que ela sempre foi.**
+> Os nove passos precisam do Daniel, num celular de verdade, antes de qualquer
+> cliente real usar o portal. Nenhuma fase de código os fecha.
+
+---
 
 ## Rate limit — os tetos por ambiente (F-2b)
 
