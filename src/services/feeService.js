@@ -1,5 +1,5 @@
 import Fee, { STATUS_CANCELADO } from "../models/Fee.js";
-import Process from "../models/Process.js";
+import { assertProcessoAtivoParaCriar } from "./activationHierarchy.js";
 import Installment from "../models/Installment.js";
 import Client from "../models/Client.js";
 import Renegotiation from "../models/Renegotiation.js";
@@ -149,21 +149,19 @@ const gravar = async (documento) => {
   }
 };
 
-const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
-  const process = await Process.findOne({
-    _id: processoId,
-    usuarioId,
-    ativo: true
-  });
-
-  if (!process) {
-    const error = new Error("Processo não encontrado para este usuário");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  return process;
-};
+// ── DEC-053, boca 2: criar sob pai inativo ────────────────────────────────
+//
+// A recusa JÁ EXISTIA — o `findOne` sempre filtrou `ativo: true`, e criar
+// honorário em processo desativado sempre respondeu 404. O que a F-2c muda é
+// só a MENSAGEM, e a mudança não é cosmética: "Processo não encontrado" para
+// um processo que a advogada está vendo na tela com a tag "Desativado" é uma
+// resposta que manda procurar o que não está perdido.
+//
+// A distinção agora é feita por `assertProcessoAtivoParaCriar`: inexistente
+// continua 404 (e continua sem confirmar existência de registro alheio),
+// desativado vira 409 nomeando o processo.
+const ensureProcessBelongsToUser = async (processoId, usuarioId, acao = "criar") =>
+  assertProcessoAtivoParaCriar(usuarioId, processoId, acao);
 
 const createFee = async (usuarioId, feeData) => {
   const validation = validateCreateFee(feeData);
@@ -417,8 +415,11 @@ const updateFee = async (feeId, usuarioId, updateData) => {
     throw error;
   }
 
+  // Mover um honorário PARA um processo desativado é a mesma violação da
+  // DEC-053 pela terceira porta: o honorário continuaria ativo, agora sob pai
+  // inativo. O verbo muda porque a advogada não está criando nada aqui.
   if (hasOwn(updateData, "processoId")) {
-    await ensureProcessBelongsToUser(updateData.processoId, usuarioId);
+    await ensureProcessBelongsToUser(updateData.processoId, usuarioId, "mover o honorário");
   }
 
   const sanitizedData = sanitizeFeeData(updateData);

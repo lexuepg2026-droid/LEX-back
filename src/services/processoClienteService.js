@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Client from "../models/Client.js";
+import { erroDePaiInativo, nomeDoCliente } from "./activationHierarchy.js";
 import Process from "../models/Process.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import { gerarCodigoAcessoUnico } from "../utils/accessCode.js";
@@ -66,25 +67,44 @@ const assertProcessoDoUsuario = async (usuarioId, processoId, session) => {
 // Cliente de outro usuário devolve 404, não 403: confirmar que o id existe
 // mas pertence a terceiro já entrega a existência do cadastro alheio. Para
 // este usuário o cliente simplesmente não existe.
-export const assertClientesDoUsuario = async (usuarioId, clienteIds, session) => {
+export const assertClientesDoUsuario = async (usuarioId, clienteIds, session, acao = "criar o processo") => {
   const ids = clienteIds.map((id) => new mongoose.Types.ObjectId(id));
 
+  // ── DEC-053, boca 2 ─────────────────────────────────────────────────────
+  //
+  // A consulta perdeu o `ativo: true` e ganhou o campo `ativo` na projeção —
+  // não para AFROUXAR a regra, mas para poder distinguir os dois motivos de
+  // recusa. Antes, cliente inexistente e cliente desativado saíam pela mesma
+  // frase ("Cliente não encontrado"), e a segunda é falsa: o cliente existe, a
+  // advogada acabou de vê-lo na listagem com a tag "Desativado".
+  //
+  // As duas continuam sendo RECUSA. O que muda é que uma delas passa a dizer o
+  // que fazer.
   const encontrados = await Client.find({
     _id: { $in: ids },
-    usuarioId,
-    ativo: true
+    usuarioId
   })
-    .select("_id")
+    .select("_id ativo nomeCompleto razaoSocial nomeFantasia")
     .session(session ?? null);
 
-  if (encontrados.length !== ids.length) {
-    const achados = new Set(encontrados.map((c) => String(c._id)));
-    const faltando = clienteIds.filter((id) => !achados.has(String(id)));
+  const achados = new Set(encontrados.map((c) => String(c._id)));
+  const faltando = clienteIds.filter((id) => !achados.has(String(id)));
 
+  // Inexistente primeiro: um id que não existe não tem nome para nomear, e
+  // tentar descrevê-lo confirmaria a existência de registro de outro usuário.
+  if (faltando.length > 0) {
     throw erro(
       `Cliente não encontrado para este usuário: ${faltando.join(", ")}`,
       400,
       { errors: { clientesInvalidos: faltando } }
+    );
+  }
+
+  const inativos = encontrados.filter((c) => !c.ativo);
+  if (inativos.length > 0) {
+    throw erroDePaiInativo(
+      inativos.map((c) => ({ tipo: "Client", id: c._id, nome: nomeDoCliente(c) })),
+      acao
     );
   }
 
@@ -250,7 +270,8 @@ export const vincularCliente = async (usuarioId, processoId, data) => {
   const erros = validateVinculoPayload(data);
   if (erros.length > 0) throw erro(erros.join(", "), 400);
 
-  await assertClientesDoUsuario(usuarioId, [data.clienteId]);
+  // DEC-053: vincular cliente desativado criaria vínculo ATIVO sob pai inativo.
+  await assertClientesDoUsuario(usuarioId, [data.clienteId], undefined, "vincular o cliente");
 
   const papel = data.papel === undefined ? "autor" : String(data.papel).trim();
 

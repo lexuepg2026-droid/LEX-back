@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Installment from "../models/Installment.js";
 import Fee from "../models/Fee.js";
+import { assertFeeAtivoParaCriar } from "./activationHierarchy.js";
 import Allocation from "../models/Allocation.js";
 import Payment from "../models/Payment.js";
 import {
@@ -31,20 +32,12 @@ const validarObjectId = (id, nomeCampo) => {
   }
 };
 
-const buscarFeeDoUsuario = async (feeId, usuarioId) => {
+// DEC-053, boca 2. A recusa já existia (o `findOne` sempre filtrou
+// `ativo: true`); o que muda é a mensagem separar "não existe" de "está
+// desativado" — ver a nota em `activationHierarchy.js`.
+const buscarFeeDoUsuario = async (feeId, usuarioId, acao = "criar a parcela") => {
   validarObjectId(feeId, "feeId");
-
-  const fee = await Fee.findOne({
-    _id: feeId,
-    usuarioId,
-    ativo: true
-  });
-
-  if (!fee) {
-    throw erro(404, "Honorário não encontrado");
-  }
-
-  return fee;
+  return assertFeeAtivoParaCriar(usuarioId, feeId, acao);
 };
 
 // `normalizarStatus` vivia aqui e foi REMOVIDA na Fase 4.5 (DEC-020 revogada).
