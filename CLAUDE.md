@@ -4147,6 +4147,12 @@ de dependências.
 Reativar o que já está ativo é **404**, não 200 silencioso: significa que a tela
 ofereceu uma ação que não existia, e esconder isso atrasaria o diagnóstico.
 
+> **F-2d acrescentou uma quarta sub-rota pelo MESMO motivo:**
+> `PATCH /processes/:id/fase`. `fase` está fora da allowlist de update porque
+> toda mudança dela grava uma entrada de `historicoFase`, e o
+> `findOneAndUpdate` de `updateProcess` não teria onde pendurá-la. Ver a
+> **DEC-054**.
+
 ## DEC-053 — nada fica ativo debaixo de coisa inativa (F-2c)
 
 **A regra, em uma frase:** *nenhum registro pode estar **ativo** enquanto o pai
@@ -4346,6 +4352,441 @@ que não vem à cabeça, que a auditoria existe para achar.
 
 ---
 
+## DEC-054 — fase e encerramento são EIXOS SEPARADOS (F-2d)
+
+**O vocabulário é da Laís, dito em 23/08/2026.** Está registrado com a data
+porque é vocabulário jurídico da prática dela, e não decisão técnica: quem for
+mexer precisa saber que a fonte é ela, e não uma escolha nossa.
+
+Textualmente:
+
+> *"Fase inicial (fase de conhecimento) / Sentença / Execução / Recursos"*
+> *"Sim, pode voltar"*
+> *"Não precisa anotar o porquê, só se ela quiser mesmo"*
+> *"Liminar é um plus dentro das fases, você pede algo com urgência, mas não é
+> uma fase nova"*
+> *"Trânsito em julgado — processo encerrou completamente, acabou todos os
+> processos de recurso"*
+> *"Acordo cumprido — aí o processo finalizado e muda para trânsito em julgado"*
+
+### A leitura: ela descreveu DUAS coisas, não uma
+
+| Eixo | Campo | O que responde | Como anda |
+|---|---|---|---|
+| **Fase** | `fase` | onde o processo **está** | nos dois sentidos, sem ordem |
+| **Encerramento** | `transitoEmJulgadoEm` + `motivoEncerramento` | se ele **acabou** | um carimbo: existe ou não existe |
+
+**"Trânsito em julgado" NÃO é a quinta fase.** Um processo em recursos e um
+processo transitado em julgado não estão em pontos diferentes da mesma régua:
+um está andando, o outro parou. Modelar as duas coisas como um enum só faria
+"trânsito em julgado" competir com "execução" numa lista onde elas não se
+comparam — e a advogada teria de escolher entre dizer em que fase o processo
+está e dizer que ele acabou.
+
+O **motivo** do encerramento é onde *"acordo cumprido"* mora. O caminho que ela
+descreveu é **acordo cumprido → trânsito em julgado**: o motivo EXPLICA como se
+chegou ao fim, e o fim é um só.
+
+### Movimento livre — e a ausência de regra É a regra
+
+*"Sim, pode voltar."*
+
+**Não existe máquina de estados.** Não há transição travada, não há ordem
+exigida, não há comparação de posição em lugar nenhum — nem no serviço, nem na
+validação, nem na tela. Procure por um `indexOf` contra a lista de fases nos
+dois repos: não há nenhum, e há teste em cada um travando a ausência.
+
+> **Regra que ela não pediu é requisito inventado**, e neste projeto já custou
+> caro. A mutação (a) da F-2d — travar `recursos → conhecimento` — derruba
+> **4 testes**, e é assim que se sabe que a ausência está protegida.
+
+### O motivo é opcional; a TRANSIÇÃO não é
+
+*"Não precisa anotar o porquê, só se ela quiser mesmo."*
+
+São coisas diferentes, e a distinção é o que sustenta a F-2e:
+
+| | O que é | Obrigatório? |
+|---|---|---|
+| **motivo** | a justificativa ("por que voltou para conhecimento") | **não** |
+| **transição** | o fato ("voltou para conhecimento, em tal dia") | **sempre gravada** |
+
+Ela pediu a linha do tempo — *"finalizado por etapa — fazer linha do tempo"* —
+e uma linha do tempo é exatamente a sequência desses fatos. **Gravar só a
+partir de quando a tela existir faria a linha do tempo nascer sem passado**:
+todo processo apareceria como se nunca tivesse mudado de fase até o dia em que
+alguém implementou a tela.
+
+Por isso `historicoFase` começa a ser escrito na F-2d, e a tela vem na F-2e.
+
+A mutação (b) — tornar o motivo obrigatório — derruba **9 testes**.
+
+### `historicoFase` — append-only, como os outros dois
+
+`{ de, para, data, motivo, autorId }`. Terceiro histórico append-only do
+projeto, e pela mesma razão dos outros dois:
+
+| Histórico | Responde | Decisão |
+|---|---|---|
+| `historicoStatus` (Fee) | "este honorário esteve pago?" | DEC-038 |
+| `historicoAtivacao` (Process, Client) | "este registro esteve fora?" | DEC-052 |
+| `historicoFase` (Process) | "por onde este processo andou?" | **DEC-054** |
+
+Ficam **separados**, e a nota em `historicoAtivacaoSchema.js` já previa isto:
+um processo em execução e um processo desativado não têm nada em comum, e
+juntá-los num vetor só obrigaria toda leitura a filtrar por tipo antes de
+entender o que está lendo.
+
+**A primeira entrada é o nascimento**, com `de: null`. Sem ela, um processo
+criado direto em "execução" apareceria na linha do tempo como se sempre
+tivesse estado lá — e não haveria como distinguir "nasceu assim" de "nunca
+mudou".
+
+### `fase` tem ROTA PRÓPRIA, e está fora da allowlist do PATCH comum
+
+```
+PATCH /api/processes/:id/fase     { fase, motivo? }   → 200, grava histórico
+PATCH /api/processes/:id          { fase: "..." }     → 400, campo: "fase"
+```
+
+O 400 **aponta para a rota certa** — não é a mensagem genérica de campo
+desconhecido. É o mesmo tratamento que `ativo` e `clientePrincipalId` já têm, e
+a lista mora em `CAMPOS_COM_ROTA_PROPRIA` (`validations/shared/camposPermitidos.js`).
+
+**Por que não é só mais um campo do PATCH:** `updateProcess` grava com
+`findOneAndUpdate`, que não teria onde pendurar a entrada de histórico. Aceitar
+`fase` ali gravaria a metade das transições sem rastro — e aí a linha do tempo
+mentiria por omissão, que é pior do que não existir.
+
+Já `liminar`, `liminarObservacao`, `liminarEm`, `transitoEmJulgadoEm` e
+`motivoEncerramento` **entraram na allowlist normal**: são sinalizador e
+carimbo, não "por onde o processo andou", e não geram histórico.
+
+### Liminar é SINALIZADOR, não estado
+
+*"Liminar é um plus dentro das fases (…) não é uma fase nova."*
+
+Um booleano ao lado da fase, com observação e data **opcionais**. Pôr "liminar"
+no enum forçaria a advogada a apagar a fase real para marcar a urgência.
+
+Na tela: **selo** em cor de atenção (`--color-warning`, o tom de "Suspenso" —
+não `--color-danger`, que é o de `cancelado` e `vencido`; liminar não deu
+errado, é pedido de urgência), e **filtro** `com`/`sem`/`todos`.
+
+> **A lista NÃO se reordena por liminar.** Ela pediu **destaque**, não
+> **prioridade**, e são coisas diferentes: reordenar muda o que a advogada
+> espera encontrar onde ela deixou. Quem quiser ver só as liminares usa o
+> filtro, e decide QUANDO. Há teste nos dois repos travando a ordenação por
+> `createdAt`.
+
+`liminarEm`, e não `liminarConcedidaEm`: ela disse *"você pede algo com
+urgência"*, e pedido e concessão são momentos diferentes. Nomear o campo por um
+dos dois decidiria, por conta própria, qual deles a advogada deveria estar
+registrando.
+
+### `status` continua existindo, e continua sendo OUTRA coisa
+
+Três valores administrativos, da Fase 2: `ativo`, `encerrado`, `suspenso`.
+**Nenhum deles diz em que fase o processo está** — e foi essa a descoberta da
+F-2d: `status` e `fase` não são o mesmo eixo renomeado.
+
+A *Execucao Fiscal - IPTU* do seed está em `fase: execucao` e `status:
+suspenso` ao mesmo tempo. É exatamente o par que um enum único não conseguiria
+representar.
+
+`status` não foi apagado nem migrado: a listagem filtra por ele desde a Fase 2.
+
+### A migração — e o mapeamento que NÃO existe
+
+`scripts/migrarFaseProcesso.js` (`npm run migrar:fase`). Preenche `fase`,
+`historicoFase` e os campos de encerramento e liminar nos processos já
+gravados. Idempotente, com a guarda de banco destrutivo da F-2b.
+
+Os valores reais de `status` foram **lidos do banco de desenvolvimento**, não
+presumidos:
+
+| `status` | quantos | vai para | por quê |
+|---|---|---|---|
+| `ativo` | 7 | fase padrão — **NÃO MAPEADO** | diz que está em andamento; não distingue nenhuma das quatro |
+| `encerrado` | 2 | fase padrão — **NÃO MAPEADO** | é o eixo do ENCERRAMENTO, não o da fase |
+| `suspenso` | 1 | fase padrão — **NÃO MAPEADO** | suspende-se processo em qualquer fase |
+
+**Nenhum valor de `status` carrega informação de fase**, e o script diz isso em
+voz alta no relatório, com a contagem de cada um. **Chute silencioso em
+migração é o defeito que ninguém acha depois** — um mapeamento inventado teria
+produzido exatamente isso.
+
+Os `encerrado` saem **nominalmente** no relatório, como candidatos à revisão da
+advogada: o sistema sabe que eles acabaram, mas não sabe **como** nem
+**quando**. O script **não carimba** `transitoEmJulgadoEm` em nenhum — uma data
+inventada é pior que nenhuma, porque parece informação e não é.
+
+### PENDENTE DE RATIFICAÇÃO
+
+**O nome da primeira fase.** Ela deu duas palavras: *"fase inicial"* e *"fase
+de conhecimento"*. Adotado **"Fase de conhecimento"**, e a razão é substantiva:
+
+> "inicial" é **posicional**, e a posição deixa de valer no instante em que o
+> processo volta. Ela disse *"sim, pode voltar"* — um processo que retorna de
+> recursos para a primeira fase não está numa fase "inicial" coisa nenhuma. O
+> rótulo posicional mentiria justamente no movimento que ela pediu.
+
+Se ela preferir a outra, **muda-se o rótulo e nada é migrado**: o valor gravado
+é `conhecimento`, e valor gravado ≠ rótulo de exibição — a mesma separação da
+DEC-039, pela mesma razão.
+
+**Falta alguma fase?** Ela citou quatro, e não inventamos uma quinta. Se faltar
+(cumprimento de sentença como fase própria, por exemplo), acrescentar é uma
+linha em `config/fasesProcesso.js`.
+
+---
+
+## A DEC-053 alcança Documento — a lacuna do passo 204 (F-2d)
+
+### O achado
+
+A auditoria de órfãos, rodada contra o banco de desenvolvimento em 24/08/2026,
+achou **um** órfão, e ele era de Documento:
+
+```
+Documento → Processo
+  filho ATIVO   : Peticao de Suspensao da Execucao   [6a8c4965e2ed6915acce13fc]
+  pai   INATIVO : Execucao Fiscal - IPTU             [6a8c4965e2ed6915acce13ec]
+```
+
+As outras seis relações estavam limpas.
+
+### O diagnóstico, ANTES da correção
+
+A pergunta era: **a cascata não o alcança, ou alcança e ele escapou?** Os
+carimbos do próprio banco responderam:
+
+```
+documento criado    : 2026-08-24T13:38:45Z   (nasceu com o processo, ativo)
+processo desativado : 2026-08-24T13:48:05Z   (`vinculosAfetados: 1`)
+```
+
+**A cascata não o alcança.** `deleteProcess` derruba os vínculos
+processo↔cliente e mais nada — o `vinculosAfetados: 1` do histórico é
+exatamente a contagem deles. **O órfão nasceu da desativação**, não escapou de
+nada.
+
+E isso **não é defeito da cascata**: ela é assim de propósito desde a DEC-052.
+Honorário, parcela e pagamento também não caem junto com o processo. O órfão
+saiu em Documento e não nos outros só porque, nesta base, o processo desativado
+tinha documento e não tinha honorário.
+
+### Onde a lacuna estava de verdade: a boca 2, com a frase errada
+
+Os três pontos que criam documento sob um processo **já recusavam** o processo
+inativo. Nunca foi possível criar ali. Mas recusavam com:
+
+```
+404  "Processo não encontrado para este usuário"
+```
+
+…para um processo que existe e que a advogada está vendo na tela com a tag
+"Desativado". **É literalmente a frase que a DEC-053 nomeia como o defeito.**
+Documento era o único módulo que ainda a dava: a F-2c passou os outros seis
+para `assertProcessoAtivoParaCriar` e deixou este para trás.
+
+A F-2d passa os três, e a recusa vira **409 nomeando o processo**:
+
+| Porta | Onde | Antes | Agora |
+|---|---|---|---|
+| criar | `createDocumentService` | 404 | **409**, nomeando |
+| mover | `updateDocumentService` (`processoId`) | 404 | **409**, nomeando |
+| gerar | `carregarContexto` (geração **e** preview) | 404 | **409**, nomeando |
+
+O preview entra junto de propósito: pré-visualizar não grava nada, mas oferecer
+a prévia de uma peça que a geração recusaria é levar a advogada até o último
+clique para então dizer não.
+
+### Boca 1 — fechada POR AUSÊNCIA, e não por guarda
+
+**Não existe reativação de documento.** Não há rota, `ativo` está fora da
+allowlist de update, e nenhum serviço escreve `ativo: true` num documento já
+desativado.
+
+Não se acrescenta guarda para um caminho que não existe — é a mesma decisão
+escrita para `PAI_TENANT`, e pelo mesmo motivo: guarda que nunca roda é código
+que ninguém consegue testar sem fabricar o estado por fora do sistema. O que se
+faz é **travar a ausência por teste**, para que o dia em que a reativação de
+documento nascer, ela nasça já sabendo desta regra.
+
+### O órfão FICA no banco de desenvolvimento
+
+**De propósito, e é caso de teste vivo.**
+
+Ele não é consertado por script — a escolha entre desativar o filho e reativar
+o pai é da advogada, e essa regra não muda. Ele fica como prova de que a
+auditoria continua achando, enquanto os testes provam que um novo não pode mais
+nascer com a mensagem errada.
+
+> **Quem for limpar o banco de desenvolvimento, leia isto antes.**
+
+---
+
+## A rigidez de `deleteClient` é INTENCIONAL (levantada na F-2d)
+
+### O relato
+
+Passo 201, 24/08/2026: *"tive que desativar todos os processos que o cliente
+estava vinculado, mesmo o que ele não é o principal, para poder desativar."*
+
+A suspeita: a guarda olha **qualquer** vínculo, e por isso um cliente que é
+litisconsorte no processo de outra pessoa bloqueia a desativação — obrigando a
+advogada a mexer no processo de um terceiro.
+
+### A metade verdadeira
+
+A guarda olha qualquer vínculo ativo, **sim**. `contarProcessosDoCliente` conta
+`{ usuarioId, clienteId, ativo: true }` sem olhar `principal`.
+
+### O veredito: FICA COMO ESTÁ
+
+Afrouxá-la para o principal **criaria órfão**, e pela porta mais discreta:
+
+> `ProcessoCliente` tem **dois pais** — Processo e Cliente. Um cliente
+> desativado com um vínculo de litisconsorte ainda **ativo** é um registro ativo
+> sob pai inativo. O `auditarOrfaos.js` o reportaria como `Vínculo
+> processo-cliente → Cliente` — que é justamente a relação que o roteiro do
+> passo 204 chama de "a que não vem à cabeça".
+
+**A rigidez não é efeito colateral de olhar a junção: é o que a invariante da
+DEC-053 exige de quem olha a junção.** Trocar por `principal` seria comprar a
+conveniência de uma tela com um órfão garantido.
+
+### O que ERA defeito, e foi corrigido
+
+A saída correta **nunca foi** desativar o processo do terceiro — é
+**DESVINCULAR** o cliente dele, por `DELETE /api/processes/:id/clientes/:clienteId`,
+que existe desde a Fase 2B e não toca no processo de ninguém.
+
+A mensagem já mandava desvincular, mas **não dizia de quais processos**. Num
+cadastro com trinta processos isso é a mesma recusa genérica que a DEC-053
+nomeou como defeito — e foi por isso que o caminho mais curto pareceu ser
+desativar tudo.
+
+Agora ela:
+
+- **nomeia os processos** (corta em 3 na frase; `errors.processosBloqueando`
+  traz todos, e é dele que a tela monta a lista);
+- diz o **papel** do cliente em cada um — é ali que mora a surpresa do
+  litisconsórcio;
+- afirma que **não é preciso desativar o processo**.
+
+### E a palavra "excluir" saiu (achado do passo 184)
+
+A F-2b renomeou a ação para **"Desativar"** em Clientes e Processos. Duas
+mensagens ficaram com o verbo velho, prometendo uma destruição que não
+acontece:
+
+| Onde | Antes | Agora |
+|---|---|---|
+| `clientService.deleteClient` | "Não é possível **excluir** este cliente…" | "…**desativar**…" |
+| `processoClienteService.desvincularCliente` | "…ou **exclua** o processo" | "…ou **desative** o processo" |
+
+**Documentos, Honorários, Parcelas e Seções continuam com o verbo que têm.** A
+ação deles não virou desativação, e um verbo único faria a mensagem discordar
+do botão em quatro telas para concordar em duas.
+
+---
+
+## DIAGNÓSTICO (F-2d) — "pagamento no êxito" e "cliente inadimplente"
+
+**Nada disto foi implementado.** É o insumo de uma decisão do Daniel com a
+Laís, e mexer no enum de honorário depois do Financeiro 2.0 fechado é caro.
+
+Ela citou duas coisas que são **financeiras, não processuais**:
+
+> *"Cliente inadimplente — cliente não pagou, mas o processo acabou."*
+> *"Pagamento no êxito — pagamento é recebido quando o cliente receber."*
+
+### "Pagamento no êxito" cabe no `TIPOS_HONORARIO`?
+
+O enum está **congelado pela DEC-039** e tem três valores: `fixo`,
+`percentual`, `custas`.
+
+**Não cabe — e o motivo é que ele não é um tipo, é uma CONDIÇÃO DE
+EXIGIBILIDADE.**
+
+Os três valores atuais respondem *"como o valor é calculado?"*. "Pagamento no
+êxito" responde outra pergunta: *"quando o valor se torna devido?"* — e a
+resposta dela é **quando o cliente receber**. As duas perguntas são
+independentes: um honorário de êxito pode ser fixo (R$ 5.000 se ganhar) ou
+percentual (10% do que o cliente receber).
+
+**Representá-lo como `percentual` perderia exatamente o que ele tem de
+próprio:**
+
+| O que o sistema precisaria saber | `percentual` responde? |
+|---|---|
+| quanto é | sim (`percentual` × `valorBase`) |
+| quando vence | **não** — `dataVencimento` é obrigatório e seria uma data inventada |
+| se já é devido | **não** — nasceria `pendente` e envelheceria para `vencido` |
+
+O dano concreto é mensurável, e não é hipotético: `dataVencimento` é
+`required: true` no model. Um honorário de êxito cadastrado hoje precisa de uma
+data que **ninguém sabe** — e no dia seguinte a ela o dashboard passa a contar
+esse valor como **vencido**, o cliente aparece devendo, e a advogada cobra uma
+quantia que ainda não é devida.
+
+**O que faltaria** (para a decisão, não para implementar agora):
+
+1. um campo de **condição de exigibilidade** no honorário, ortogonal ao `tipo`
+   — o mesmo formato de eixo separado que a DEC-054 acabou de usar para fase e
+   encerramento. Enquanto a condição não se realiza, o honorário fica fora do
+   vencido e fora do "em aberto" do dashboard;
+2. `dataVencimento` **opcional** quando a condição for "no êxito" — hoje é
+   `required`, e é essa obrigatoriedade que força a data inventada;
+3. o **evento** que realiza a condição ("o cliente recebeu"), que é o que faz o
+   valor virar devido e nascer a parcela.
+
+**Acrescentar `"exito"` ao enum resolveria o rótulo e não resolveria nenhum dos
+três.** O honorário continuaria vencendo numa data inventada — só que agora
+com um nome que sugere que o problema foi tratado.
+
+> Vale notar que o CLAUDE.md já registrava a dúvida desde a Fase 4.6: *"êxito e
+> sucumbência podem ser tipos que faltam"*. O diagnóstico da F-2d responde:
+> **êxito não é um tipo que falta — é um eixo que falta.** "Sucumbência",
+> essa sim, parece ser um tipo (é honorário devido pela parte contrária), e
+> continua pendente de ratificação como estava.
+
+### "Cliente inadimplente" — estado, derivado, ou já existe?
+
+**É DERIVADO, e o dado já está todo no banco.** Não é estado de cliente, e não
+deve virar campo.
+
+O que existe hoje:
+
+- `Installment.status` tem `vencido`, e ele é **derivado** — `paymentService`
+  linha 74: `if (new Date(installment.dataVencimento) < hoje) return "vencido"`;
+- `dashboardService` já conta e soma as vencidas (`vencidas`, `valorVencido`);
+- o caminho do cliente até a parcela existe inteiro:
+  `Client → ProcessoCliente → Process → Fee → Installment`.
+
+Então *"cliente inadimplente"* = **cliente com ao menos uma parcela vencida em
+aberto**. É uma consulta, não um campo.
+
+**Gravá-lo como campo do cliente seria o erro**, e o projeto já tem o
+precedente escrito: `Fee.status` é derivado desde a DEC-028 justamente porque
+um status de dinheiro gravado à mão **diverge do dinheiro** no primeiro
+pagamento que alguém registra. Um `cliente.inadimplente: true` ficaria `true`
+depois de o cliente pagar, até alguém rodar uma rotina — e ninguém saberia
+qual dos dois está certo.
+
+**A parte da frase dela que o sistema NÃO responde hoje** é a segunda:
+*"…mas o processo acabou"*. Isso é a interseção dos dois eixos —
+`transitoEmJulgadoEm` preenchido **e** parcela vencida em aberto —, e é o caso
+que mais dói: o processo saiu da rotina da advogada e a dívida ficou.
+
+A DEC-054 acabou de criar a metade que faltava (`transitoEmJulgadoEm`). A outra
+metade já existia. **O que falta é a consulta e a tela** — e isso é fase
+própria, não emenda.
+
+---
+
 ## Passos 90–98 (portal) — o levantamento da F-2c
 
 **Conclusão, antes do detalhe: eles NÃO são "controles de acesso do portal por
@@ -4495,7 +4936,7 @@ olhar antes de agir. **O seed comum também não** — `seed:fresh` é
 execução treina a resposta automática. Só o `--clean` tem guarda própria, porque
 é chamado sozinho.
 
-## O que fica para adiante (atualizado em 22/08/2026 — depois da F-2b)
+## O que fica para adiante (atualizado em 24/08/2026 — depois da F-2d)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
@@ -4555,20 +4996,46 @@ ser pré-condição de todo reset.
   `test` de `development`, que compartilhavam um teto perto demais do que a
   suíte consome.
 
-**A próxima fase é a F-2c**, e ela continua dependendo de gente: o **vocabulário
-de status da Laís**. As sete perguntas seguem com o Daniel. Sem elas, não se
-começa — os valores viram dado gravado, tela, filtro e histórico de→para, e
-trocá-los depois é migração em quatro lugares.
+- **✅ RESOLVIDO na F-2d — o vocabulário da Laís chegou (23/08/2026).** Ele era
+  o que travava o módulo de Processos desde a F-2b, e a resposta dela mudou a
+  pergunta: **não era um status, eram dois eixos.** Ver a **DEC-054**.
 
-Quando chegarem: status do processo, **cor por status** e o **histórico
-`de → para`**. Este último tem um ponto já decidido: ele é **separado** do
-`historicoAtivacao` da DEC-052, porque status é o andamento jurídico e ativação
-é se o registro existe para o sistema — um processo arquivado continua ativo.
+  A previsão desta seção estava metade certa e metade errada, e a diferença
+  importa: o **histórico `de → para` separado do `historicoAtivacao`** era o
+  ponto já decidido, e continua valendo — é o `historicoFase`. O que não se
+  previa é que "trânsito em julgado" **não caberia na mesma lista** das fases,
+  e que a **cor por status** viraria um **selo de liminar**, que é outra coisa:
+  liminar é sinalizador, não estado.
+
+- **✅ RESOLVIDO na F-2d — a lacuna de Documento na DEC-053** (achado do passo
+  204). A recusa existia; a mensagem é que era a errada. Ver "A DEC-053 alcança
+  Documento".
+
+- **✅ LEVANTADO e MANTIDO na F-2d — a rigidez de `deleteClient`** (relato do
+  passo 201). O veredito é que ela é exigida pela invariante da DEC-053; o que
+  mudou foi a mensagem saber dizer o caminho. Ver "A rigidez de `deleteClient`
+  é INTENCIONAL".
 
 **Duas regras de negócio da F-1c.2 precisam da Laís**, porque são combinação com
 cliente e não decisão técnica: a **sobra da divisão na primeira parcela**
 (R$ 1.000,00 em 3 vira 333,34 + 333,33 + 333,33) e o **"Parcela 1 de 3"** da
 DEC-048.
+
+**Três coisas novas entraram na lista de ratificação na F-2d:**
+
+1. **o nome da primeira fase** — "fase inicial" ou "fase de conhecimento"? Ela
+   deu as duas. Adotada a segunda; trocar é mudar um rótulo, sem migração;
+2. **falta alguma fase** que ela não citou? Foram quatro, e não inventamos uma
+   quinta;
+3. **"pagamento no êxito" e "cliente inadimplente"** — diagnosticados, **não
+   implementados**. Ver "DIAGNÓSTICO (F-2d)". O primeiro pede um eixo novo no
+   honorário (e mexe na DEC-039, congelada); o segundo é consulta derivada e
+   não deve virar campo. **A decisão é do Daniel com a Laís.**
+
+**A próxima fase é a F-2e: a LINHA DO TEMPO do processo**, que a Laís pediu
+(*"finalizado por etapa — fazer linha do tempo"*), construída sobre o
+`historicoFase` que a F-2d passou a gravar. Ela já tem substrato — foi por isso
+que a gravação começou antes da tela.
 
 **Continua sem lint.** `node --check` é o que existe hoje; ESLint viola "zero
 dependência nova" e segue como **exceção nomeada a decidir na F-2**.
