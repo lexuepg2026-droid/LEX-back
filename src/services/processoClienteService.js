@@ -185,6 +185,36 @@ export const contarVinculosDaCascata = (usuarioId, processoId) =>
 export const contarProcessosDoCliente = (usuarioId, clienteId) =>
   ProcessoCliente.countDocuments({ usuarioId, clienteId, ativo: true });
 
+// ── F-2d: os processos que BLOQUEIAM a desativação do cliente, nomeados ────
+//
+// A contagem acima já existia e continua sendo a autoridade do 409. O que esta
+// função acrescenta é QUAIS são — e é a diferença entre "desvincule-o dos
+// processos antes" e "desvincule-o de *Execução Fiscal – IPTU*".
+//
+// O relato que a motivou (passo 201, 24/08/2026): *"tive que desativar todos os
+// processos que o cliente estava vinculado, mesmo o que ele não é o principal,
+// para poder desativar"*. A guarda estava certa (ver a nota longa em
+// `clientService.deleteClient`); o que faltava era a advogada saber ONDE ir, e
+// que o caminho é DESVINCULAR — não desativar o processo de um terceiro.
+//
+// `papel` e `principal` entram porque é exatamente aí que mora a surpresa: um
+// litisconsorte no processo de outra pessoa bloqueia igual, e a linha que diz
+// "litisconsorte" explica por que aquele processo está na lista.
+export const listarProcessosQueBloqueiam = async (usuarioId, clienteId) => {
+  const vinculos = await ProcessoCliente.find({ usuarioId, clienteId, ativo: true })
+    .select("processoId papel principal")
+    .populate("processoId", "titulo numeroProcesso")
+    .sort({ principal: -1, createdAt: 1 });
+
+  return vinculos.map((v) => ({
+    id: String(v.processoId?._id ?? v.processoId),
+    titulo: v.processoId?.titulo?.trim() || v.processoId?.numeroProcesso?.trim() || "(sem título)",
+    numeroProcesso: v.processoId?.numeroProcesso ?? null,
+    papel: v.papel,
+    principal: v.principal === true
+  }));
+};
+
 // Vínculo ativo do par cliente/processo. É o ponto único que a geração de
 // documento consulta para saber se um cliente pode assinar por um processo.
 export const buscarVinculoAtivo = (usuarioId, processoId, clienteId, session) =>
@@ -394,10 +424,15 @@ export const desvincularCliente = async (usuarioId, processoId, clienteId) => {
   const ativos = await ProcessoCliente.countDocuments({ usuarioId, processoId, ativo: true });
 
   // Processo sem cliente não faz sentido: não há a quem atribuir a peça nem
-  // quem assina. A saída é excluir o processo, não esvaziá-lo.
+  // quem assina. A saída é DESATIVAR o processo, não esvaziá-lo.
+  //
+  // F-2d: a frase dizia "exclua o processo". A F-2b renomeou a ação para
+  // "Desativar" em Processos — sempre foi soft delete, e o nome antigo prometia
+  // uma destruição que não acontece. Mandar "excluir" numa tela cujo botão diz
+  // "Desativar" faz a advogada procurar um botão que não existe.
   if (ativos <= 1) {
     throw erro(
-      "Não é possível remover o único participante do processo. Vincule outro cliente ou exclua o processo.",
+      "Não é possível remover o único participante do processo. Vincule outro cliente ou desative o processo.",
       409
     );
   }
@@ -440,6 +475,7 @@ export default {
   contarVinculosAtivosDoProcesso,
   contarVinculosDaCascata,
   contarProcessosDoCliente,
+  listarProcessosQueBloqueiam,
   buscarVinculoAtivo,
   montarVinculos,
   assertClientesDoUsuario

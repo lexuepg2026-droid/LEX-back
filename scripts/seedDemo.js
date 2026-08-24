@@ -147,16 +147,16 @@ const CLIENTS_DATA = [
 //                        principal }. Exatamente um principal por processo.
 const PROCESSES_DATA = [
   // clienteIdx: 0-4 = PF (4 = Beatriz, sem profissao) | 5-7 = PJ (7 = sem representante)
-  { clienteIdx: 0, titulo: 'Indenizacao por Danos Morais', numeroProcesso: '0001234-10.2025.8.16.0001', tipoAcao: 'Indenizatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '1a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-02-10',
+  { clienteIdx: 0, titulo: 'Indenizacao por Danos Morais', fase: 'conhecimento', numeroProcesso: '0001234-10.2025.8.16.0001', tipoAcao: 'Indenizatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '1a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-02-10',
     descricao: 'Acao indenizatoria por danos morais decorrentes de assedio moral no ambiente de trabalho.',
     observacoes: 'Audiencia de instrucao designada. Cliente ja apresentou rol de testemunhas.' },
-  { clienteIdx: 0, titulo: 'Revisao de Contrato de Financiamento', numeroProcesso: '0002345-20.2025.8.16.0001', tipoAcao: 'Revisional', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-05',
+  { clienteIdx: 0, titulo: 'Revisao de Contrato de Financiamento', fase: 'sentenca', numeroProcesso: '0002345-20.2025.8.16.0001', tipoAcao: 'Revisional', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-05',
     descricao: 'Revisao de clausulas de financiamento imobiliario com pedido de recalculo de juros.',
     observacoes: 'Aguardando laudo pericial contabil.' },
-  { clienteIdx: 1, titulo: 'Divorcio Litigioso', numeroProcesso: '0003456-30.2025.8.16.0002', tipoAcao: 'Divorcio', area: 'Familia', orgao: 'Vara de Familia', vara: '2a Vara de Familia e Sucessoes de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-01-22',
+  { clienteIdx: 1, titulo: 'Divorcio Litigioso', fase: 'conhecimento', numeroProcesso: '0003456-30.2025.8.16.0002', tipoAcao: 'Divorcio', area: 'Familia', orgao: 'Vara de Familia', vara: '2a Vara de Familia e Sucessoes de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-01-22',
     descricao: 'Divorcio litigioso com partilha de bens e definicao de guarda compartilhada.',
     observacoes: 'Tentativa de conciliacao infrutifera na primeira audiencia.' },
-  { clienteIdx: 1, titulo: 'Acao Trabalhista - Verbas Rescisorias', numeroProcesso: '0004567-40.2024.8.16.0002', tipoAcao: 'Reclamatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '3a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'encerrado', dataDistribuicao: '2024-08-14',
+  { clienteIdx: 1, titulo: 'Acao Trabalhista - Verbas Rescisorias', fase: 'recursos', numeroProcesso: '0004567-40.2024.8.16.0002', tipoAcao: 'Reclamatoria', area: 'Trabalhista', orgao: 'TRT 9a Regiao', vara: '3a Vara do Trabalho de Curitiba', comarca: 'Curitiba', status: 'encerrado', dataDistribuicao: '2024-08-14',
     descricao: 'Reclamatoria trabalhista para cobranca de verbas rescisorias nao pagas.',
     observacoes: 'Encerrado por acordo homologado. Valores quitados em duas parcelas.' },
   // LITISCONSORCIO — o caso que justifica a Fase 2B inteira.
@@ -166,29 +166,29 @@ const PROCESSES_DATA = [
   // deste processo que saem os dois documentos do mesmo modelo, mais abaixo.
   { clientes: [{ idx: 2, papel: 'autor', principal: true },
                { idx: 3, papel: 'litisconsorte', principal: false }],
-    titulo: 'Inventario e Partilha de Bens', numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventario', area: 'Familia', orgao: '2a Vara Familia', vara: '2a Vara de Familia e Sucessoes de Ponta Grossa', comarca: 'Ponta Grossa', status: 'ativo', dataDistribuicao: '2025-04-02',
+    titulo: 'Inventario e Partilha de Bens', fase: 'conhecimento', numeroProcesso: '0005678-50.2025.8.16.0003', tipoAcao: 'Inventario', area: 'Familia', orgao: '2a Vara Familia', vara: '2a Vara de Familia e Sucessoes de Ponta Grossa', comarca: 'Ponta Grossa', status: 'ativo', dataDistribuicao: '2025-04-02',
     descricao: 'Inventario judicial com quatro herdeiros e imovel rural a partilhar.',
     observacoes: 'Litisconsorcio ativo: dois herdeiros representados no mesmo processo. Cada um assina a sua propria procuracao.' },
   // Papel 'reu': na execucao fiscal o cliente e o executado, nao o autor.
   // Terceiro interessado aparece no processo 9 (cobranca).
   { clientes: [{ idx: 3, papel: 'reu', principal: true }],
-    titulo: 'Execucao Fiscal - IPTU', numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execucao', area: 'Tributario', orgao: 'Vara de Fazenda', vara: '1a Vara da Fazenda Publica de Curitiba', comarca: 'Curitiba', status: 'suspenso', dataDistribuicao: '2024-11-19',
+    titulo: 'Execucao Fiscal - IPTU', fase: 'execucao', numeroProcesso: '0006789-60.2024.8.16.0004', tipoAcao: 'Execucao', area: 'Tributario', orgao: 'Vara de Fazenda', vara: '1a Vara da Fazenda Publica de Curitiba', comarca: 'Curitiba', status: 'suspenso', dataDistribuicao: '2024-11-19',
     descricao: 'Execucao fiscal de IPTU dos exercicios de 2021 a 2023.',
     observacoes: 'Suspenso por parcelamento administrativo do debito. Cliente figura no polo passivo.' },
-  { clienteIdx: 4, titulo: 'Usucapiao de Imovel Urbano', numeroProcesso: '0007890-70.2025.8.16.0005', tipoAcao: 'Usucapiao', area: 'Imobiliario', orgao: '3a Vara Civel', vara: '3a Vara Civel de Maringa', comarca: 'Maringa', status: 'ativo', dataDistribuicao: '2025-05-08',
+  { clienteIdx: 4, titulo: 'Usucapiao de Imovel Urbano', fase: 'conhecimento', numeroProcesso: '0007890-70.2025.8.16.0005', tipoAcao: 'Usucapiao', area: 'Imobiliario', orgao: '3a Vara Civel', vara: '3a Vara Civel de Maringa', comarca: 'Maringa', status: 'ativo', dataDistribuicao: '2025-05-08',
     descricao: 'Usucapiao extraordinaria de imovel urbano com posse mansa superior a quinze anos.',
     observacoes: 'Processo do cliente sem profissao cadastrada: usar para ver o 422 da geracao de documento.' },
-  { clienteIdx: 5, titulo: 'Disputas Contratuais com Fornecedor', numeroProcesso: '0009012-90.2024.8.16.0007', tipoAcao: 'Cobranca', area: 'Civel', orgao: '2a Vara Civel', vara: '2a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2024-09-30',
+  { clienteIdx: 5, titulo: 'Disputas Contratuais com Fornecedor', fase: 'sentenca', numeroProcesso: '0009012-90.2024.8.16.0007', tipoAcao: 'Cobranca', area: 'Civel', orgao: '2a Vara Civel', vara: '2a Vara Civel de Curitiba', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2024-09-30',
     descricao: 'Cobranca de multa contratual por atraso na entrega de insumos de obra.',
     observacoes: 'Processo de cliente PJ: usado para gerar a procuracao de pessoa juridica.' },
-  { clienteIdx: 6, titulo: 'Processo Administrativo Tributario', numeroProcesso: '0000123-01.2025.8.16.0008', tipoAcao: 'Administrativo', area: 'Tributario', orgao: 'SEFAZ-PR', vara: 'Setor de Julgamento Administrativo - SEFAZ/PR', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-18',
+  { clienteIdx: 6, titulo: 'Processo Administrativo Tributario', fase: 'conhecimento', numeroProcesso: '0000123-01.2025.8.16.0008', tipoAcao: 'Administrativo', area: 'Tributario', orgao: 'SEFAZ-PR', vara: 'Setor de Julgamento Administrativo - SEFAZ/PR', comarca: 'Curitiba', status: 'ativo', dataDistribuicao: '2025-03-18',
     descricao: 'Defesa em auto de infracao de ICMS com pedido de reducao de multa.',
     observacoes: 'Impugnacao protocolada dentro do prazo de trinta dias.' },
   // Segundo caso com mais de um participante, agora entre pessoas juridicas, e
   // o unico com papel 'terceiro_interessado' — cobre o quarto valor do enum.
   { clientes: [{ idx: 7, papel: 'autor', principal: true },
                { idx: 6, papel: 'terceiro_interessado', principal: false }],
-    titulo: 'Acao de Cobranca de Divida', numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobranca', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Ponta Grossa', comarca: 'Ponta Grossa', status: 'encerrado', dataDistribuicao: '2025-06-11',
+    titulo: 'Acao de Cobranca de Divida', fase: 'execucao', numeroProcesso: '0008901-80.2025.8.16.0006', tipoAcao: 'Cobranca', area: 'Civel', orgao: '1a Vara Civel', vara: '1a Vara Civel de Ponta Grossa', comarca: 'Ponta Grossa', status: 'encerrado', dataDistribuicao: '2025-06-11',
     descricao: 'Cobranca de duplicatas vencidas emitidas contra cooperativa agricola.',
     observacoes: 'Encerrado com pagamento integral apos citacao. Tech Solutions figura como terceira interessada na duplicata.' },
 ];
@@ -796,6 +796,15 @@ async function main() {
       vara:           p.vara,
       comarca:        p.comarca,
       status:         p.status,
+      // DEC-054: a fase com que cada processo do seed nasce. Variada de
+      // propósito — uma base inteira em "conhecimento" não exercitaria o
+      // filtro nem a coluna, e a validação manual precisa dos quatro valores
+      // na tela para conferir que os rótulos saem certos.
+      //
+      // `status` continua ao lado, e continua sendo outra coisa: a *Execucao
+      // Fiscal* está em `fase: execucao` e `status: suspenso` ao mesmo tempo,
+      // que é exatamente o par que um enum único não conseguiria representar.
+      fase:           p.fase,
       dataDistribuicao: p.dataDistribuicao,
       descricao:      p.descricao,
       observacoes:    p.observacoes,

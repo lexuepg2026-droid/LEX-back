@@ -1,10 +1,10 @@
 import mongoose from "mongoose";
 import Document from "../models/Document.js";
-import Process from "../models/Process.js";
 import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
 import { filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { assertProcessoAtivoParaCriar } from "./activationHierarchy.js";
 
 const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -19,19 +19,24 @@ const assertIdValido = (id, rotulo = "documento") => {
   }
 };
 
-const ensureProcessBelongsToUser = async (processoId, usuarioId) => {
-  const process = await Process.findOne({
-    _id: processoId,
-    usuarioId,
-    ativo: true
-  });
-
-  if (!process) {
-    throw createError("Processo não encontrado para este usuário", 404);
-  }
-
-  return process;
-};
+// ── DEC-053 alcança Documento (F-2d) ──────────────────────────────────────
+//
+// **O que estava errado, exatamente.** A guarda local que vivia aqui filtrava
+// `ativo: true` e respondia **404 "Processo não encontrado para este
+// usuário"** para um processo que EXISTE e está arquivado. A recusa acontecia
+// — a lacuna nunca foi "dá para criar documento em processo inativo" —, mas
+// com a mensagem que a DEC-053 nomeou como o defeito: mandar a advogada
+// procurar um registro que ela está vendo na tela com a tag "Desativado".
+//
+// Documento ficou de fora quando a F-2c passou os outros seis módulos para
+// `assertProcessoAtivoParaCriar`. Agora não fica: a resposta vira **409
+// nomeando o processo**, igual à de honorário, parcela e pagamento.
+//
+// A função local sai inteira em vez de virar um wrapper — um segundo nome para
+// a mesma guarda é como, em duas fases, um dos dois deixa de acompanhar o
+// outro.
+const ensureProcessBelongsToUser = (processoId, usuarioId, acao = "criar") =>
+  assertProcessoAtivoParaCriar(usuarioId, processoId, acao);
 
 const ensureDocumentBelongsToUser = async (documentId, usuarioId) => {
   const document = await Document.findOne({
@@ -133,8 +138,12 @@ export const updateDocumentService = async (documentId, usuarioId, payload) => {
   // criação não é regra. Mesma correção que a Fase 1.3 aplicou em clientService.
   const document = await ensureDocumentBelongsToUser(documentId, usuarioId);
 
+  // Mover um documento PARA um processo inativo faz o órfão nascer do mesmo
+  // jeito que criá-lo lá — é a boca 2 da DEC-053 pela porta do PATCH. O verbo
+  // muda ("mover", não "criar") porque a frase da recusa o usa, e "não é
+  // possível criar" numa edição diria a coisa errada.
   if (payload.processoId) {
-    await ensureProcessBelongsToUser(payload.processoId, usuarioId);
+    await ensureProcessBelongsToUser(payload.processoId, usuarioId, "mover o documento para este processo");
   }
 
   // ehModelo é imutável depois da criação. Virar modelo descartaria o processo

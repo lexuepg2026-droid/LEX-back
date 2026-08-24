@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import historicoAtivacaoSchema from "./shared/historicoAtivacaoSchema.js";
+import historicoFaseSchema from "./shared/historicoFaseSchema.js";
+import { FASES_PROCESSO, FASE_PADRAO } from "../config/fasesProcesso.js";
 
 const processSchema = new mongoose.Schema(
   {
@@ -59,11 +61,111 @@ const processSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+    // ── `status` — o eixo VELHO, mantido de propósito (DEC-054) ────────────
+    //
+    // Três valores administrativos, nascidos na Fase 2 e nunca conferidos com
+    // a advogada: "ativo", "encerrado", "suspenso". **Nenhum deles diz em que
+    // FASE o processo está** — e foi essa a descoberta da F-2d: `status` e
+    // `fase` não são o mesmo eixo renomeado, são eixos diferentes.
+    //
+    // Fica onde está, e a migração NÃO o apaga: a listagem filtra por ele
+    // desde a Fase 2, e derrubá-lo trocaria uma pergunta sem resposta ("o que
+    // é 'suspenso' em fase?") por uma tela quebrada.
     status: {
       type: String,
       trim: true,
       enum: ["ativo", "encerrado", "suspenso"],
       default: "ativo"
+    },
+
+    // ── DEC-054 — EIXO 1: onde o processo ESTÁ ────────────────────────────
+    //
+    // Os quatro valores são da Laís (23/08/2026). Ver `config/fasesProcesso.js`
+    // para o vocabulário inteiro e para por que a primeira se chama
+    // "conhecimento" e não "inicial".
+    //
+    // **Anda nos dois sentidos.** *"Sim, pode voltar."* Não há máquina de
+    // estados, não há transição travada, não há ordem exigida — e a ausência é
+    // REGRA, não omissão. Regra que ela não pediu é requisito inventado, e
+    // neste projeto já custou caro.
+    fase: {
+      type: String,
+      required: true,
+      enum: FASES_PROCESSO,
+      default: FASE_PADRAO,
+      index: true
+    },
+
+    // Append-only (DEC-054). Fora da allowlist de update: nenhuma rota aceita
+    // este campo. Quem escreve é `processService.mudarFase`, ponto único.
+    // Ver `models/shared/historicoFaseSchema.js` para por que a transição é
+    // gravada mesmo com o motivo dispensado.
+    historicoFase: {
+      type: [historicoFaseSchema],
+      default: []
+    },
+
+    // ── DEC-054 — EIXO 2: se o processo ACABOU ────────────────────────────
+    //
+    // *"Trânsito em julgado — processo encerrou completamente, acabou todos os
+    // processos de recurso."*
+    //
+    // **Não é a quinta fase.** É outro eixo, e por isso é outro campo: um
+    // processo transitado em julgado continua tendo uma fase — a última em que
+    // esteve —, e apagá-la para escrever "transitado" perderia a informação de
+    // onde ele parou.
+    //
+    // `null` enquanto não houver. A data É o encerramento: não existe um
+    // booleano `encerrado` ao lado dela, porque dois campos para um fato só
+    // podem discordar, e aí ninguém sabe qual está certo.
+    transitoEmJulgadoEm: {
+      type: Date,
+      default: null
+    },
+
+    // COMO se chegou ao fim. *"Acordo cumprido — aí o processo finalizado e
+    // muda para trânsito em julgado."* É aqui que "acordo cumprido" mora: o
+    // caminho que ela descreveu leva ao trânsito em julgado, então o fim é UM
+    // só e o motivo EXPLICA como se chegou nele.
+    //
+    // Campo livre, e não enum: ela citou um caminho ("acordo cumprido") e a
+    // prática dela certamente tem outros. Congelar a lista com um exemplo
+    // dentro obrigaria a advogada a escolher entre mentir e não registrar.
+    motivoEncerramento: {
+      type: String,
+      trim: true,
+      default: null
+    },
+
+    // ── DEC-054 — LIMINAR: sinalizador, não estado ────────────────────────
+    //
+    // *"Liminar é um plus dentro das fases, você pede algo com urgência, mas
+    // não é uma fase nova."*
+    //
+    // Por isso é um booleano ao lado da fase, e não um valor DENTRO dela: um
+    // processo em qualquer uma das quatro fases pode ter liminar, e pôr
+    // "liminar" no enum forçaria a advogada a apagar a fase real para marcar a
+    // urgência.
+    liminar: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    // Observação OPCIONAL sobre a liminar, e a data dela. Os dois `null`
+    // quando não houver — nunca `undefined`.
+    //
+    // `liminarEm` e não `liminarConcedidaEm`: ela disse "você pede algo com
+    // urgência", e pedido e concessão são momentos diferentes. Nomear o campo
+    // por um dos dois decidiria, por conta própria, qual deles a advogada
+    // deveria estar registrando.
+    liminarObservacao: {
+      type: String,
+      trim: true,
+      default: null
+    },
+    liminarEm: {
+      type: Date,
+      default: null
     },
     descricao: {
       type: String,

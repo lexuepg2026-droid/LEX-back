@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 import Document from "../models/Document.js";
-import Process from "../models/Process.js";
 import Client from "../models/Client.js";
 import User from "../models/User.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
@@ -19,6 +18,7 @@ import formatadores from "../utils/templateFormatters.js";
 import { detectarLacunas } from "../utils/lacunas.js";
 import { filtroTexto } from "../utils/filtrosDeConsulta.js";
 import { buscarVinculoAtivo } from "./processoClienteService.js";
+import { assertProcessoAtivoParaCriar } from "./activationHierarchy.js";
 
 const createError = (message, statusCode, extra = {}) => {
   const error = new Error(message);
@@ -267,10 +267,19 @@ const carregarVinculosOrdenados = (documentoId, usuarioId) =>
 const carregarContexto = async (processoId, usuarioId, clienteId) => {
   assertIdValido(processoId, "processo");
 
-  const processo = await Process.findOne({ _id: processoId, usuarioId, ativo: true });
-  if (!processo) {
-    throw createError("Processo não encontrado para este usuário", 404);
-  }
+  // ── DEC-053 alcança Documento (F-2d) ────────────────────────────────────
+  //
+  // Gerar uma peça num processo arquivado CRIA um documento ativo sob pai
+  // inativo — é a boca 2 da regra, pela terceira porta do módulo (as outras
+  // duas são `createDocumentService` e a mudança de `processoId` no PATCH).
+  //
+  // Já era recusado, com o `findOne({ ativo: true })` que vivia aqui. O que
+  // muda é o PORQUÊ: 404 "não encontrado" virou 409 nomeando o processo.
+  //
+  // Vale também para o PREVIEW, que passa por esta mesma função: pré-visualizar
+  // não grava nada, mas oferecer a prévia de uma peça que a geração recusaria
+  // é levar a advogada até o último clique para então dizer não.
+  const processo = await assertProcessoAtivoParaCriar(usuarioId, processoId, "gerar o documento");
 
   const cliente = await resolverClienteDoProcesso(processo, usuarioId, clienteId);
   if (!cliente) {

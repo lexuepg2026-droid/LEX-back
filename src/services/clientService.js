@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import Client from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
-import { contarProcessosDoCliente } from "./processoClienteService.js";
+import { contarProcessosDoCliente, listarProcessosQueBloqueiam } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { regexTermoSimples } from "../utils/texto.js";
@@ -115,12 +115,36 @@ const conflict = (message, campo) => {
 
 // 409 de integridade referencial. Não leva `campo`: não há input em conflito,
 // e sim registros já gravados. Ver `config/integrityConflicts.js`.
-const conflictDeDependencia = (message, dependencia, quantidade) => {
+const conflictDeDependencia = (message, dependencia, quantidade, errors) => {
   const error = new Error(message);
   error.statusCode = 409;
   error.dependencia = dependencia;
   error.quantidade = quantidade;
+  if (errors) error.errors = errors;
   return error;
+};
+
+// Os processos que bloqueiam, na frase. Um, dois ou muitos — e a concordância
+// muda. Litisconsorte ganha a marca entre parênteses porque é ali que está a
+// surpresa: a advogada não espera que o processo de um terceiro apareça na
+// lista, e o papel explica por que ele está.
+//
+// Acima de três, corta: uma frase de toast com trinta títulos não é frase. O
+// vetor completo continua em `errors.processosBloqueando`, e é dele que a tela
+// monta a lista inteira.
+const LIMITE_NOMES = 3;
+
+const listarNomesDeProcessos = (processos) => {
+  const rotulo = (p) => (p.principal ? p.titulo : `${p.titulo} (${p.papel})`);
+  const nomes = processos.map(rotulo);
+
+  if (nomes.length <= LIMITE_NOMES) {
+    if (nomes.length === 1) return nomes[0];
+    return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+  }
+
+  const restantes = nomes.length - LIMITE_NOMES;
+  return `${nomes.slice(0, LIMITE_NOMES).join(", ")} e mais ${restantes}`;
 };
 
 const handleDuplicateKeyError = (error) => {
@@ -350,6 +374,54 @@ const revogarAcessoPortal = async (usuarioId, clientId) => {
 // a junção é a verdade sobre quem participa, e um cliente pode ser
 // litisconsorte sem nunca ser o principal de coisa alguma. Mesma regra de
 // honorário (parcelas vinculadas) e parcela (pagamentos vinculados).
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// A RIGIDEZ É INTENCIONAL — levantamento da F-2d (relato do passo 201)
+//
+// ── O relato ─────────────────────────────────────────────────────────────
+// *"Tive que desativar todos os processos que o cliente estava vinculado,
+// mesmo o que ele não é o principal, para poder desativar."*
+//
+// A suspeita levantada foi: a guarda olha QUALQUER vínculo, e por isso um
+// cliente que é litisconsorte no processo de outra pessoa bloqueia a
+// desativação — obrigando a advogada a mexer no processo de um terceiro para
+// arquivar um cliente que não é o dono dele.
+//
+// ── A metade verdadeira ──────────────────────────────────────────────────
+// A guarda olha QUALQUER vínculo ativo, sim: `contarProcessosDoCliente` conta
+// `{ usuarioId, clienteId, ativo: true }` sem olhar `principal`. Litisconsorte
+// bloqueia igual ao autor.
+//
+// ── Por que ela FICA COMO ESTÁ ───────────────────────────────────────────
+// Porque afrouxá-la para o principal criaria órfão — o mesmo que a DEC-053
+// existe para impedir, e pela porta mais discreta:
+//
+//   `ProcessoCliente` tem **dois pais**: Processo e Cliente. Um cliente
+//   desativado com um vínculo de litisconsorte ainda ATIVO é um registro ativo
+//   sob pai inativo. O `auditarOrfaos.js` o reportaria nominalmente, como
+//   `Vínculo processo-cliente → Cliente` — que é justamente a relação que o
+//   roteiro do passo 204 chama de "a que não vem à cabeça".
+//
+// Ou seja: a rigidez não é efeito colateral de olhar a junção. É o que a
+// invariante da DEC-053 exige de quem olha a junção. Trocar por `principal`
+// seria comprar a conveniência de uma tela com um órfão garantido.
+//
+// ── O que ERA defeito, e foi corrigido aqui ──────────────────────────────
+// A saída correta nunca foi "desativar os processos do terceiro" — é
+// **DESVINCULAR** o cliente deles, por
+// `DELETE /api/processes/:id/clientes/:clienteId`, que existe desde a Fase 2B
+// e não toca no processo de ninguém.
+//
+// A mensagem já mandava desvincular, mas **não dizia de quais processos**. Num
+// cadastro com trinta processos isso é a mesma recusa genérica que a DEC-053
+// nomeou como o defeito — e foi por isso que o caminho mais curto pareceu ser
+// desativar tudo. Agora ela NOMEIA os processos, com o papel do cliente em
+// cada um, que é onde mora a surpresa do litisconsórcio.
+//
+// **A palavra "excluir" também saiu** (F-2d, achado do passo 184): a F-2b
+// renomeou a ação para "Desativar" em Clientes e Processos, e a mensagem tinha
+// ficado com o verbo velho — prometendo uma destruição que não acontece.
+// ═══════════════════════════════════════════════════════════════════════════
 const deleteClient = async (usuarioId, clientId) => {
   assertIdValido(clientId);
 
@@ -359,11 +431,20 @@ const deleteClient = async (usuarioId, clientId) => {
   const vinculosAtivos = await contarProcessosDoCliente(usuarioId, clientId);
 
   if (vinculosAtivos > 0) {
+    const bloqueadores = await listarProcessosQueBloqueiam(usuarioId, clientId);
     const plural = vinculosAtivos === 1 ? "processo" : "processos";
+
     throw conflictDeDependencia(
-      `Não é possível excluir este cliente: ele participa de ${vinculosAtivos} ${plural} ativo${vinculosAtivos === 1 ? "" : "s"}. Desvincule-o dos processos antes.`,
+      `Não é possível desativar este cliente: ele participa de ${vinculosAtivos} ${plural} ` +
+      `ativo${vinculosAtivos === 1 ? "" : "s"} — ${listarNomesDeProcessos(bloqueadores)}. ` +
+      `Desvincule-o ${vinculosAtivos === 1 ? "do processo" : "dos processos"} antes; ` +
+      `não é preciso desativar o processo.`,
       DEPENDENCIA.PROCESSOS,
-      vinculosAtivos
+      vinculosAtivos,
+      // Os nomes vão em `errors`, não em chave solta: `errors` já é repassado
+      // inteiro pelo `errorHandler`, e é a mesma escolha que a DEC-053 fez com
+      // `paisInativos`. A tela usa isso para oferecer o link de cada processo.
+      { processosBloqueando: bloqueadores }
     );
   }
 

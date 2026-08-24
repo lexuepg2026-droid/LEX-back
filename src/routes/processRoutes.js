@@ -29,6 +29,17 @@ router.put("/:id", processController.update);
 router.patch("/:id", processController.update);
 router.delete("/:id", processController.remove);
 
+// ── DEC-054 — a fase tem rota própria ─────────────────────────────────────
+//
+// Não é `PATCH /:id` com mais um campo: toda mudança de fase grava uma entrada
+// de histórico, e a rota genérica grava por `findOneAndUpdate`, que não teria
+// onde pendurar isso. `fase` está fora da allowlist do PATCH comum de
+// propósito, e a recusa de lá aponta para cá.
+//
+// Sub-rota literal, como `/reactivate`: não colide com `/:id`, que só pega um
+// segmento.
+router.patch("/:id/fase", processController.mudarFaseDoProcesso);
+
 // DEC-052 — reativação e a contagem que a tela mostra antes de confirmar.
 //
 // O preview vem ANTES de `/:id/reactivate` na ordem de declaração? Não precisa:

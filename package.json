@@ -13,7 +13,8 @@
     "reset:dev": "NODE_ENV=development node scripts/resetDev.js",
     "auditar:orfaos": "node scripts/auditarOrfaos.js",
     "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/",
-    "test:watch": "node --test --watch --test-concurrency=1 --test-timeout=120000 tests/"
+    "test:watch": "node --test --watch --test-concurrency=1 --test-timeout=120000 tests/",
+    "migrar:fase": "node scripts/migrarFaseProcesso.js"
   },
   "keywords": [],
   "author": "",
