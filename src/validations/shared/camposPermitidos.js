@@ -45,7 +45,11 @@ export const mensagemAtivo = (rotaDelete) =>
 // `ativo` é conferido antes dos demais desconhecidos: é o campo com mensagem
 // própria, e cair na genérica ("campo desconhecido: ativo") esconderia que
 // existe um caminho certo para o que a pessoa quis fazer.
-export const checarCamposPermitidos = (data, permitidos, { rotaDelete } = {}) => {
+export const checarCamposPermitidos = (
+  data,
+  permitidos,
+  { rotaDelete, rotasProprias = {} } = {}
+) => {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { campo: null, mensagem: "Payload inválido" };
   }
@@ -59,6 +63,14 @@ export const checarCamposPermitidos = (data, permitidos, { rotaDelete } = {}) =>
         ? mensagemAtivo(rotaDelete)
         : 'O campo "ativo" não é alterado por esta rota.'
     };
+  }
+
+  // Campo que TEM caminho próprio: a recusa diz qual é. Conferido antes do
+  // desconhecido genérico pela mesma razão do `ativo` acima — cair na genérica
+  // esconderia que existe um caminho certo para o que a pessoa quis fazer.
+  const comRota = enviados.find((campo) => rotasProprias[campo] !== undefined);
+  if (comRota) {
+    return { campo: comRota, mensagem: rotasProprias[comRota] };
   }
 
   const desconhecido = enviados.find((campo) => !permitidos.includes(campo));
@@ -94,10 +106,28 @@ export const CAMPOS_UPDATE = Object.freeze({
     "cnpj", "representanteLegal", "email", "telefone", "endereco",
     "observacoes", "senhaPortal"
   ]),
+  //
+  // ── DEC-054 (F-2d) ──────────────────────────────────────────────────────
+  //
+  // ENTRARAM: `transitoEmJulgadoEm`, `motivoEncerramento`, `liminar`,
+  // `liminarObservacao`, `liminarEm`. São carimbo e sinalizador — não são "por
+  // onde o processo andou", e por isso não precisam de entrada de histórico.
+  //
+  // NÃO ENTROU `fase`, e a ausência é a decisão. Mudar de fase é o FATO que a
+  // linha do tempo mostra; aceitá-la aqui gravaria a mudança SEM histórico,
+  // pelo `findOneAndUpdate` de `updateProcess`. Ela entra na lista logo abaixo
+  // (`CAMPOS_COM_ROTA_PROPRIA`) para ser recusada com a mensagem que manda a
+  // pessoa a `PATCH /api/processes/:id/fase` — a genérica de campo desconhecido
+  // não diria por onde ir.
+  //
+  // `historicoFase` não está em lugar nenhum, como `historicoAtivacao`: é
+  // append-only e não há rota que o aceite.
   processes: Object.freeze([
     "titulo", "numeroProcesso", "tipoAcao", "area", "orgao", "vara", "comarca",
     "status", "descricao", "observacoes", "dataDistribuicao",
-    "clientePrincipalId", "clienteId"
+    "clientePrincipalId", "clienteId",
+    "transitoEmJulgadoEm", "motivoEncerramento",
+    "liminar", "liminarObservacao", "liminarEm"
   ]),
   fees: Object.freeze([
     "processoId", "descricao", "valor", "tipo", "percentual", "valorBase",
@@ -165,11 +195,28 @@ export const ROTA_DELETE = Object.freeze({
   documents: "/api/documents/:id"
 });
 
+// ── DEC-054 — campos cuja escrita tem ROTA PRÓPRIA ────────────────────────
+//
+// Não são "desconhecidos": são campos reais do model que este PATCH não é o
+// lugar de escrever. A mensagem diz por onde ir, como já fazem `ativo` e
+// `clientePrincipalId`.
+//
+// `fase` está aqui porque toda mudança dela precisa gerar entrada de
+// histórico, e o `findOneAndUpdate` de `updateProcess` não geraria nenhuma.
+export const CAMPOS_COM_ROTA_PROPRIA = Object.freeze({
+  processes: Object.freeze({
+    fase:
+      'O campo "fase" não é alterado por esta rota, porque toda mudança de fase ' +
+      "gera um registro de histórico. Use PATCH /api/processes/:id/fase."
+  })
+});
+
 // Açúcar para os services: devolve { campo, mensagem } ou null, já com a rota
 // de DELETE do recurso preenchida.
 export const checarUpdate = (recurso, data) =>
   checarCamposPermitidos(data, CAMPOS_UPDATE[recurso], {
-    rotaDelete: ROTA_DELETE[recurso]
+    rotaDelete: ROTA_DELETE[recurso],
+    rotasProprias: CAMPOS_COM_ROTA_PROPRIA[recurso] ?? {}
   });
 
 export default {
@@ -177,5 +224,6 @@ export default {
   checarUpdate,
   mensagemAtivo,
   CAMPOS_UPDATE,
+  CAMPOS_COM_ROTA_PROPRIA,
   ROTA_DELETE
 };

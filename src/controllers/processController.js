@@ -3,6 +3,7 @@ import {
   deleteProcess,
   getProcessById,
   listProcesses,
+  mudarFase,
   previewDeAtivacao,
   reactivateProcess,
   updateProcess
@@ -30,8 +31,12 @@ export const list = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { busca, status, situacao } = req.query;
-    const result = await listProcesses(req.user._id, { page, limit, busca, status, situacao });
+    // DEC-054: `fase` e `liminar` entram como os demais — a leitura dos
+    // valores é do serviço, que é onde o vocabulário mora.
+    const { busca, status, situacao, fase, liminar } = req.query;
+    const result = await listProcesses(req.user._id, {
+      page, limit, busca, status, situacao, fase, liminar
+    });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
@@ -50,6 +55,16 @@ export const getById = async (req, res, next) => {
 export const update = async (req, res, next) => {
   try {
     const process = await updateProcess(req.user._id, req.params.id, req.body);
+    return res.status(200).json(process);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// DEC-054 — a única escrita de `fase`, e por isso a única que grava histórico.
+export const mudarFaseDoProcesso = async (req, res, next) => {
+  try {
+    const process = await mudarFase(req.user._id, req.params.id, req.body);
     return res.status(200).json(process);
   } catch (error) {
     return next(error);
