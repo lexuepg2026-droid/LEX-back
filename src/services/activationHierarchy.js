@@ -99,7 +99,9 @@ export const ARVORE_DE_ATIVACAO = Object.freeze({
   Document: Object.freeze({
     colecao: "documents",
     pais: Object.freeze(["Process", "Client", "Fee"]),
-    observacao: "`clienteId` e `feeId` são opcionais conforme o tipo"
+    observacao:
+      "`clienteId` e `feeId` são opcionais conforme o tipo. A F-2c mapeou a " +
+      "relação e a F-2d fechou as portas: ver a nota do módulo, logo abaixo."
   }),
   Secao: Object.freeze({
     colecao: "secoes",
@@ -112,6 +114,64 @@ export const ARVORE_DE_ATIVACAO = Object.freeze({
     observacao: "dois pais; é a junção documento↔seção"
   })
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DOCUMENTO — a lacuna que o passo 204 achou, e o que ela era de fato (F-2d)
+//
+// ── O achado ─────────────────────────────────────────────────────────────
+// A auditoria da F-2c, rodada contra o banco de desenvolvimento em 24/08/2026,
+// achou UM órfão, e ele era de Documento:
+//
+//   Documento → Processo
+//     filho ATIVO   : Peticao de Suspensao da Execucao
+//     pai   INATIVO : Execucao Fiscal - IPTU
+//
+// As outras seis relações estavam limpas. A pergunta da F-2d foi: **a cascata
+// não alcança o documento, ou alcança e ele escapou?**
+//
+// ── A resposta, lida dos carimbos do próprio banco ───────────────────────
+//   documento criado    : 2026-08-24T13:38:45Z  (nasceu com o processo, ativo)
+//   processo desativado : 2026-08-24T13:48:05Z  (`vinculosAfetados: 1`)
+//
+// **A cascata não o alcança.** O documento nasceu ANTES e continuou ativo: o
+// `deleteProcess` derruba os VÍNCULOS processo↔cliente e mais nada — o
+// `vinculosAfetados: 1` do histórico é exatamente a contagem deles.
+//
+// E isso não é defeito da cascata: ela é assim de propósito desde a DEC-052.
+// Honorário, parcela e pagamento também não caem junto com o processo. O órfão
+// saiu em Documento e não nos outros só porque, nesta base, o processo
+// desativado tinha documento e não tinha honorário.
+//
+// ── Onde a lacuna estava DE VERDADE: a boca 2, com a frase errada ────────
+// Os três pontos que criam documento sob um processo — `createDocumentService`,
+// a troca de `processoId` no PATCH, e `carregarContexto` da geração —
+// **recusavam** o processo inativo. Nunca foi possível criar ali.
+//
+// Mas recusavam com **404 "Processo não encontrado para este usuário"**, para
+// um processo que existe e que a advogada está vendo na tela com a tag
+// "Desativado". É literalmente a frase que a DEC-053 nomeou como o defeito, e
+// Documento era o único módulo que ainda a dava: a F-2c passou os outros seis
+// para `assertProcessoAtivoParaCriar` e deixou este para trás.
+//
+// A F-2d passa os três. A recusa agora é 409 nomeando o processo.
+//
+// ── Boca 1 (reativar): fechada POR AUSÊNCIA, e não por guarda ────────────
+// **Não existe reativação de documento.** Não há rota (`documentRoutes.js` não
+// tem `/reactivate`), `ativo` está fora da allowlist de update, e nenhum
+// serviço escreve `ativo: true` num documento já desativado.
+//
+// Não se acrescenta guarda para um caminho que não existe — é a mesma decisão
+// escrita para `PAI_TENANT` no fim deste arquivo, e pelo mesmo motivo: guarda
+// que nunca roda é código que ninguém consegue testar sem fabricar o estado por
+// fora do sistema. O que se faz é TRAVAR A AUSÊNCIA por teste, para que o dia
+// em que a reativação de documento nascer ela nasça já sabendo desta regra.
+//
+// ── O órfão FICA no banco de desenvolvimento, de propósito ───────────────
+// Ele não é consertado por script — a escolha entre desativar o filho e
+// reativar o pai é da advogada, e essa regra não muda. Ele fica como **caso
+// vivo**: prova que a auditoria continua achando, enquanto os testes provam
+// que um novo não pode mais nascer com a mensagem errada.
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ── Nome de exibição ──────────────────────────────────────────────────────
 //
