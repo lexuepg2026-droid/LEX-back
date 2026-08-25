@@ -72,6 +72,7 @@ import Payment from "../src/models/Payment.js";
 import Document from "../src/models/Document.js";
 import Secao from "../src/models/Secao.js";
 import DocumentoSecao from "../src/models/DocumentoSecao.js";
+import Event from "../src/models/Event.js";
 import { nomeDoCliente, nomeDoProcesso } from "../src/services/activationHierarchy.js";
 
 // ── Nomes de exibição ─────────────────────────────────────────────────────
@@ -278,6 +279,32 @@ const RELACOES = [
         Model: Fee,
         projecao: "descricao",
         nome: nomeDoHonorario
+      }
+    ]
+  },
+  // ── F-3: o evento do calendário ────────────────────────────────────────
+  //
+  // O pai é OPCIONAL, e este é o primeiro da lista em que isso acontece. O
+  // evento solto (`processoId: null`) não tem pai e é PULADO — `auditarRelacao`
+  // já faz isso com `if (!idDoPai) continue`, e não é preciso caso especial.
+  //
+  // Ele entra na auditoria justamente porque a cascata NÃO o alcança: desativar
+  // um processo derruba os vínculos processo↔cliente e mais nada (DEC-052). Um
+  // evento de um processo arquivado continua aparecendo na agenda da advogada,
+  // e o compromisso órfão é o pior tipo — porque ele ainda tem uma data, e a
+  // data ainda chega.
+  {
+    filho: "Evento",
+    Filho: Event,
+    nomeFilho: (e) => e.titulo?.trim() || "(sem título)",
+    projecaoFilho: "titulo data",
+    pais: [
+      {
+        campo: "processoId",
+        rotulo: "Processo",
+        Model: Process,
+        projecao: "titulo numeroProcesso",
+        nome: nomeDoProcesso
       }
     ]
   },

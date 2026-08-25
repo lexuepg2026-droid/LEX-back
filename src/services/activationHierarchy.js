@@ -112,6 +112,28 @@ export const ARVORE_DE_ATIVACAO = Object.freeze({
     colecao: "documento_secao",
     pais: Object.freeze(["Document", "Secao"]),
     observacao: "dois pais; é a junção documento↔seção"
+  }),
+  // ── F-3: a DEC-053 alcança Evento ──────────────────────────────────────
+  //
+  // O pai é OPCIONAL, e é o primeiro da árvore em que isso acontece. Um evento
+  // pode existir solto — "nem toda reunião é de um processo" —, e o evento
+  // solto simplesmente **não tem pai para estar inativo**: ele não entra na
+  // regra, e não porque a regra o dispense, mas porque a pergunta não se aplica.
+  //
+  // Onde o `processoId` existe, a regra vale inteira e nas duas bocas: o evento
+  // não NASCE sob processo desativado e não REATIVA sob processo desativado.
+  //
+  // Registrar o pai opcional na árvore, em vez de deixar Evento de fora, é o
+  // que faz a auditoria de órfãos encontrar o evento vinculado a processo
+  // arquivado — que é exatamente o estado que a advogada não veria de outro
+  // jeito, porque um compromisso órfão continua aparecendo na agenda dela.
+  Event: Object.freeze({
+    colecao: "events",
+    pais: Object.freeze(["Process"]),
+    paiOpcional: true,
+    observacao:
+      "`processoId` é OPCIONAL — evento solto não tem pai, e a regra não se " +
+      "aplica a ele. Onde há processo, as duas bocas valem."
   })
 });
 
@@ -448,6 +470,32 @@ export const assertFeeAtivoParaCriar = async (usuarioId, feeId, acao = "criar") 
   return fee;
 };
 
+// ── Boca 1 para EVENTO: reativar (F-3) ────────────────────────────────────
+//
+// Diferente de Processo, aqui não há junção a consultar: o evento tem no
+// máximo UM pai, e ele está no próprio documento. A função devolve `[]` para o
+// evento solto — sem pai, não há pai inativo, e a reativação segue.
+//
+// Devolve vetor (e não um objeto ou `null`) porque é o formato que
+// `erroDePaiInativo` e `errors.paisInativos` já falam, em todo o resto da
+// DEC-053. Um formato próprio aqui obrigaria o `errorHandler` e a tela a
+// conhecerem dois.
+export const findInactiveParentsOfEvent = async (usuarioId, evento) => {
+  if (!evento?.processoId) return [];
+
+  const processoId = evento.processoId._id ?? evento.processoId;
+
+  const processo = await Process.findOne({
+    _id: processoId,
+    usuarioId,
+    ativo: false
+  }).select("titulo numeroProcesso");
+
+  if (!processo) return [];
+
+  return [{ tipo: "Process", id: processo._id, nome: nomeDoProcesso(processo) }];
+};
+
 // ── O tenant não entra na regra, e isso é decisão ─────────────────────────
 //
 // `Client` e `Secao` penduram em `User`. `User.ativo` existe, mas NENHUMA rota
@@ -473,5 +521,6 @@ export default {
   findInactiveParentsForProcesses,
   assertProcessoAtivoParaCriar,
   assertFeeAtivoParaCriar,
+  findInactiveParentsOfEvent,
   PAI_TENANT
 };

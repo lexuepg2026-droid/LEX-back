@@ -180,6 +180,20 @@ export const CAMPOS_UPDATE = Object.freeze({
   documents: Object.freeze([
     "processoId", "nome", "tipo", "descricao", "origem", "visivelPortal",
     "ehModelo"
+  ]),
+  //
+  // ── F-3: o evento do calendário ─────────────────────────────────────────
+  //
+  // NÃO ENTRARAM `concluido` nem `concluidoEm`, e a ausência é a decisão. Os
+  // dois descrevem UM fato — "já aconteceu, e ela marcou isso em tal instante"
+  // — e têm um ponto de escrita só (`eventService.concluirEvento`). Aceitá-los
+  // aqui deixaria gravar `concluido: true` com `concluidoEm: null`, dois campos
+  // discordando sobre o mesmo fato. Entram em `CAMPOS_COM_ROTA_PROPRIA` logo
+  // abaixo, para a recusa MANDAR a pessoa a `PATCH /api/events/:id/concluir`.
+  //
+  // É a mesma decisão da `fase` na DEC-054, pela mesma razão.
+  events: Object.freeze([
+    "tipo", "titulo", "descricao", "local", "data", "hora", "processoId"
   ])
 });
 
@@ -192,7 +206,8 @@ export const ROTA_DELETE = Object.freeze({
   installments: "/api/installments/:id",
   payments: "/api/payments/:id",
   secoes: "/api/secoes/:id",
-  documents: "/api/documents/:id"
+  documents: "/api/documents/:id",
+  events: "/api/events/:id"
 });
 
 // ── DEC-054 — campos cuja escrita tem ROTA PRÓPRIA ────────────────────────
@@ -208,6 +223,16 @@ export const CAMPOS_COM_ROTA_PROPRIA = Object.freeze({
     fase:
       'O campo "fase" não é alterado por esta rota, porque toda mudança de fase ' +
       "gera um registro de histórico. Use PATCH /api/processes/:id/fase."
+  }),
+  // F-3 — `concluido` e `concluidoEm` são um fato só, com carimbo. A rota
+  // própria é o que impede os dois de serem gravados em desacordo.
+  events: Object.freeze({
+    concluido:
+      'O campo "concluido" não é alterado por esta rota, porque concluir grava ' +
+      "também a data da conclusão. Use PATCH /api/events/:id/concluir.",
+    concluidoEm:
+      'O campo "concluidoEm" é carimbado pela conclusão e não é enviado. ' +
+      "Use PATCH /api/events/:id/concluir."
   })
 });
 
