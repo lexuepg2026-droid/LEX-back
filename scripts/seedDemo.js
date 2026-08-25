@@ -28,7 +28,7 @@ import { detectarLacunas } from '../src/utils/lacunas.js';
 import { CATALOGO_VARIAVEIS } from '../src/config/templateVariables.js';
 import { TEXTO_CONFIRMACAO } from '../src/config/textoConfirmacao.js';
 import Event from '../src/models/Event.js';
-import { criarEvento } from '../src/services/eventService.js';
+import { criarEvento, concluirEvento } from '../src/services/eventService.js';
 import {
   hojeComoDataDeCalendario, lerDataDeCalendario, escreverDataDeCalendario
 } from '../src/utils/dataDeCalendario.js';
@@ -689,8 +689,10 @@ async function main() {
       Process.deleteMany({ usuarioId: uid }),
       Client.deleteMany({ usuarioId: uid }),
       ConfirmacaoVisualizacao.deleteMany({ usuarioId: uid }),
-      Event.deleteMany({ usuarioId: uid }),
     ]);
+    // Fora do `Promise.all` DE PROPÓSITO: é daqui que sai a contagem impressa.
+    // Estar nos dois lugares fazia o primeiro apagar e o segundo contar zero —
+    // o relatório do cleanup dizia "0 eventos da agenda" com a coleção cheia.
     const eventosRemovidos = await Event.deleteMany({ usuarioId: uid });
     await User.deleteOne({ _id: uid });
 
@@ -898,11 +900,11 @@ async function main() {
 
     // A conclusão vai pela rota própria do serviço — `concluido` e
     // `concluidoEm` são um fato só com carimbo, e nem o seed os escreve à mão.
+    // Escrever os dois campos com `updateOne` aqui seria a mesma coisa que
+    // `Event.create` é para a criação: estado que a aplicação talvez nunca
+    // produzisse, com os dois campos livres para discordar.
     if (e.concluido) {
-      await Event.updateOne(
-        { _id: criado._id },
-        { $set: { concluido: true, concluidoEm: new Date() } }
-      );
+      await concluirEvento(uid, criado._id, { concluido: true });
     }
 
     events.push(criado);
