@@ -27,6 +27,11 @@ import { gerarDocumentoService, atualizarTextoService } from '../src/services/do
 import { detectarLacunas } from '../src/utils/lacunas.js';
 import { CATALOGO_VARIAVEIS } from '../src/config/templateVariables.js';
 import { TEXTO_CONFIRMACAO } from '../src/config/textoConfirmacao.js';
+import Event from '../src/models/Event.js';
+import { criarEvento, concluirEvento } from '../src/services/eventService.js';
+import {
+  hojeComoDataDeCalendario, lerDataDeCalendario, escreverDataDeCalendario
+} from '../src/utils/dataDeCalendario.js';
 import { exigirConfirmacaoDeBanco } from './lib/guardaDeBanco.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
@@ -685,6 +690,10 @@ async function main() {
       Client.deleteMany({ usuarioId: uid }),
       ConfirmacaoVisualizacao.deleteMany({ usuarioId: uid }),
     ]);
+    // Fora do `Promise.all` DE PROPÓSITO: é daqui que sai a contagem impressa.
+    // Estar nos dois lugares fazia o primeiro apagar e o segundo contar zero —
+    // o relatório do cleanup dizia "0 eventos da agenda" com a coleção cheia.
+    const eventosRemovidos = await Event.deleteMany({ usuarioId: uid });
     await User.deleteOne({ _id: uid });
 
     console.log(`Removidos:`);
@@ -697,6 +706,7 @@ async function main() {
     console.log(`  ${procCli.deletedCount} vinculos processo-cliente`);
     console.log(`  ${proc.deletedCount} processos`);
     console.log(`  ${cli.deletedCount}  clientes`);
+    console.log(`  ${eventosRemovidos.deletedCount}  eventos da agenda`);
     console.log(`  1  usuario demo`);
     console.log('Cleanup concluido.');
     process.exit(0);
@@ -812,6 +822,100 @@ async function main() {
   }
   const totalVinculos = processes.reduce((n, p) => n + p.participantes.length, 0);
   console.log(`${processes.length} processos criados (${totalVinculos} vinculos processo-cliente)`);
+
+  // ── EVENTOS DA AGENDA (F-3) ───────────────────────────────────────────────
+  //
+  // ── DETERMINÍSTICO, e por isso ANCORADO NA SEMEADURA ────────────────────
+  // As datas são calculadas a partir do "hoje" do momento em que o seed roda,
+  // e não escritas fixas. É o que impede o seed de ENVELHECER: um evento
+  // datado de "2026-09-01" no arquivo estaria no passado em outubro, e a base
+  // de demonstração abriria com a agenda vazia e o sino zerado — justamente as
+  // duas telas que o seed existe para mostrar.
+  //
+  // O deslocamento em dias é fixo, então duas semeaduras no mesmo dia produzem
+  // exatamente a mesma base. Determinístico é isso: mesma entrada, mesma saída
+  // — e a entrada aqui é o dia da execução, não o relógio.
+  //
+  // ── O que a base precisa TER para as telas valerem alguma coisa ────────
+  //   • um de CADA tipo (audiência, prazo, reunião, outro), para a grade
+  //     mostrar os quatro rótulos e o filtro ter o que filtrar;
+  //   • um ATRASADO e um de HOJE, para o sino contar diferente de zero;
+  //   • alguns FUTUROS, para a linha do tempo ter o que pôr à frente do hoje;
+  //   • um SOLTO, sem processo, porque "nem toda reunião é de um processo" e
+  //     esse é o caso que ninguém lembra de testar;
+  //   • um CONCLUÍDO no passado, para provar na tela que o concluído não conta
+  //     no sino.
+  const HOJE_SEED = hojeComoDataDeCalendario();
+  const emDias = (dias) =>
+    escreverDataDeCalendario(
+      new Date(lerDataDeCalendario(HOJE_SEED).getTime() + dias * 24 * 60 * 60 * 1000)
+    );
+
+  const EVENTS_DATA = [
+    // ATRASADO e não concluído: entra no sino como "atrasado".
+    { processoIdx: 0, tipo: 'prazo', dias: -6, titulo: 'Prazo para contrarrazoes',
+      descricao: 'Prazo anotado pela advogada. O sistema NAO conta dias uteis — a data e digitada.',
+      local: null },
+    // ATRASADO e CONCLUÍDO: NÃO entra no sino. É o par que prova a regra.
+    { processoIdx: 2, tipo: 'reuniao', dias: -12, titulo: 'Reuniao de alinhamento com a cliente',
+      local: 'Escritorio', concluido: true },
+    // HOJE, com hora: entra no sino como "hoje".
+    { processoIdx: 0, tipo: 'audiencia', dias: 0, hora: '14:30',
+      titulo: 'Audiencia de instrucao e julgamento',
+      local: '1a Vara do Trabalho de Curitiba',
+      descricao: 'Levar o rol de testemunhas. Cliente ja confirmou presenca.' },
+    // HOJE, sem hora: o compromisso do dia inteiro, que na ordenação vem antes
+    // do que tem horário.
+    { processoIdx: 8, tipo: 'outro', dias: 0, titulo: 'Protocolar impugnacao administrativa' },
+    // FUTUROS.
+    { processoIdx: 4, tipo: 'audiencia', dias: 9, hora: '09:00',
+      titulo: 'Audiencia de conciliacao do inventario',
+      local: '2a Vara de Familia e Sucessoes de Ponta Grossa' },
+    { processoIdx: 1, tipo: 'prazo', dias: 14, titulo: 'Prazo para manifestacao sobre o laudo pericial' },
+    { processoIdx: 6, tipo: 'reuniao', dias: 21, hora: '16:00',
+      titulo: 'Reuniao com o cliente sobre a usucapiao', local: 'Videoconferencia' },
+    { processoIdx: 5, tipo: 'outro', dias: 40, titulo: 'Revisar o parcelamento administrativo do IPTU' },
+    // SOLTO — sem processo. "Nem toda reuniao e de um processo."
+    { processoIdx: null, tipo: 'reuniao', dias: 3, hora: '10:30',
+      titulo: 'Reuniao de captacao — indicacao da Dra. Helena',
+      local: 'Cafe do centro',
+      descricao: 'Evento sem processo: existe solto, e e o caso que a tela precisa suportar.' },
+  ];
+
+  const events = [];
+  for (const e of EVENTS_DATA) {
+    // Pelo SERVIÇO, e não por `Event.create`: assim o seed atravessa a mesma
+    // validação à mão e a mesma guarda da DEC-053 que a rota atravessa. Um seed
+    // que escreve direto no model produz estado que a aplicação talvez nunca
+    // aceite — e foi por isso que a suíte adotou a mesma regra nas fixtures.
+    const criado = await criarEvento(uid, {
+      tipo: e.tipo,
+      titulo: e.titulo,
+      data: emDias(e.dias),
+      hora: e.hora ?? null,
+      local: e.local ?? null,
+      descricao: e.descricao ?? null,
+      processoId: e.processoIdx === null ? null : processes[e.processoIdx]._id.toString(),
+    });
+
+    // A conclusão vai pela rota própria do serviço — `concluido` e
+    // `concluidoEm` são um fato só com carimbo, e nem o seed os escreve à mão.
+    // Escrever os dois campos com `updateOne` aqui seria a mesma coisa que
+    // `Event.create` é para a criação: estado que a aplicação talvez nunca
+    // produzisse, com os dois campos livres para discordar.
+    if (e.concluido) {
+      await concluirEvento(uid, criado._id, { concluido: true });
+    }
+
+    events.push(criado);
+  }
+
+  const nAtrasados = EVENTS_DATA.filter((e) => e.dias < 0 && !e.concluido).length;
+  const nHoje = EVENTS_DATA.filter((e) => e.dias === 0).length;
+  console.log(
+    `${events.length} eventos da agenda criados ` +
+    `(${nHoje} hoje, ${nAtrasados} atrasado(s), 1 solto, 1 concluido)`
+  );
 
   // ── DOCUMENTOS (Mongoose direto) ──────────────────────────────────────────
   const documents = await Promise.all(
@@ -1433,6 +1537,19 @@ async function main() {
   console.log('    Baixe qualquer documento gerado em:');
   console.log('      GET /api/documents/:id/download?formato=pdf');
   console.log('      GET /api/documents/:id/download?formato=docx');
+  console.log('-'.repeat(66));
+  console.log('  F-3 — A AGENDA E O SINO');
+  console.log(`    "Hoje" da semeadura : ${HOJE_SEED}`);
+  console.log(`    Eventos criados     : ${events.length}`);
+  console.log(`      de hoje           : ${nHoje}  (entram no sino)`);
+  console.log(`      atrasados         : ${nAtrasados}  (entram no sino)`);
+  console.log('      concluido         : 1  (NAO entra no sino — e a prova da regra)');
+  console.log('      solto, sem processo: 1');
+  console.log('    As datas sao calculadas a partir do dia da semeadura: o seed');
+  console.log('    nao envelhece, e a agenda nunca abre vazia.');
+  console.log('    A agenda mostra tambem os VENCIMENTOS de parcela — que NAO sao');
+  console.log('    eventos gravados (DEC-055): eles sao lidos do financeiro na');
+  console.log('    consulta. Confira em GET /api/calendar?de=...&ate=...');
   console.log('-'.repeat(66));
   console.log('  LACUNAS INTENCIONAIS (nao sao bug)');
   console.log('    - Cliente "Beatriz Ramos Pereira" (PF) nao tem profissao.');

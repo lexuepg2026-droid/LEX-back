@@ -48,4 +48,8 @@ router.patch("/:id/fase", processController.mudarFaseDoProcesso);
 router.get("/:id/activation-preview", processController.previewAtivacao);
 router.patch("/:id/reactivate", processController.reactivate);
 
+// DEC-056 (F-3) — a linha do tempo. Sub-rota literal, e só GET: é apresentação
+// do que a DEC-054 já grava, e não há nada a escrever aqui.
+router.get("/:id/timeline", processController.getTimeline);
+
 export default router;

@@ -22,6 +22,8 @@ import installmentRoutes from "./routes/installmentRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import financeiroRoutes from "./routes/financeiroRoutes.js";
+import eventRoutes from "./routes/eventRoutes.js";
+import calendarRoutes from "./routes/calendarRoutes.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import notFound from "./middleware/notFoundMiddleware.js";
 import errorHandler from "./middleware/errorMiddleware.js";
@@ -101,6 +103,11 @@ app.use("/api/installments", installmentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/financeiro", financeiroRoutes);
+// F-3 — o evento se GRAVA em `/events`; o calendário só LÊ, e devolve as duas
+// naturezas juntas. A separação é a DEC-055 na fiação: não há rota de escrita
+// em `/calendar`, porque é ali que alguém gravaria a derivada.
+app.use("/api/events", eventRoutes);
+app.use("/api/calendar", calendarRoutes);
 // Portal do cliente: prefixo, middleware e segredo próprios.
 app.use("/api/portal", portalRoutes);
 

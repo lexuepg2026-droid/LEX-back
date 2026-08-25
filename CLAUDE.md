@@ -169,11 +169,16 @@ User
  │   ├─ Fee ──── Installment ──── Payment
  │   └─ Document
  ├─ Secao
- └─ Document ─── DocumentoSecao ──── Secao        (N:N, com ordem)
+ ├─ Document ─── DocumentoSecao ──── Secao        (N:N, com ordem)
+ └─ Event  ····· Process                          (vínculo OPCIONAL — F-3)
 ```
 
 `Process.clientePrincipalId` é **campo derivado** de `ProcessoCliente`. A
 junção é a fonte da verdade; se divergirem, a junção está certa.
+
+`Event.processoId` é **opcional** (a linha pontilhada): evento solto existe, e é
+o caso comum de uma reunião de captação. É o primeiro pai opcional da árvore de
+ativação — ver a DEC-053 estendida, mais abaixo.
 
 ---
 
@@ -192,8 +197,16 @@ junção é a fonte da verdade; se divergirem, a junção está certa.
 | Dashboard        | ✅    | ✅         | ✅      | — (agrega)                      | —          |
 | Financeiro       | ✅    | (dashboard)| ✅×2    | — (agrega)                      | —          |
 | **Portal** (3.1) | ✅    | ✅×2       | ✅×4    | `ConfirmacaoVisualizacao`       | ✅         |
+| **Agenda** (F-3) | ✅    | ✅×2       | ✅×3    | `Event`                         | ✅         |
 
-**11 módulos, 12 models** (`shared/enderecoSchema.js` é sub-schema, não model).
+**12 módulos, 13 models** (`shared/enderecoSchema.js` é sub-schema, não model).
+
+A **Agenda** (F-3) é o primeiro módulo com **dois controllers e três services**
+para uma entidade só, e a divisão é a DEC-055 na estrutura de pastas:
+`eventService` GRAVA o evento, `calendarService` LÊ as duas naturezas juntas e
+não escreve nada, `timelineService` apresenta o histórico que a DEC-054 já
+guarda. Um service só teria a escrita da entidade e a leitura da derivada no
+mesmo arquivo — que é onde alguém acabaria gravando a segunda.
 
 O módulo **Financeiro** ganhou service próprio na Fase 4.1
 (`financeiroService.js`, a ficha do processo, ao lado do resumo que vive em
@@ -4936,7 +4949,399 @@ olhar antes de agir. **O seed comum também não** — `seed:fresh` é
 execução treina a resposta automática. Só o `--clean` tem guarda própria, porque
 é chamado sozinho.
 
-## O que fica para adiante (atualizado em 24/08/2026 — depois da F-2d)
+## DEC-055 — o que é FATO se grava; o que é DERIVADO se deriva (F-3)
+
+**A regra, em uma frase:** *o calendário mostra duas naturezas de coisa, e só
+uma delas é gravada.*
+
+| | O quê | Vem de |
+|---|---|---|
+| **Evento próprio** | audiência, prazo, reunião, outro | a coleção nova `events` |
+| **Data derivada** | vencimento de parcela, vencimento de honorário | `installments` e `fees`, **lidos na consulta** |
+
+**Data derivada NUNCA é gravada como evento.** Ela é lida da origem no momento
+em que o calendário é consultado, e some da resposta no instante em que sumir
+de lá.
+
+### O porquê, dito pelo defeito que gravar produziria
+
+Gravar significaria **duas fontes para o mesmo vencimento**. As duas concordam
+no dia em que nascem, e **divergem no primeiro reparcelamento**:
+
+1. a advogada reparcela um honorário de 5 parcelas em 3;
+2. a DEC-037 cancela as 5 antigas e cria as 3 novas;
+3. o calendário, que gravou 5 eventos em setembro, **continua mostrando os 5**.
+
+E não os mostra como um resto esquecido: mostra-os **com o mesmo peso visual de
+uma audiência**, porque a essa altura eles são eventos como qualquer outro. A
+advogada leria, na agenda dela, cinco cobranças que não existem mais — e não
+haveria nada na tela dizendo qual das duas listas vale.
+
+> É a lição da **DEC-048** aplicada a data, e a decisão sai **oposta** de
+> propósito. Lá, `totalParcelas` foi **gravado** porque congelar o passado era o
+> requisito: um recibo entregue não pode mudar de significado. Aqui o calendário
+> responde *"o que vence"*, que é pergunta sobre o **presente** — e uma resposta
+> congelada para uma pergunta sobre o presente é uma resposta errada.
+
+### As três consequências, e todas aparecem na tela
+
+1. **A derivada não é editável no calendário. Clicar nela leva à parcela.**
+   Mudar vencimento se faz onde o vencimento mora. Um campo de data editável na
+   grade seria a segunda fonte voltando pela porta da interface.
+   O item traz `editavelNoCalendario: false` **explícito**, e não deduzido da
+   `natureza`: regra deduzida é regra que a próxima tela deduz ao contrário.
+2. **As duas se distinguem no relance**, por **três** sinais somados — cor,
+   barra listrada e borda tracejada —, com **legenda** dizendo qual é qual.
+   Cor sozinha não alcança quem não a enxerga, e é a mesma pessoa que não
+   receberia a informação de que uma das linhas não se edita. O nome da natureza
+   vai também em texto acessível.
+3. **Parcela de honorário cancelado por reparcelamento não aparece.** Mesma
+   regra do dashboard. Ela continua legível no **extrato**, onde a pergunta é
+   "o que aconteceu com esta cobrança"; não pertence ao calendário, onde a
+   pergunta é "o que vence".
+
+### O contrato
+
+```
+GET /api/calendar?de=AAAA-MM-DD&ate=AAAA-MM-DD[&processoId=...]
+→ { de, ate, hoje, itens: [ { natureza: "evento" | "derivada", ... } ] }
+```
+
+**Endpoint único**, e não dois. Duas rotas fariam a tela emitir duas
+requisições, receber duas respostas em tempos diferentes e concatená-las — a
+grade renderizaria uma vez com metade do mês, e a ordenação (que é do
+CALENDÁRIO, não de cada fonte) teria de ser refeita no cliente.
+
+**Não há rota de ESCRITA em `/api/calendar`.** Nem POST, nem PATCH, nem DELETE.
+A ausência é a decisão, e está travada por teste: uma rota de escrita aqui seria,
+na prática, o lugar onde alguém gravaria a derivada.
+
+**As duas bordas são obrigatórias**, ao contrário das listagens financeiras
+(onde `de` sozinho é "daqui em diante"): um calendário sempre sabe a janela que
+mostra, e "de junho em diante" não é uma tela que exista. Teto de **366 dias** —
+o maior recorte legítimo é um ano, e o bissexto é o maior ano.
+
+**Intervalo invertido recusa com a mensagem que já existia** (`filtroPeriodo`,
+passo 174). Reaproveitada, e não reescrita: duas frases diferentes para o mesmo
+engano, em duas telas do mesmo sistema, fazem a advogada achar que são dois
+problemas. Há teste comparando as duas respostas caractere a caractere.
+
+### O vencimento do próprio honorário só entra quando não há parcela
+
+Decisão tomada nesta fase, e registrada porque não estava no enunciado: o
+`dataVencimento` do **honorário** aparece apenas quando ele **não tem parcela
+vigente nenhuma**. Com um plano emitido, o vencimento do honorário e a última
+parcela do plano são a mesma obrigação vista de dois lugares, e mostrar as duas
+poria **dois marcadores no calendário para uma dívida só**.
+
+É a DEC-055 aplicada entre duas derivadas: basta escolher a mais específica, e a
+mais específica é a parcela — porque é ela que a advogada recebe.
+
+---
+
+## A DECISÃO DE FUSO — data de calendário NÃO é instante (F-3)
+
+**O risco número um da fase**, e o projeto já tinha precedente: o defeito de
+fuso do recibo do portal (passo 91).
+
+### O defeito que esta decisão evita
+
+Um evento gravado como **instante UTC** e lido no navegador **muda de dia**:
+`2026-09-01T00:00:00.000Z` renderizado em Brasília (UTC−3) é **31/08 às 21h**. A
+audiência de terça aparece no domingo — e quem olhar a grade **não desconfia do
+calendário, desconfia da própria memória.**
+
+### A causa, em uma frase
+
+> **Data sem hora não é um instante. É uma casa do calendário.**
+
+"01/09/2026" não nomeia um ponto na linha do tempo; nomeia uma casa. Um ponto
+precisa de fuso para virar dia, e é **o fuso inventado** que produz o
+deslocamento.
+
+### As três decisões que decorrem disso
+
+O ponto único é **`src/utils/dataDeCalendario.js`**.
+
+1. **Entrada ESTRITA.** Só `AAAA-MM-DD`. Um instante ISO
+   (`2026-09-01T03:00:00.000Z`) é **recusado com 400**, e não normalizado em
+   silêncio: ele carrega um fuso que a data de calendário não tem, e adivinhar
+   que dia ele quis dizer é a adivinhação que produz o defeito. A mensagem dá o
+   **contraexemplo**, porque um "data inválida" seco para um valor que parece
+   válido manda procurar o erro no lugar errado.
+   Dia inexistente (`2026-02-31`) também é recusado — `Date.UTC` o deslizaria
+   para 03/03 em silêncio.
+
+2. **Armazenamento em meia-noite UTC.** É o que `dataVencimento` e
+   `dataPagamento` já fazem desde a Fase 4, e o que `dashboardService` e
+   `filtrosDeConsulta` já pressupõem ao recortar mês e período com `Date.UTC`.
+   Escolher outra coisa faria o calendário e o financeiro discordarem sobre em
+   que dia cai a mesma parcela.
+
+3. **Saída como STRING `AAAA-MM-DD`, e não como instante ISO.** *Esta é a
+   mudança de verdade da fase*, e é a que fecha o buraco em vez de remendá-lo.
+
+   O projeto até aqui devolvia o instante e consertava **na exibição**, com
+   `timeZone: "UTC"` em `formatters.js`. Isso funciona — e funciona **só
+   enquanto ninguém esquecer**. É remédio aplicado em cada ponto de chamada, e
+   uma grade de calendário compara datas dezenas de vezes por render: um
+   `new Date(iso).getDate()` esquecido devolve o dia errado **sem erro nenhum e
+   sem teste vermelho**.
+
+   Uma string que diz exatamente o que significa não pode ser mal lida. Não há
+   fuso para aplicar, nem fuso para esquecer de aplicar.
+
+**Assimetria proposital na resposta:** `data` sai como `AAAA-MM-DD`;
+`concluidoEm`, `createdAt` e o `instante` da linha do tempo saem como ISO
+completo. É a própria resposta dizendo quais campos são casa de calendário e
+quais são ponto na linha do tempo.
+
+### A HORA é string, e nunca entra no `Date`
+
+`"14:30"` ou `null`. É **hora de parede do escritório**: "a audiência é às
+14h30" não muda de número porque alguém abriu o sistema noutro fuso.
+
+Somá-la ao `data` devolveria o campo à condição de instante — o defeito inteiro,
+reintroduzido pela porta dos fundos e **só nas linhas que têm horário**. O mesmo
+campo mentiria em metade da grade.
+
+### "Hoje" é UTC, e a janela de 3 horas é DÍVIDA ACEITA
+
+`hojeComoDataDeCalendario()` lê o dia em UTC, como `dashboardService` já faz na
+conta de "vencidas" e "próximos vencimentos".
+
+**A consequência é conhecida:** das 21h às 24h de Brasília, o "hoje" do sistema
+já é o dia seguinte. Adotar o fuso do escritório **só aqui** consertaria o sino
+e faria a contagem de parcelas vencidas do sino **discordar da do painel por
+três horas todo dia** — dois números para a mesma pergunta, que é a classe de
+defeito que a DEC-048 e a DEC-055 existem para impedir.
+
+**Quando o projeto adotar um fuso de escritório, ele muda AQUI**, e as duas
+telas mudam juntas. É para isso que a função é uma só.
+
+### A prova
+
+`tests/calendar/fuso.test.js` grava e lê **01/09/2026 (terça-feira)** em
+`America/Sao_Paulo` (UTC−3) e `Pacific/Kiritimati` (UTC+14) — um a oeste e um a
+leste, porque dois fusos do mesmo lado provariam metade da regra. Confere a
+resposta da criação, a da leitura, a do calendário, e **o instante gravado no
+banco**: se alguém trocar o parser por um `new Date(...)` local, o banco denuncia
+mesmo que a leitura ainda bata por acaso.
+
+No frontend, `monthGrid.js` é varrido por `.getDate(`, `.getMonth(`,
+`.getFullYear(`, `.getDay(` e `.setDate(` — **nenhum método de hora local** — e
+a grade é construída três vezes em fusos diferentes para provar que sai igual.
+
+---
+
+## A DEC-053 alcança Evento — o primeiro pai OPCIONAL da árvore (F-3)
+
+`Event` entra em `ARVORE_DE_ATIVACAO` com `pais: ["Process"]` e
+**`paiOpcional: true`**.
+
+**É o primeiro filho da árvore cujo pai pode não existir.** Um evento pode
+existir solto — *"nem toda reunião é de um processo"* —, e o evento solto
+simplesmente **não tem pai que possa estar inativo**: ele não entra na regra, e
+não porque a regra o dispense, mas porque **a pergunta não se aplica**.
+
+Onde há `processoId`, a regra vale inteira:
+
+| Boca | Ação | Resposta |
+|---|---|---|
+| **1** | reativar evento sob processo desativado | **409** nomeando o processo |
+| **2** | criar evento sob processo desativado | **409** nomeando o processo |
+| **3ª porta** | `PATCH /events/:id` **movendo** para processo desativado | **409** nomeando o processo |
+
+A terceira porta é a mesma que a F-2d fechou em `PATCH /fees/:id`: sem ela o
+órfão nasceria **pela edição** em vez de pela criação.
+
+**A auditoria alcança Evento**, e a inclusão importa mais do que parece: a
+cascata da DEC-052 **não** derruba eventos (como não derruba honorário, parcela
+nem documento). Um evento de processo arquivado **continua aparecendo na agenda
+da advogada** — e o compromisso órfão é o pior tipo, porque ele ainda tem uma
+data, e a data ainda chega.
+
+---
+
+## DEC-056 — a linha do tempo é APRESENTAÇÃO, não coleta (F-3)
+
+> A Laís pediu: *"finalizado por etapa (fazer linha do tempo)"*.
+
+**O substrato já existia.** A **DEC-054** (F-2d) começou a gravar toda transição
+de fase com `de→para`, data e autor **antes de existir tela**, e de propósito: a
+nota de `historicoFaseSchema.js` diz por quê — gravar só a partir de quando a
+tela existisse faria a linha do tempo **nascer sem passado**, com todo processo
+parecendo nunca ter mudado de fase até o dia da implementação.
+
+`GET /api/processes/:id/timeline`. **Só leitura**, e há teste varrendo o serviço
+por `.save(`, `.create(`, `updateOne` e companhia.
+
+### O que entra
+
+| Tipo | O quê |
+|---|---|
+| `fase` | a transição `de→para`, com o motivo **quando houver** |
+| `encerramento` | o trânsito em julgado, com o motivo |
+| `liminar` | a marcação, **só quando tem data** |
+| `evento` | os eventos do processo, **passados e futuros** |
+
+A entrada de nascimento (`de: null`) é **dita como nascimento**: sem isso, um
+processo criado direto em "execução" apareceria como se sempre tivesse estado
+lá.
+
+**Liminar sem data não entra** — sinalizador sem momento não cabe numa linha do
+tempo. Ele continua aparecendo como **selo** no cabeçalho (DEC-054), que é onde
+um sinalizador sem data pertence.
+
+### Os futuros ficam VISIVELMENTE à frente do "hoje"
+
+Uma linha do tempo que parasse em hoje seria um histórico, e histórico já existe.
+O corte (`futuro: true/false`) vem do **backend**, junto com o `hoje`: o
+navegador não sabe o "hoje" do servidor, e um relógio atrasado poria uma
+audiência de amanhã do lado errado da linha.
+
+Na tela, a marca do "hoje" é uma **linha na régua**, e não um estilo por item: o
+que a advogada procura ao abrir isto é **onde o presente está**, e um contorno
+diferente em cada item obriga a percorrer a lista para descobrir.
+
+**No mesmo dia, o fato consumado vem antes do compromisso marcado.** A mudança
+de fase registrada hoje às 10h já aconteceu; a audiência marcada para hoje pode
+não ter acontecido. Inverter isso inverteria a leitura no único dia em que ela
+importa.
+
+### O FINANCEIRO NÃO ENTRA, e a exclusão é a decisão
+
+Nem honorário, nem parcela, nem pagamento, nem estorno, nem reparcelamento.
+
+O extrato do honorário responde outra pergunta — *"quanto foi cobrado, quanto
+entrou, e o que voltou"* — e já a responde bem, com a DEC-044 marcando toda
+linha que deixou de valer. Misturar as duas faria **uma tela que não responde
+nenhuma**: a sequência de fases de um processo de dois anos tem cinco entradas,
+e o extrato de um honorário parcelado em doze tem quarenta. O que a advogada veio
+ver aqui ficaria soterrado pelo que ela veio ver em outro lugar.
+
+**Há teste varrendo os imports do serviço** por `Fee`, `Installment`, `Payment`,
+`Allocation`, `Reversal` e `Renegotiation`, e outro conferindo que nenhum valor
+em reais vaza na resposta. É o que impede a próxima fase de "completar" a linha
+do tempo sem decisão.
+
+A ficha financeira **continua na mesma página**, em seção própria e **irmã** da
+linha do tempo — não dentro dela.
+
+---
+
+## O que a F-3 EXCLUIU, e por quê
+
+**Exclusão registrada é o que impede a próxima fase de "completar" o calendário
+sem decisão.** Cada item abaixo é um subsistema inteiro, e nenhum foi pedido.
+
+| Excluído | Por quê |
+|---|---|
+| **Recorrência** | "toda segunda às 14h" exige série, exceção e edição de "só esta ocorrência". É fase própria. **Cada evento é uma data.** |
+| **Contagem de prazo processual** | dias úteis, suspensão forense e feriados exigem **tabela de feriados e regra por tribunal**. O `prazo` desta fase é uma **data que a advogada digita**, não uma data que o sistema calcula — e está escrito em voz alta em `config/tiposEvento.js`, porque é dali que a pergunta vai nascer. |
+| **Web Push** | notificação no celular com o app fechado exige **service worker novo, permissão e chaves VAPID**. Aviso é **sino com contador dentro do sistema**. Decisão do Daniel em **24/08/2026**. Há teste varrendo `public/sw.js` por `push`, `notificationclick` e `showNotification`, e o componente do sino por `Notification.requestPermission` e `pushManager`. |
+| **Convite, participante externo, integração Google/Outlook** | subsistema inteiro, com autenticação de terceiro e sincronização bidirecional. Não foi pedido. |
+
+Se algum deles parecer necessário para o resto funcionar, **pare e reporte** em
+vez de implementar.
+
+---
+
+## O SINO — três casos, e nenhum estado de lido (F-3)
+
+`GET /api/calendar/avisos` → eventos de **hoje**, eventos **atrasados** (data
+passada, não concluídos) e parcelas **vencidas**.
+
+**Não existe "marcar como lido", e a ausência é a regra.** O número muda sozinho
+com o dia e com o que a advogada resolve. Um contador que só zera com clique
+**treina a pessoa a zerar sem olhar** — e a partir do dia em que zerar vira
+reflexo, ele deixa de significar qualquer coisa.
+
+Aqui, **resolver o item é o que baixa o número**: concluir o evento, pagar a
+parcela. Clicar no sino abre a lista e não muda nada. Há teste varrendo o
+componente por `.post(`, `.patch(`, `.delete(` e por `marcarComoLido`, `setLido`,
+`naoLidos`, `unread`.
+
+**O evento de hoje não conta também como atrasado** (`$lt` e não `$lte`): contá-lo
+nas duas listas faria o total somar o mesmo compromisso duas vezes.
+
+**O total vai calculado do backend**, e a tela não soma: se ela somasse, o dia em
+que um quarto caso entrasse ela continuaria mostrando três — e ninguém notaria,
+porque o número continuaria plausível.
+
+**Zero não aparece, nem como "0".** Um badge com zero ocupa o mesmo espaço e a
+mesma cor de um badge que significa alguma coisa, e a pessoa aprende a ignorar os
+dois.
+
+O badge usa `--color-warning`, e não `--color-danger`: um prazo de hoje e uma
+parcela vencida pedem **ação**; não anunciam que algo deu errado. Mesmo tom do
+selo de liminar da DEC-054, pela mesma razão.
+
+---
+
+## Tipos de evento — PROVISÓRIOS, pendentes de ratificação (F-3)
+
+`config/tiposEvento.js`: **audiência, prazo, reunião, outro**.
+
+Os quatro saíram do **enunciado da fase**, e **não da Laís**. Nascem marcados,
+do mesmo modo que a DEC-039 marcou o tipo de honorário e a DEC-054 marcou o nome
+da primeira fase processual.
+
+**A marca não é formalidade.** Vocabulário jurídico é da prática de quem advoga,
+e este projeto já aprendeu, na F-2d, que um enum inventado por nós
+(`status`: ativo/encerrado/suspenso) sobrevive fases inteiras parecendo decidido
+— até alguém perguntar e descobrir que ele não responde à pergunta que ela faz.
+
+**Candidatos óbvios que NÃO entraram:** perícia, diligência, despacho,
+sustentação oral. Acrescentar é uma linha. O que não se faz é adivinhar a lista
+dela e depois migrar dado gravado sob um valor que ela nunca usou.
+
+Valor gravado ≠ rótulo de exibição, como sempre: trocar o rótulo não migra nada.
+
+
+## O que fica para adiante (atualizado em 25/08/2026 — depois da F-3)
+
+**✅ F-3 — FEITA, as cinco partes.** O calendário com as duas naturezas
+(**DEC-055**), a decisão de fuso (**data de calendário não é instante**), a
+DEC-053 estendida a `Event` com o primeiro pai opcional da árvore, a tela com
+duas vistas (agenda por padrão em 360 px), o sino sem estado de lido, e a linha
+do tempo do processo (**DEC-056**). O seed ganhou nove eventos, com as datas
+calculadas na semeadura para não envelhecer.
+
+**A próxima é a F-4** — dashboard com ações e autocomplete com as tabelas de
+domínio do Davi (entregues em 23/08/2026, com a ressalva do CNJ registrada).
+Depois a **F-5 (offline)**, que vem por último de propósito: com os dados em
+IndexedDB e numa fila de saída, **toda entidade nova custa dobrado** — e a F-3
+acabou de criar uma.
+
+**Suítes na F-3:** backend **730** testes (+96, os novos em `tests/calendar/` —
+`evento`, `fuso`, `dec055`, `dec056`, `hierarquia` e `sino`), frontend **770**
+(+144). Zero skip, zero todo nos dois.
+
+### O que espera a LAÍS — a lista carregada para a frente
+
+Esta lista **não** fica só no registro da fase que a criou: ela é relida a cada
+fase, e por isso é repetida aqui inteira. Uma pendência que só existe dentro do
+registro de uma fase antiga é uma pendência que a próxima fase não lê.
+
+- **DEC-039** — o enum de tipo de honorário. `custas` pode não ser honorário;
+  `sucumbência` pode ser um tipo que falta. **E o diagnóstico do "êxito"**;
+- **DEC-041 / DEC-042**;
+- **a assimetria do recibo parcial**;
+- **DEC-048** — o "Parcela 1 de 3";
+- **a sobra da divisão na primeira parcela** — R$ 1.000,00 em 3 vira
+  333,34 + 333,33 + 333,33;
+- **DEC-054** — o nome da primeira fase ("fase inicial" ou "fase de
+  conhecimento"?), e se falta alguma fase que ela não citou;
+- **os TIPOS DE EVENTO (novo na F-3)** — `audiencia`, `prazo`, `reuniao`,
+  `outro`. Saíram do enunciado da fase, **não dela**. Ver "Tipos de evento —
+  PROVISÓRIOS", acima. Perícia, diligência e despacho são candidatos óbvios, e
+  nenhum entrou: adivinhar o vocabulário e migrar dado depois é o que não se
+  faz.
+
+---
+
+## O que ficava para adiante (registro da F-2d, 24/08/2026)
 
 **Saíram da lista da F-1b.3 porque a F-1b.2 os fez:** o badge "estornado
 integralmente", a coluna de honorário legível e **moeda que nunca trunca** —
