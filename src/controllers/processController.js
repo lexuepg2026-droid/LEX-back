@@ -17,6 +17,7 @@ import {
   vincularCliente
 } from "../services/processoClienteService.js";
 import confirmacaoService from "../services/confirmacaoService.js";
+import { lerLinhaDoTempo } from "../services/timelineService.js";
 
 export const create = async (req, res, next) => {
   try {
@@ -207,6 +208,19 @@ export const getCodigoAcesso = async (req, res, next) => {
       req.params.clienteId
     );
     return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// ── DEC-056 (F-3) — a linha do tempo do processo ──────────────────────────
+//
+// Só leitura, e nenhuma coleta: o substrato é o `historicoFase` que a DEC-054
+// já grava desde a F-2d. Ver `services/timelineService.js`.
+export const getTimeline = async (req, res, next) => {
+  try {
+    const linha = await lerLinhaDoTempo(req.user._id, req.params.id);
+    return res.status(200).json(linha);
   } catch (error) {
     return next(error);
   }
