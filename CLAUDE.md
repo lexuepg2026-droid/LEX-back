@@ -5450,6 +5450,70 @@ dependência nova" e segue como **exceção nomeada a decidir na F-2**.
 cada vez; quando existir CI, precisa de trava.
 ---
 
+## DEC-057 — o campo sugere e não obriga (F-4, só frontend)
+
+O backend **não foi tocado** nesta fase. A decisão fica registrada aqui porque o
+log de DEC é **compartilhado** e numerado em série pelos dois repos: quem
+procurar "DEC-057" a partir daqui precisa achar, e não concluir que o número foi
+pulado. A implementação e o detalhe estão no **CLAUDE.md do frontend**.
+
+Em uma frase: **o campo de autocomplete SUGERE, não OBRIGA** — valor fora da
+tabela é digitado e salvo —, **grava-se o TEXTO e não um código**, e as quatro
+tabelas de domínio são **estáticas no frontend**, carregadas sob demanda, fora do
+bundle principal.
+
+### O que isso significa PARA O BACKEND
+
+**Nada mudou, e é de propósito.**
+
+- **Nenhum campo novo, nenhuma migração, nenhum enum.** `comarca`, `tipoAcao`,
+  `area`, `profissao` e `nacionalidade` continuam sendo **texto livre** no
+  schema, exatamente como antes. A validação de nenhum deles passou a conferir
+  contra tabela — e **não deve passar**. Uma guarda no servidor recusando comarca
+  fora da lista desfaria a decisão inteira do lado errado, e sem que a tela
+  soubesse explicar o motivo.
+- **`Process` não ganhou campo `assunto`.** A fase pediu um, e mandou não tocar
+  no backend. O assunto do CNJ foi para o campo **`area`**, que já existia e
+  guarda a mesma coisa: os assuntos de primeiro nível do CNJ são literalmente
+  *"DIREITO TRIBUTÁRIO"*, *"DIREITO PREVIDENCIÁRIO"*, que é o que a advogada
+  digitava à mão como "Tributario". **Consequência:** `{{areaProcesso}}` passa a
+  renderizar texto do CNJ nos documentos gerados **daqui em diante**. Nada migra,
+  nada muda no que já está gravado.
+- **`nacionalidade` continua UM campo de texto**, com `default: "brasileira"` e
+  formatador `texto`. A tela passou a **sugerir** a flexão certa olhando o `sexo`
+  já cadastrado; a geração de documento **não flexiona nada**, como antes.
+  Transformar em dois campos, ou fazer `documentGenerationService` concordar
+  `nacionalidade` com `sexo`, é **mudança de modelo** — reportada, e não feita de
+  passagem. Se alguém for fazê-la um dia, o mesmo vale para `estadoCivil`
+  ("casado/casada"), que tem exatamente o mesmo problema e nunca foi resolvido.
+- **`GET /api/calendar/avisos` ganhou um segundo consumidor.** O painel passou a
+  ler dele a contagem de parcelas vencidas, que antes tirava de
+  `GET /api/financeiro/resumo` e de um filtro no cliente sobre
+  `GET /api/installments`. **Os dois números aparecem na mesma tela** — o sino no
+  cabeçalho, o painel no corpo — e a F-4 fechou o caminho para divergirem, do
+  lado do cliente.
+
+  ⚠️ **Do lado do servidor as consultas continuam DUAS**, escritas à mão em
+  serviços diferentes: `calendarService.lerCalendario` e
+  `dashboardService.getFinanceiroResumo`. As duas filtram pela mesma cadeia
+  (`Process.ativo` → `Fee.ativo && status ≠ cancelado` → `Installment.ativo`) e
+  leem o mesmo campo derivado (`status === "vencido"`, DEC-028) — mas por
+  **coincidência de duas consultas independentes**, e não por construção. **O dia
+  em que uma delas ganhar um recorte que a outra não tenha, os dois números
+  divergem de novo, e a trava do frontend não pega.** Unificá-las num único
+  leitor é trabalho de backend que esta fase não abriu, e fica anotado aqui como
+  o próximo passo natural dessa decisão.
+
+### O que NÃO fazer no backend por causa desta fase
+
+- Não servir as tabelas por rota (`GET /api/tabelas/...`). Elas são estáticas,
+  iguais para todo mundo, não dependem de `usuarioId`, e servi-las autenticadas
+  as tiraria do alcance do cache do service worker que a **F-5** vai querer.
+- Não criar enum, `ref` ou coleção a partir delas. São **sugestão**, não
+  vocabulário fechado — ao contrário de `tiposHonorario`, `fasesProcesso` e
+  `tiposEvento`, que são espelhados entre os dois repos justamente por serem
+  fechados.
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
