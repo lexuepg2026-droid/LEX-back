@@ -5514,6 +5514,71 @@ bundle principal.
   `tiposEvento`, que são espelhados entre os dois repos justamente por serem
   fechados.
 
+## DEC-058 — a leitura offline, escopada por usuário (F-5a, só frontend)
+
+O backend **não foi tocado** nesta fase. A decisão fica registrada aqui porque o
+log de DEC é **compartilhado** e numerado em série pelos dois repos: quem
+procurar "DEC-058" a partir daqui precisa achar, e não concluir que o número foi
+pulado. A implementação e o detalhe estão no **CLAUDE.md do frontend**.
+
+Em uma frase: **o app passou a guardar no IndexedDB o que a advogada já
+consultou**, para poder exibi-lo sem sinal — sempre **escopado pelo id do
+usuário**, apagado no logout e na troca de conta, e **sempre com a idade do dado
+visível**.
+
+### Por que isto interessa ao backend, mesmo sem uma linha mudada
+
+**Porque é a mesma regra que o `sw.js` já tinha, e ela nasceu de um raciocínio
+sobre respostas DESTE servidor.** Desde a Fase 4.5 nenhuma resposta de `/api/`
+entra no Cache Storage: toda resposta é autenticada e pertence a uma advogada,
+e um cache sem dono a entrega ao próximo usuário do mesmo navegador. IndexedDB
+é outra API com o mesmo risco — e a F-5a só passou a guardar porque pôs as três
+condições que faltavam:
+
+1. a chave carrega o **id do usuário** (e a montagem **lança** sem ele);
+2. o **logout apaga** o banco — não invalida, apaga;
+3. **entrar com outro id apaga o do anterior antes de escrever**.
+
+**Quem mexer no `sw.js` ou na política de cache precisa ler as duas coisas.**
+
+### O que isso significa PARA O BACKEND
+
+**Nada mudou, e é de propósito.**
+
+- **Nenhum schema, nenhum campo, nenhuma migração, nenhuma coleção.** O espelho
+  local é do navegador; o MongoDB não sabe que ele existe.
+- **Nenhuma rota nova, nenhum cabeçalho de cache.** Não há `ETag`, não há
+  `If-None-Match`, não há `Cache-Control` novo. O frontend decide sozinho o que
+  guardar e por quanto tempo, e a decisão de servir do espelho é dele: **com
+  sinal, a rede manda sempre.** Nenhuma resposta deste servidor é servida de
+  cache enquanto houver conexão.
+- **Nenhuma escrita offline.** Não há fila, não há `POST` guardado para depois,
+  não há idempotência a suportar. **Isso é a F-5b inteira** — e é ela que vai
+  precisar de decisão de backend de verdade: chave de idempotência por UUID,
+  reconciliação e o que fazer quando dois aparelhos divergirem.
+- **A `sanitizeUser` ficou sendo contrato de segurança.** O campo `id` que ela
+  expõe é o que escopa **todo** o espelho local. Renomeá-lo, omiti-lo ou
+  devolvê-lo diferente entre `/auth/login`, `/auth/register` e `/auth/me` faria
+  a chave mudar de dono — e no melhor caso o cache pararia de acertar, no pior
+  duas sessões se encontrariam. Os três envelopes já são o mesmo desde a Fase
+  2D.1; agora há uma segunda razão para continuarem.
+- **O portal ficou de fora, e continua de fora.** `GET /api/portal/*` não é
+  guardado em lugar nenhum: o portal roda no aparelho do cliente, que pode ser
+  emprestado (passo 93), e cache de dado jurídico ali é decisão de privacidade
+  que ninguém tomou.
+
+### O que NÃO fazer no backend por causa desta fase
+
+- **Não recusar leitura repetida** nem tentar detectar "cliente com cache". O
+  servidor continua respondendo a toda consulta; economizar viagem é decisão do
+  cliente e ele já a tomou.
+- **Não emitir dado a mais "já que vai ser guardado".** Guarda-se **o que passou
+  pela tela** — nunca o banco inteiro baixado por precaução. Uma listagem que
+  passasse a devolver mais do que a tela pede encheria o banco do navegador com
+  o que ninguém pediu.
+- **Não confiar no espelho para nada.** Ele é cópia de leitura, no aparelho, sem
+  garantia de atualidade. Toda regra de negócio continua onde sempre esteve.
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
