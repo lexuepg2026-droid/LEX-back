@@ -12,6 +12,7 @@ import {
   validateUpdateProcess
 } from "../validations/processValidation.js";
 import { FASE_PADRAO } from "../config/fasesProcesso.js";
+import { compararVersao, CABECALHO_VERSAO } from "./concurrencyGuard.js";
 import {
   findInactiveParentsOfProcess,
   findInactiveParentsForProcesses,
@@ -466,7 +467,9 @@ export const updateProcess = async (usuarioId, processId, data) => {
 // em execução"), e descartar a entrada apagaria justamente a anotação que ela
 // se deu ao trabalho de escrever.
 // ═══════════════════════════════════════════════════════════════════════════
-export const mudarFase = async (usuarioId, processId, data) => {
+// `opcoes.versaoVista`: o `updatedAt` que o cliente leu (DEC-060). Ver a nota
+// em `atualizarEvento` — a mesma guarda, pela mesma razão.
+export const mudarFase = async (usuarioId, processId, data, opcoes = {}) => {
   const idErrors = validateProcessId(processId);
   const bodyErrors = validateFasePayload(data ?? {});
   const errors = [...idErrors, ...bodyErrors];
@@ -479,6 +482,40 @@ export const mudarFase = async (usuarioId, processId, data) => {
 
   if (!processo) {
     throw createError("Processo não encontrado", 404);
+  }
+
+  // ⚠️ ANTES do `$set` e do `$push`: uma mudança de fase enfileirada horas
+  // atrás não pode sobrescrever a que outro aparelho gravou no meio-tempo —
+  // e, principalmente, não pode empurrar para o histórico uma transição que
+  // parte de uma fase que já não é a atual (DEC-060).
+  //
+  // A projeção do 409 é a do detalhe: é o que a tela de pendências precisa
+  // para mostrar "a sua versão" ao lado de "a do servidor".
+  const veredito = compararVersao(processo.updatedAt, opcoes.versaoVista);
+
+  if (veredito === "invalida") {
+    throw createError(
+      `${CABECALHO_VERSAO} inválido: informe o \`updatedAt\` que você leu.`,
+      400
+    );
+  }
+
+  if (veredito === "diferente") {
+    // O estado ATUAL vai no corpo do 409. Buscá-lo aqui custa uma consulta no
+    // caminho de erro e poupa a tela de pendências de sair pedindo o processo
+    // logo depois de uma falha de rede — o pior momento possível para depender
+    // de mais uma requisição.
+    const atual = await getProcessById(usuarioId, processId);
+    const conflito = createError(
+      "Este processo foi alterado em outro aparelho depois que você o abriu.",
+      409
+    );
+    conflito.regra = "conflitoDeVersao";
+    conflito.errors = {
+      atual,
+      atualizadoEm: new Date(processo.updatedAt).toISOString()
+    };
+    throw conflito;
   }
 
   const para = String(data.fase).trim();

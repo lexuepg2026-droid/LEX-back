@@ -1,5 +1,6 @@
 import { Router } from "express";
 import authMiddleware from "../middleware/authMiddleware.js";
+import idempotency from "../middleware/idempotencyMiddleware.js";
 import * as processController from "../controllers/processController.js";
 
 const router = Router();
@@ -38,7 +39,10 @@ router.delete("/:id", processController.remove);
 //
 // Sub-rota literal, como `/reactivate`: não colide com `/:id`, que só pega um
 // segmento.
-router.patch("/:id/fase", processController.mudarFaseDoProcesso);
+// `idempotency`: a mudança de fase é a outra operação que a fila da F-5b
+// envia (DEC-059). Sem o cabeçalho `Idempotency-Key`, o middleware passa
+// direto e nada muda para quem grava online.
+router.patch("/:id/fase", idempotency, processController.mudarFaseDoProcesso);
 
 // DEC-052 — reativação e a contagem que a tela mostra antes de confirmar.
 //
