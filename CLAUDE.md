@@ -5579,6 +5579,106 @@ condições que faltavam:
 - **Não confiar no espelho para nada.** Ele é cópia de leitura, no aparelho, sem
   garantia de atualidade. Toda regra de negócio continua onde sempre esteve.
 
+## DEC-059 e DEC-060 — idempotência e concorrência (F-5b)
+
+A F-5b é a escrita offline: o navegador guarda numa fila o que a advogada
+gravou sem sinal e reenvia quando o sinal volta. **Do lado de cá, isso exige
+duas garantias que só o servidor pode dar** — e é o que esta fase acrescentou.
+
+### DEC-059 — a mesma gravação, duas vezes, não cria duas
+
+**O caso não é o raro, é o comum:** a rede cai **depois** de o servidor gravar
+e **antes** de a resposta chegar. Para o aparelho a requisição falhou; para o
+banco ela aconteceu. A fila reenvia — e sem proteção a advogada acaba com duas
+audiências no mesmo horário sem nunca ter pedido a segunda.
+
+O cliente manda `Idempotency-Key: <uuid>`, gerado no clique. O middleware
+`middleware/idempotencyMiddleware.js`:
+
+1. **reserva** a chave (índice único `{usuarioId, chave}`) antes de executar;
+2. deixa a rota executar normalmente;
+3. guarda a resposta **de sucesso** junto da chave;
+4. na repetição, **devolve a mesma resposta sem executar**, com
+   `Idempotent-Replay: true`.
+
+**Por que cabeçalho, e não campo no corpo.** A chave é da requisição, não do
+registro — e, decisivo: `validations/shared/camposPermitidos.js` recusa campo
+desconhecido no corpo do PATCH. Um `chaveIdempotencia` no corpo seria rejeitado
+pela própria guarda que protege o contrato, ou obrigaria a abrir exceção nela.
+**Nenhum model, validador ou contrato de rota mudou nesta fase.**
+
+**Erro não é guardado.** Um 400 não é resultado a repetir: a advogada corrige e
+reenvia, e a correção precisa poder executar. A reserva é apagada quando a
+resposta não é 2xx.
+
+**A chave é conferida pela DATA**, e não pelo coletor do Mongo — o TTL passa a
+cada ~60s, e confiar nele faria a expiração depender de quando o servidor
+resolveu varrer.
+
+**A resposta só sai depois de a chave estar gravada.** São alguns
+milissegundos a mais, e é o que fecha a janela em que o cliente já recebeu o
+resultado e a chave ainda não existe — janela em que um reenvio duplicaria.
+
+### `idempotency_keys` — a única adição ao banco
+
+| Campo | O quê |
+|---|---|
+| `usuarioId` + `chave` | índice **único**: a chave é escopada por usuário, como todo o resto |
+| `operacao` | `"POST /api/events"` — recusa a chave **reutilizada** em outra operação |
+| `estado` | `emAndamento` (a reserva) ou `concluida` |
+| `respostaStatus` / `respostaCorpo` | o que se devolve na repetição |
+| `expiraEm` | TTL de **30 dias** (`expireAfterSeconds: 0`) |
+
+**Sem armazenamento no servidor não há idempotência**: resolver no cliente
+confiaria a garantia justamente a quem perdeu a conexão — o aparelho não tem
+como saber se o que ele mandou chegou. Idempotência é promessa de quem recebe.
+
+30 dias porque sem expiração a coleção cresce para sempre, e com prazo curto
+uma fila que passou dias sem sinal voltaria a duplicar.
+
+**Onde o middleware está ligado:** `POST /events`, `PATCH /events/:id`,
+`PATCH /events/:id/concluir` e `PATCH /processes/:id/fase` — as quatro
+operações que a fila envia, e nenhuma outra. **Requisição sem o cabeçalho passa
+direto**, e nada mudou para quem grava online.
+
+### DEC-060 — a gravação atrasada não atropela a de outro aparelho
+
+Dois aparelhos, um offline. O que ficou sem sinal envia horas depois, com uma
+versão mais **velha** que a gravada. O cliente manda em `X-If-Unmodified-Since`
+o `updatedAt` que ele viu; se o registro mudou desde então, o servidor **recusa
+com 409** e devolve o estado atual no corpo (`regra: "conflitoDeVersao"`,
+`errors.atual`).
+
+**Não sobrescreve, não mescla, não decide.** Duas versões de um mesmo
+compromisso é conflito de **conteúdo**, e conteúdo é da advogada — a escolha
+acontece na tela de pendências, com as duas à vista.
+
+Três detalhes que são a decisão:
+
+- **não é o `If-Unmodified-Since` do HTTP**: aquele carrega HTTP-date, com
+  precisão de **segundos**, e duas edições no mesmo segundo passariam pela
+  verificação — que é justamente a janela a fechar;
+- **é IGUALDADE, e não "mais novo que"**: a pergunta é *"o registro ainda é o
+  que eu vi?"*, e qualquer diferença responde não;
+- **na mudança de fase, a guarda vem ANTES do `$set`/`$push`**: uma gravação
+  atrasada não pode empurrar para o `historicoFase` uma transição que parte de
+  uma fase que já não é a atual. Dado errado é ruim; histórico errado é pior,
+  porque é o que a linha do tempo lê.
+
+O corpo do 409 carrega o estado atual para a tela de pendências **não precisar
+sair buscando o registro logo depois de uma falha de rede** — o pior momento
+possível para depender de mais uma requisição.
+
+### O que o backend NÃO faz por causa desta fase
+
+- **Não conhece a fila.** Ele não sabe se a requisição veio de agora ou de uma
+  fila de ontem, e não deve saber: o que ele garante é a idempotência e a
+  recusa do conflito, e as duas valem igual para os dois casos.
+- **Não resolve conflito.** Não há merge, não há "o mais recente ganha", não há
+  campo de versão inventado. `updatedAt` já existia.
+- **Não guarda o corpo da requisição**, só o da resposta de sucesso.
+- **Não expõe a coleção de chaves em rota nenhuma.** Ela é infraestrutura.
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
