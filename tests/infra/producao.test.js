@@ -166,6 +166,52 @@ describe("preparo de produção — cabeçalhos, x-powered-by e proxy", () => {
       "IP encaminhado diferente precisa ter balde próprio — senão um cliente derruba o login de todos"
     );
   });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // 4 — O IP LIDO É O QUE O PROXY DIZ, E NÃO O QUE O CLIENTE ESCREVEU (D-1)
+  // ═════════════════════════════════════════════════════════════════════════
+  //
+  // O teste acima prova que dois IPs encaminhados diferentes têm baldes
+  // diferentes — e ele passaria também com `trust proxy: true`. Este aqui é o
+  // outro lado, e é o que separa os dois valores:
+  //
+  //   X-Forwarded-For: <forjado pelo cliente>, <o que o proxy acrescentou>
+  //
+  // Com `trust proxy: 1`, o Express confia em UM salto e lê o **último** valor
+  // da cadeia — o que o proxy do hospedeiro escreveu, que é o IP real de quem
+  // chamou. Com `true`, ele acredita na cadeia inteira e lê o **primeiro** —
+  // que é justamente o trecho que o cliente controla.
+  //
+  // A consequência prática do `true` é o rate limit virar enfeite: quem quiser
+  // furá-lo troca o prefixo forjado a cada requisição e ganha um balde novo
+  // toda vez. Este teste faz exatamente isso, e exige que NÃO funcione.
+  test("prefixo forjado no X-Forwarded-For não cria balde novo", async () => {
+    const PROXY = "203.0.113.200"; // o que o proxy do hospedeiro acrescentaria
+
+    const loginForjando = (prefixoFalso) =>
+      fetch(`${urlBase()}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Um cliente mal-intencionado escreve o primeiro valor; o proxy
+          // acrescenta o dele no fim.
+          "X-Forwarded-For": `${prefixoFalso}, ${PROXY}`
+        },
+        body: JSON.stringify({ email: "ninguem@lex.dev", senha: "SenhaErrada1" })
+      });
+
+    // Cada tentativa vem com um prefixo forjado DIFERENTE.
+    let ultimo = null;
+    for (let i = 0; i <= LIMITE_LOGIN; i += 1) {
+      ultimo = await loginForjando(`198.51.100.${i + 1}`);
+    }
+
+    assert.equal(
+      ultimo.status, 429,
+      "trocar o prefixo forjado do X-Forwarded-For rendeu um balde novo a cada requisição — " +
+      "é o que `trust proxy: true` faz, e é o que transforma o rate limit em enfeite"
+    );
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
