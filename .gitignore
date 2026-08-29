@@ -12,6 +12,11 @@ node_modules/
 # O `.env.*` acima engoliria também o exemplo da suíte de testes, que É para
 # ser versionado — é ele que documenta o `MONGO_URI_TEST` e as duas guardas.
 !.env.test.example
+# E o de produção (D-1), pelo mesmo motivo: ele é a ÚNICA lista do que precisa
+# ser configurado no painel do Render. Ignorado, o guia de deploy apontaria
+# para um arquivo que não existe em nenhum clone — e o teste que confere se ele
+# lista todas as variáveis passaria só na máquina de quem o escreveu.
+!.env.production.example
 
 # ========================
 # LOGS

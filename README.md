@@ -305,6 +305,10 @@ começo da seguinte, no meio de uma cláusula de honorários.
 | "Muitas tentativas de cadastro/login/troca de senha..." | Cada rota tem seu próprio balde por IP, em 15 min: `/register` 5, `/login` 10, `/alterar-senha` 5. A mensagem diz qual limite estourou. | Aguarde 15 min ou reinicie o backend |
 | Login retorna 200 mas a sessão não persiste | Cookie saiu como `Secure` (algum `NODE_ENV=production` no ambiente) | Garanta `NODE_ENV=development` (ou não defina) no ambiente local |
 | `seed:demo` diz que já existe | Conta demo já criada | Rode `npm run seed:demo:clean` antes |
+| **No ar:** a primeira tela demora ~1 min e depois tudo fica rápido | O Web Service gratuito hibernou (15 min sem requisição) | Normal. Abra o sistema alguns minutos antes de demonstrar (seção 8) |
+| **No ar:** login responde 200 mas a sessão não persiste | A chamada saiu para o domínio da API, e não para o do site — o cookie ficou no domínio errado | Confira `VITE_API_URL=/api` no build do site e as regras de rewrite (seção 8) |
+| **No ar:** F5 numa tela interna devolve 404 | Falta a regra de rewrite `/*` → `/index.html` no site | Acrescente-a **depois** da regra de `/api/*` (a ordem importa) |
+| **No ar:** "Muitas tentativas..." com pouquíssimo uso | `trust proxy` desligado: o rate limit conta todo mundo como um IP só | `app.set("trust proxy", 1)` em `src/app.js` (seção 8) |
 
 ---
 
@@ -327,3 +331,60 @@ npm run dev               # porta 5173
 
 # Login: demo@lex.dev / Lex123456
 ```
+
+---
+
+## 8. Publicar no Render (D-1)
+
+> **O guia passo a passo do deploy está no README do repositório do frontend**
+> — [lexuepg2026-droid/LEX-front](https://github.com/lexuepg2026-droid/LEX-front),
+> seção *"Deploy no Render"* —, junto do `render.yaml` que descreve os dois
+> serviços. Ele é o roteiro do dia, escrito para ser seguido sem ler código.
+>
+> Aqui fica só o que é deste lado.
+
+### O que a API é, no Render
+
+Um **Web Service** no plano gratuito, com:
+
+| Campo | Valor |
+|---|---|
+| Build Command | `npm ci` |
+| Start Command | `npm start` |
+| Health Check Path | `/` |
+| Runtime | Node — a versão vem de `engines.node` no `package.json` |
+
+### As variáveis do serviço
+
+Estão em **`.env.production.example`**, uma a uma, com o que cada uma faz.
+Nenhum valor real mora lá — e não deve morar: a fase inteira mexe nos arquivos
+que carregam segredo, e um valor commitado exige **rotação**, porque histórico
+publicado não se reescreve.
+
+Três coisas que valem repetir aqui, porque são as que quebram o deploy:
+
+- **`NODE_ENV=production`** liga o cookie `secure`, o HSTS (passo 142) e o rate
+  limit real (passo 85). Sem ele, o sistema sobe "funcionando" e sem nenhuma
+  dessas proteções;
+- **`JWT_PORTAL_SECRET` precisa ser diferente do `JWT_SECRET`** — a aplicação se
+  recusa a subir se forem iguais, e a razão está em `config/portalSecret.js`;
+- **não configure `PORT`.** O Render injeta a porta; fixá-la faz o health check
+  nunca passar, e o deploy fica parado em "in progress" sem mensagem de erro.
+
+### O que fica atrás do proxy do Render
+
+Todo request chega com o IP do proxy. `app.set("trust proxy", 1)` — **um salto,
+nunca `true`** — é o que faz o `express-rate-limit` agrupar pelo IP real de quem
+chamou. Com `true`, o Express acreditaria no `X-Forwarded-For` inteiro,
+inclusive no trecho que o cliente escreve: trocar o prefixo forjado a cada
+requisição renderia um balde novo toda vez, e o limite viraria enfeite.
+
+Há teste dos dois lados em `tests/infra/producao.test.js`: o valor configurado, e
+o comportamento (prefixo forjado **não** cria balde novo).
+
+### A hibernação, e o que ela significa numa demonstração
+
+O Web Service gratuito **dorme após 15 minutos** sem requisição e leva cerca de
+um minuto para acordar. **Abra o sistema alguns minutos antes de qualquer
+apresentação.** O site (estático) não dorme — quem dorme é a API, então o
+sintoma é o app abrir normal e a primeira consulta demorar.

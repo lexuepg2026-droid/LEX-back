@@ -5679,6 +5679,86 @@ possível para depender de mais uma requisição.
 - **Não guarda o corpo da requisição**, só o da resposta de sucesso.
 - **Não expõe a coleção de chaves em rota nenhuma.** Ela é infraestrutura.
 
+## DEC-061 — o deploy: dois serviços, uma origem só (D-1)
+
+> Fase de **infraestrutura**. Nenhum comportamento do sistema mudou; o que
+> mudou é ele conseguir rodar fora do `localhost`. O detalhe do lado da tela
+> está no **CLAUDE.md do frontend**, junto do `render.yaml` e do guia do README.
+
+**Render, plano gratuito.** A API é um **Web Service** (`npm ci` / `npm start`,
+health check em `/`); o site é um **Static Site**. O banco continua no **Atlas**,
+com `0.0.0.0/0` no IP Access List — o plano gratuito do Render não tem IP de
+saída fixo.
+
+O site serve `/api/*` **no próprio domínio**, por rewrite. Para o navegador,
+tudo acontece numa origem só: **não há CORS**, e o cookie `lex-token` continua
+sendo cookie de mesma origem, com o `sameSite: "strict"` que ele já tinha em
+produção. **Nada da autenticação mudou nesta fase** — e a razão de não mudar é
+que dois domínios exigiriam `SameSite=None; Secure`, que parte dos navegadores e
+dos bloqueadores recusa de formas que só aparecem no aparelho de outra pessoa.
+
+### `trust proxy: 1` — e por que não `true`
+
+Já estava no `app.js` desde a Fase 4.5; o que a D-1 acrescentou foi a **prova de
+comportamento**, e não só a de configuração.
+
+Atrás do proxy do Render, todo request chega com o mesmo IP. Sem `trust proxy`,
+o `express-rate-limit` conta o mundo inteiro como uma pessoa só e o limite
+estoura com pouquíssimo uso — o **passo 85** quebrando de um jeito que ninguém
+percebe, com a demonstração morrendo em 429 e a causa em lugar nenhum do código
+de negócio.
+
+**`1` e não `true`:** com `true`, o Express acredita no `X-Forwarded-For`
+inteiro, inclusive no trecho que o **cliente** escreve. Quem quisesse furar o
+limite trocaria o prefixo forjado a cada requisição e ganharia um balde novo
+toda vez.
+
+`tests/infra/producao.test.js` prova as duas coisas:
+
+| Teste | O que morre se `trust proxy` virar `true` |
+|---|---|
+| o valor configurado é `1` | a asserção direta |
+| **prefixo forjado não cria balde novo** | o comportamento: com `true`, cada prefixo forjado vira um balde |
+
+### `.env.production.example` — e o teste que o mantém honesto
+
+O modelo lista **todas** as variáveis que o código lê, com o que cada uma faz e
+**nenhum valor real**. `tests/infra/deploy.test.js` varre `src/` atrás de
+`process.env.X` e reprova se alguma não estiver mencionada: uma variável nova
+lida pelo código e ausente do modelo produz um deploy que **sobe** e falha em
+uso — a categoria mais cara, porque não há erro de build para investigar.
+
+O mesmo teste recusa valor com cara de real (URI com senha, hex longo): a fase
+mexe justamente nos arquivos que carregam segredo, e um valor commitado exige
+**rotação**, porque histórico publicado não se reescreve.
+
+Três coisas que quebram o deploy e estão escritas lá:
+
+- **`NODE_ENV=production`** liga o cookie `secure`, o HSTS (passo 142), o rate
+  limit real (passo 85) e o log de 5xx. Sem ele o sistema sobe "funcionando" e
+  sem nenhuma dessas proteções;
+- **`JWT_PORTAL_SECRET` diferente do `JWT_SECRET`** — a aplicação se recusa a
+  subir se forem iguais (`config/portalSecret.js`);
+- **`PORT` não se configura.** O Render injeta; fixá-la faz o health check nunca
+  passar, e o deploy fica em "in progress" sem mensagem de erro.
+
+### `engines.node` — a versão é nossa, não do hospedeiro
+
+`">=20.0.0 <21.0.0"`. Sem declarar, o Render usa o default **dele** — hoje a
+série 24 —, e a API rodaria numa versão que a suíte nunca tocou. O teto é
+exigência explícita da documentação do Render: faixa aberta resolve para o
+`latest`, que muda de major sozinho.
+
+### A hibernação do plano gratuito
+
+O Web Service gratuito **dorme após 15 minutos** sem requisição e leva **cerca
+de um minuto** para acordar. O site estático não dorme — quem dorme é a API, e
+o sintoma é o app abrir normal e a primeira consulta demorar.
+
+**Antes de qualquer demonstração, abrir o sistema alguns minutos antes.** É
+pré-voo, como o passo 85: não é defeito, é o plano — e o que não pode acontecer
+é a banca ser a primeira vez que alguém vê.
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
