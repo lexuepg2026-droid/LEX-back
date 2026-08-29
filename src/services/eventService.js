@@ -27,6 +27,7 @@ import {
   escreverDataDeCalendario
 } from "../utils/dataDeCalendario.js";
 import { filtroTexto, filtroObjectIdExigido, filtroSituacao } from "../utils/filtrosDeConsulta.js";
+import { assertVersaoAtual } from "./concurrencyGuard.js";
 import { rotuloDoTipoDeEvento } from "../config/tiposEvento.js";
 
 const erro = (status, message, extra = {}) => {
@@ -194,7 +195,11 @@ export const listarEventos = async (
   };
 };
 
-export const atualizarEvento = async (usuarioId, eventoId, dados) => {
+// `opcoes.versaoVista` é o `updatedAt` que o cliente leu (DEC-060). Chega do
+// controller, e não do corpo: o corpo passa por `checarUpdate`, que recusa
+// campo desconhecido — e com razão. Ausente, a verificação não acontece e o
+// comportamento é o de antes da F-5b.
+export const atualizarEvento = async (usuarioId, eventoId, dados, opcoes = {}) => {
   validarObjectId(eventoId, "id");
 
   const recusa = checarUpdate("events", dados);
@@ -205,6 +210,10 @@ export const atualizarEvento = async (usuarioId, eventoId, dados) => {
 
   const evento = await Event.findOne({ _id: eventoId, usuarioId, ativo: true });
   if (!evento) throw erro(404, "Evento não encontrado");
+
+  // ⚠️ ANTES de qualquer escrita: a gravação atrasada de um aparelho que
+  // ficou offline não pode atropelar a de outro (DEC-060).
+  assertVersaoAtual(evento, opcoes.versaoVista, projetarEvento, "compromisso");
 
   const enviou = (campo) => Object.prototype.hasOwnProperty.call(dados, campo);
 
@@ -244,7 +253,7 @@ export const atualizarEvento = async (usuarioId, eventoId, dados) => {
 // Marca e desmarca. Desmarcar limpa o carimbo (`concluidoEm: null`): um
 // `concluidoEm` sobrevivente num evento não concluído seria a data de uma
 // conclusão que foi desfeita, e ninguém que a lesse depois saberia disso.
-export const concluirEvento = async (usuarioId, eventoId, dados) => {
+export const concluirEvento = async (usuarioId, eventoId, dados, opcoes = {}) => {
   validarObjectId(eventoId, "id");
 
   const erros = validarConclusaoEvento(dados);
@@ -252,6 +261,8 @@ export const concluirEvento = async (usuarioId, eventoId, dados) => {
 
   const evento = await Event.findOne({ _id: eventoId, usuarioId, ativo: true });
   if (!evento) throw erro(404, "Evento não encontrado");
+
+  assertVersaoAtual(evento, opcoes.versaoVista, projetarEvento, "compromisso");
 
   evento.concluido = dados.concluido;
   evento.concluidoEm = dados.concluido ? new Date() : null;

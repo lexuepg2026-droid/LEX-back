@@ -1,3 +1,4 @@
+import { lerVersaoVista } from "../services/concurrencyGuard.js";
 import {
   criarEvento,
   listarEventos,
@@ -40,9 +41,13 @@ export const getEventById = async (req, res, next) => {
   }
 };
 
+// `X-If-Unmodified-Since` (DEC-060): o `updatedAt` que o cliente leu. Quem
+// sabe de HTTP é a borda — o service recebe o valor e não conhece `req`.
 export const updateEvent = async (req, res, next) => {
   try {
-    const evento = await atualizarEvento(req.user._id, req.params.id, req.body);
+    const evento = await atualizarEvento(req.user._id, req.params.id, req.body, {
+      versaoVista: lerVersaoVista(req)
+    });
     return res.status(200).json(evento);
   } catch (error) {
     return next(error);
@@ -51,7 +56,9 @@ export const updateEvent = async (req, res, next) => {
 
 export const concludeEvent = async (req, res, next) => {
   try {
-    const evento = await concluirEvento(req.user._id, req.params.id, req.body);
+    const evento = await concluirEvento(req.user._id, req.params.id, req.body, {
+      versaoVista: lerVersaoVista(req)
+    });
     return res.status(200).json(evento);
   } catch (error) {
     return next(error);

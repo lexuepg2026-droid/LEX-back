@@ -17,6 +17,7 @@ import {
   vincularCliente
 } from "../services/processoClienteService.js";
 import confirmacaoService from "../services/confirmacaoService.js";
+import { lerVersaoVista } from "../services/concurrencyGuard.js";
 import { lerLinhaDoTempo } from "../services/timelineService.js";
 
 export const create = async (req, res, next) => {
@@ -65,7 +66,9 @@ export const update = async (req, res, next) => {
 // DEC-054 — a única escrita de `fase`, e por isso a única que grava histórico.
 export const mudarFaseDoProcesso = async (req, res, next) => {
   try {
-    const process = await mudarFase(req.user._id, req.params.id, req.body);
+    const process = await mudarFase(req.user._id, req.params.id, req.body, {
+      versaoVista: lerVersaoVista(req)
+    });
     return res.status(200).json(process);
   } catch (error) {
     return next(error);
