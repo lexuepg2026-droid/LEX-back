@@ -5759,6 +5759,267 @@ o sintoma é o app abrir normal e a primeira consulta demorar.
 pré-voo, como o passo 85: não é defeito, é o plano — e o que não pode acontecer
 é a banca ser a primeira vez que alguém vê.
 
+## DEC-062 — ordem alfabética em português (A-1)
+
+**A regra, em uma frase:** *a listagem de clientes sai em ordem alfabética por
+padrão, e a ordenação é feita em PORTUGUÊS — acento e caixa não mudam o lugar
+do nome.*
+
+### O problema que precisava ser resolvido ANTES de escrever a consulta
+
+**Cliente PF e cliente PJ não guardam o nome no mesmo campo.** PF tem
+`nomeCompleto`; PJ tem `razaoSocial` e `nomeFantasia`. Ordenar por um só deixa
+o outro tipo inteiro com chave vazia — e, na prática, todos os PJ num bloco, no
+começo ou no fim, ordenados por data de cadastro.
+
+### A escolha: campo DERIVADO e gravado, não derivado na consulta
+
+`Client.nomeExibicao`, gravado pelo hook `pre("validate")` a partir de
+`utils/nomeExibicao.js`.
+
+As duas saídas eram defensáveis e a decisão tem motivo:
+
+| Saída | Por quê / por que não |
+|---|---|
+| **campo gravado** (escolhida) | rápido na leitura, e **indexável** |
+| campo derivado na consulta (`$addFields` numa agregação) | não duplica dado, e **nenhum índice o alcança** — a ordenação passaria a acontecer em memória **por construção**, sem escolha |
+
+O argumento que decidiu não foi o custo: foi que a segunda saída **tira a
+decisão sobre o índice das nossas mãos**. Com `$addFields`, "ordenar em memória"
+deixa de ser uma escolha declarada e vira uma consequência inevitável.
+
+**O risco do campo gravado é a divergência, e ele é eliminado
+estruturalmente** — não por disciplina:
+
+- o valor é **derivado por hook `pre("validate")`**, como `Secao.variaveis`
+  desde a Fase 2A;
+- **toda escrita de cliente passa por `.save()`** (regra central nº 6), então
+  não há caminho que pule o hook;
+- o campo **não está em allowlist nenhuma** de PATCH, então nenhuma rota o
+  aceita — há teste provando que `PATCH { nomeExibicao }` responde 400 e que o
+  valor gravado continua o derivado;
+- a derivação acontece **depois** da limpeza de campos do tipo errado, dentro do
+  mesmo hook. Derivar antes leria um nome que a gravação vai descartar, e um
+  cliente que mudasse de PF para PJ ficaria ordenado para sempre pelo nome de
+  pessoa física que ele deixou de ter.
+
+**A precedência (`nomeCompleto` → `razaoSocial` → `nomeFantasia`) mora em
+`utils/nomeExibicao.js`, e é a MESMA que `nomeDoCliente` usa** para nomear o pai
+inativo nas mensagens da DEC-053. Antes da A-1 eram duas listas escritas à mão,
+e divergir ali significaria a mensagem de erro chamar o cliente de um jeito e a
+listagem ordená-lo por outro.
+
+**Vazio, e não `"(sem nome)"`.** O `"(sem nome)"` é decisão de exibição e fica em
+`nomeDoCliente`; como chave de ordenação, ele colocaria esses clientes no meio
+da letra P, como se fosse um nome.
+
+### A collation é `pt`, `strength: 1` — e foi MEDIDA, não presumida
+
+Sonda contra o Atlas, antes de escolher:
+
+```
+sem collation : Alvaro < Ambar < Ana < Zeca < Álvaro < ámbar
+pt strength 1 : Álvaro < Alvaro < ámbar < Ambar < Ana < Zeca
+pt strength 2 : Alvaro < Álvaro < Ambar < ámbar < Ana < Zeca
+pt strength 3 : Alvaro < Álvaro < Ambar < ámbar < Ana < Zeca
+```
+
+**Sem collation, todo nome acentuado vai para depois do "Z".** A ordenação
+binária compara bytes, e em UTF-8 qualquer caractere acentuado tem byte maior
+que qualquer letra sem acento. Num cadastro brasileiro isso não é caso de borda:
+é metade dos nomes, e a advogada procuraria "Álvaro" na letra A, não acharia, e
+concluiria que o cliente não está cadastrado.
+
+**`strength: 1` compara só a letra base**: ignora acento **e caixa**. É o que faz
+"Álvaro", "Alvaro" e "alvaro" ficarem adjacentes — que é como um humano lê a
+lista. `strength: 2` também resolveria o acento e deixaria os três adjacentes;
+a diferença é a caixa, e nomes digitados em minúscula existem no cadastro real.
+
+**O preço do `strength: 1` está registrado:** "Álvaro" e "Alvaro" ficam
+**empatados**, e empate não ordena. Quem desempata é o **`_id`** na consulta —
+sem ele, a paginação **repete e pula linhas**, que é a mesma correção que o
+extrato levou na F-1a.
+
+### 🚨 A collation vale nos DOIS lados, ou em nenhum
+
+```js
+// models/Client.js
+export const COLLATION_PT = Object.freeze({ locale: "pt", strength: 1 });
+clientSchema.index({ usuarioId: 1, nomeExibicao: 1, _id: 1 }, { collation: COLLATION_PT });
+
+// services/clientService.js
+Client.find(filter).collation(COLLATION_PT).sort({ nomeExibicao: dir, _id: dir })
+```
+
+**Um índice sem collation não serve a uma consulta com collation** — o MongoDB
+o ignora e ordena em memória. E collation só no índice não se aplica à consulta.
+Medido com `explain("queryPlanner")`:
+
+| | IXSCAN | estágio SORT |
+|---|---|---|
+| **com** collation nos dois lados | sim, `usuarioId_1_nomeExibicao_1__id_1` | **não** |
+| sem collation na consulta (contraprova) | sim, outro índice | **sim** |
+
+**A ordenação é servida pelo índice, e não acontece em memória.** Era a pergunta
+que a fase mandou responder, e a resposta é medida.
+
+### O vocabulário é fechado, e `ordem` inválida RECUSA
+
+`ORDENACOES_CLIENTE = ["nome_asc", "nome_desc"]`, em `utils/filtrosDeConsulta.js`,
+ao lado de `SITUACOES`. Sem lista, em duas fases existiriam `nome_asc`, `nomeAsc`
+e `asc` como valores possíveis.
+
+Valor desconhecido → **400 com `campo: "ordem"`**, como `situacao` e como o id
+malformado da F-0. Um `?ordem=alfabetica` ignorado devolveria a lista em outra
+ordem sem nada dizendo isso, e a advogada concluiria que a ordenação não
+funciona. **Filtro que erra calado é pior que filtro que recusa** — e a
+assimetria com `?busca=` (que é descartado) continua valendo pelo mesmo motivo:
+aqui quem montou a URL foi a tela.
+
+### A migração, e por que ela é necessária
+
+`scripts/migrarNomeExibicao.js` (`npm run migrar:nome-exibicao`). Hook só roda em
+gravação, então cliente cadastrado antes da A-1 e nunca editado fica com
+`nomeExibicao` ausente — e ausente ordena **antes de qualquer nome**, em bloco.
+
+O sintoma é o pior possível: a lista **parece funcionar** (os editados
+recentemente saem em ordem) e mente sobre o resto. Idempotente, com a guarda de
+banco da F-2b, e **recalcula todos** em vez de filtrar por "campo ausente" — assim
+ele também corrige um valor que tenha divergido por qualquer caminho.
+
+**`npm run seed:fresh` não dispensa o script**, e pela mesma razão pela qual
+`migrarTotalParcelas.js` continua no repositório: o seed cobre o banco de
+demonstração e mais nenhum.
+
+### O padrão MUDOU, e é deliberado
+
+Era `createdAt: -1`. Passa a ser `nome_asc`. Ordem de cadastro não responde
+nenhuma pergunta de quem procura um nome — e quem não mexer no seletor vê a
+lista em ordem alfabética, que foi o que o Daniel pediu.
+
+**Só a listagem de CLIENTES.** Processos, honorários e documentos não foram
+tocados: replicar é decisão do Daniel, depois de ver esta funcionando.
+
+---
+
+## DEC-063 — validação de e-mail, e a assimetria entre cadastro e login (A-1)
+
+> **A segunda metade desta decisão é a que mais precisa estar escrita.** Sem
+> ela, alguém "corrige" a inconsistência por reflexo e reabre um buraco.
+
+### O que a fase ENCONTROU, e não era o que o enunciado supunha
+
+O enunciado dizia que não havia validação nenhuma. **Havia**, e o levantamento
+foi colado no relatório:
+
+| Onde | Antes da A-1 |
+|---|---|
+| `validations/authValidation.js` (cadastro) | **validava**, com expressão escrita à mão |
+| `pages/auth/RegisterPage.jsx` (frontend) | **validava**, com uma **CÓPIA** da mesma expressão |
+| `validateLoginPayload` (login) | só campo vazio — **e está certo assim** |
+| `clientValidation.js` (cliente) | nada |
+
+**As duas cópias tinham o mesmo furo, e ele era de um caso só:**
+
+```js
+/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test("daniel@lex..dev")   // → true
+```
+
+`[^\s@]+` engole o primeiro ponto e o `\.` casa com o segundo. Dos onze casos
+da tabela da fase, a expressão acertava **dez**.
+
+### A regra, deliberadamente simples
+
+`utils/email.js`. Um `@`, algo antes, um ponto depois com algo dos dois lados,
+sem espaços, **sem dois pontos seguidos**.
+
+**A proibição de ponto duplo fica FORA da expressão**, como um teste separado.
+É o que a torna legível e verificável — e foi exatamente o que a versão
+"tudo numa regex" não conseguia expressar.
+
+**Não se tenta a gramática do RFC 5322**, e o motivo é o custo assimétrico do
+erro:
+
+- aceitar um endereço inválido → a advogada recebe "não foi entregue" e corrige;
+- **recusar um endereço VÁLIDO** → a pessoa não se cadastra, não entende por
+  quê, e não tem a quem recorrer.
+
+O segundo é muito pior, e é o que as expressões "completas" produzem na prática.
+**O sinal de mais é aceito de propósito** (`daniel+banca@lex.dev`): é endereço
+válido, é usado, e recusá-lo cairia no erro caro.
+
+É a mesma direção da regra geral do projeto desde a F-3.2 — *a tela nunca é mais
+rígida que a API* —, nascida do código de acesso do portal.
+
+### Normalização: já estava correta, e passou a ter um dono
+
+`trim` + caixa baixa, **antes de gravar e antes de comparar**. O levantamento
+confirmou que o cadastro e o login já faziam isso (`.toLowerCase().trim()`
+inline nos dois), e que `User.email` tem `lowercase: true`.
+
+**Não havia defeito, e portanto não houve script de duplicatas** — a pergunta da
+fase era condicional e a condição não se realizou. O que mudou é que as duas
+cópias inline passaram a chamar `normalizarEmail`.
+
+⚠️ **O `lowercase: true` do schema NÃO bastaria sozinho:** ele atua na escrita,
+não no `findOne`. Sem normalizar antes da consulta, quem se cadastrou como
+`daniel@x.com` e digitasse `Daniel@X.com` no login não seria encontrado. Há
+teste para os dois lados.
+
+### No cadastro: 400 com `campo: "email"`
+
+O 400 não carregava `campo`. Sem ele, quem erra o e-mail na **etapa 1** do
+assistente lê a mensagem na **etapa 2** e não sabe para onde voltar — é a outra
+metade do achado **V-1**.
+
+`CAMPO_POR_MENSAGEM`, em `authService.js`, é um mapa **curto e fechado**, por
+igualdade contra as constantes que a própria validação usa. **Não é regex sobre a
+mensagem** — foi assim que a Fase 1.3 quebrou, roteando a etapa por `/mail/i`.
+
+### 🚨 No LOGIN o formato NÃO é validado, e isso é decisão de segurança
+
+**Não acrescente `emailValido()` a `validateLoginPayload`.**
+
+`loginUser` responde **401 "Credenciais inválidas"** para e-mail inexistente e
+para senha errada, com corpo **byte-idêntico**, de propósito: é o que impede
+enumerar contas. Os passos 7 e 87 travam isso, e a DEC-029 ponto 11 aplica a
+mesma regra ao portal.
+
+Validar formato ali criaria uma resposta de **400 que só um e-mail malformado
+recebe**:
+
+```
+"daniel@lex.dev"    + senha errada → 401 "Credenciais inválidas"
+"naoexiste@lex.dev" + qualquer     → 401 "Credenciais inválidas"
+"daniel"                           → 400 "E-mail inválido"     ← o oráculo
+```
+
+As duas primeiras continuam indistinguíveis; a **terceira** separa "recusei
+antes de olhar o banco" de "olhei o banco". É pouco, e é exatamente o tipo de
+pouco que a **DEC-031** registra como aceitável no **cadastro** (onde qualquer
+um cria conta em dez segundos) e inaceitável no **login**.
+
+**Onde a validação do login mora, então: na TELA, e só lá.** `LoginPage.jsx`
+confere antes de enviar — conveniência pura, que poupa uma requisição. Quem
+contornar a tela recebe o mesmo 401 de sempre.
+
+**E isso não contradiz "a tela nunca é mais rígida que a API":** a tela aqui não
+recusa o que o servidor aceitaria — o servidor também não vai autenticar
+"daniel". Ela só evita a viagem.
+
+O e-mail **vazio** continua 400, e é a fronteira exata: string vazia não é
+endereço de conta possível, então não distingue conta nenhuma.
+
+### O cliente continua SEM validação de e-mail — e é pergunta ao Daniel
+
+`clientValidation.js` não valida, e a A-1 **não mexeu nisso de propósito**.
+Está fora do pedido, e aplicar a regra a um campo que hoje aceita qualquer coisa
+**recusaria dado que a advogada já tem gravado** — a primeira edição de um
+cliente com e-mail torto passaria a falhar, num cadastro que nada tem a ver com
+a mudança. A pergunta está no relatório da fase.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

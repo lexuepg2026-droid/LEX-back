@@ -42,6 +42,7 @@ import Process from "../models/Process.js";
 import Fee from "../models/Fee.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import { REGRA_CONFLITO } from "../config/integrityConflicts.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 
 // ── A ÁRVORE REAL, lida dos models — não presumida ────────────────────────
 //
@@ -201,11 +202,17 @@ export const ARVORE_DE_ATIVACAO = Object.freeze({
 // diferentes. Sem este ponto único, metade das mensagens sairia com o nome
 // vazio para pessoa jurídica — que é o caso em que o "nome" mais importa,
 // porque razão social é o que a advogada procura no cadastro.
-export const nomeDoCliente = (cliente) =>
-  cliente?.nomeCompleto?.trim() ||
-  cliente?.razaoSocial?.trim() ||
-  cliente?.nomeFantasia?.trim() ||
-  "(sem nome)";
+// A precedência (nomeCompleto → razaoSocial → nomeFantasia) saiu daqui na A-1
+// e passou a viver em `utils/nomeExibicao.js`, porque o hook do `Client` que
+// grava a chave de ordenação da DEC-062 precisa da MESMA resposta. Duas listas
+// de prioridade para a mesma pergunta divergem na primeira vez que alguém
+// acrescentar um campo — e aqui divergir significa a mensagem de erro chamar o
+// cliente de um jeito e a listagem ordená-lo por outro.
+//
+// O `"(sem nome)"` fica AQUI, e não na função compartilhada: ele é decisão de
+// exibição, e serve a quem monta frase para humano. Como chave de ordenação
+// ele colocaria o cliente sem nome no meio da letra P.
+export const nomeDoCliente = (cliente) => nomeExibicaoDoCliente(cliente) || "(sem nome)";
 
 export const nomeDoProcesso = (processo) =>
   processo?.titulo?.trim() || processo?.numeroProcesso?.trim() || "(sem título)";

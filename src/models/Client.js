@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import historicoAtivacaoSchema from "./shared/historicoAtivacaoSchema.js";
 import enderecoSchema from "./shared/enderecoSchema.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 
 const representanteLegalSchema = new mongoose.Schema(
   {
@@ -145,6 +146,28 @@ const clientSchema = new mongoose.Schema(
       default: null
     },
 
+    // ── DEC-062: a chave de ordenação alfabética ────────────────────────────
+    //
+    // DERIVADO, nunca entrada do usuário. É `nomeCompleto` (PF) ou
+    // `razaoSocial`/`nomeFantasia` (PJ), resolvido por `utils/nomeExibicao.js`
+    // e gravado pelo hook `pre("validate")` no fim deste arquivo — o mesmo
+    // mecanismo de `Secao.variaveis`, e pela mesma razão: campo derivado que
+    // alguém pode escrever é campo que diverge.
+    //
+    // Existe porque PF e PJ guardam o nome em campos DIFERENTES, e ordenar por
+    // um só deles jogaria metade da lista para o fim. Uma alternativa seria
+    // derivá-lo na consulta, por agregação — e ela foi descartada com motivo:
+    // `$addFields` produz um campo que **nenhum índice alcança**, então a
+    // ordenação passaria a acontecer em memória por construção, sem escolha.
+    //
+    // Fora da allowlist de update (`validations/shared/camposPermitidos.js`):
+    // nenhuma rota o aceita.
+    nomeExibicao: {
+      type: String,
+      trim: true,
+      default: ""
+    },
+
     ativo: {
       type: Boolean,
       default: true
@@ -196,6 +219,27 @@ clientSchema.index(
   }
 );
 
+// ── DEC-062: o índice que a ordenação alfabética usa ───────────────────────
+//
+// **A collation é do ÍNDICE, e não só da consulta.** Um índice sem collation
+// não serve a uma consulta com collation: o MongoDB o ignora e ordena em
+// memória (`SORT` no plano de execução). Os dois lados precisam declarar a
+// MESMA collation, e é por isso que ela aparece duas vezes — aqui e em
+// `clientService.getAllClients`.
+//
+// `strength: 1` compara **só a letra base**: ignora acento e caixa. É o que
+// faz "Álvaro" ficar junto de "Alvaro" (e "alvaro" junto dos dois) em vez de
+// depois do Z. Medido contra o Atlas antes de escolher — sem collation, a
+// ordenação binária põe TODO nome acentuado depois de "Zeca".
+//
+// O preço do `strength: 1` é que "Álvaro" e "Alvaro" ficam **empatados**, e
+// empate não ordena. Quem desempata é o `_id` na consulta — sem ele a
+// paginação repetiria e pularia linhas, que é a mesma razão pela qual o
+// extrato ordena por data E id desde a F-1a.
+export const COLLATION_PT = Object.freeze({ locale: "pt", strength: 1 });
+
+clientSchema.index({ usuarioId: 1, nomeExibicao: 1, _id: 1 }, { collation: COLLATION_PT });
+
 // Rede de segurança do schema (o clientValidation já barra estes casos antes).
 // Precisa de statusCode: sem ele o errorHandler trata como falha interna e
 // mascara a mensagem, que aqui é informação útil para o cliente.
@@ -243,6 +287,15 @@ clientSchema.pre("validate", function () {
       throw erroDeCampoObrigatorio("CNPJ é obrigatório para pessoa jurídica");
     }
   }
+
+  // DEC-062 — a chave de ordenação, derivada DEPOIS da limpeza acima.
+  //
+  // A ordem dentro do hook é o que torna isto correto: os blocos anteriores
+  // apagam os campos do tipo errado (PF não tem `razaoSocial`, PJ não tem
+  // `nomeCompleto`), e derivar antes deles leria um nome que a gravação vai
+  // descartar — um cliente que mudasse de PF para PJ ficaria ordenado para
+  // sempre pelo nome de pessoa física que ele deixou de ter.
+  this.nomeExibicao = nomeExibicaoDoCliente(this);
 });
 
 const Client = mongoose.model("Client", clientSchema);

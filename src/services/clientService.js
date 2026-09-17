@@ -1,12 +1,12 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import Client from "../models/Client.js";
+import Client, { COLLATION_PT } from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente, listarProcessosQueBloqueiam } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { regexTermoSimples } from "../utils/texto.js";
-import { filtroSituacao } from "../utils/filtrosDeConsulta.js";
+import { filtroSituacao, ordenacaoDeClientes } from "../utils/filtrosDeConsulta.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -224,7 +224,10 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
-const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao } = {}) => {
+const getAllClients = async (
+  usuarioId,
+  { page = 1, limit = 20, busca, situacao, ordem } = {}
+) => {
   const skip = (page - 1) * limit;
   // DEC-052: `ativo: true` deixou de ser fixo. Sem `situacao`, nada muda —
   // o padrão do helper é exatamente o filtro de antes.
@@ -234,10 +237,31 @@ const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao 
   if (regex) {
     filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
   }
+
+  // ── DEC-062: ordem alfabética em português ───────────────────────────────
+  //
+  // `_id` é o DESEMPATE, e não enfeite. Com `strength: 1` a collation compara
+  // só a letra base, então "Álvaro" e "Alvaro" — e dois clientes realmente
+  // homônimos — ficam EMPATADOS. Ordenação com empate não é determinística, e
+  // paginação sobre ordem não determinística **repete e pula linhas** entre
+  // páginas. É a mesma correção que o extrato levou na F-1a.
+  const direcao = ordenacaoDeClientes(ordem) === "nome_desc" ? -1 : 1;
+  const sort = { nomeExibicao: direcao, _id: direcao };
+
   const [data, total] = await Promise.all([
     // `-historicoAtivacao` pelo mesmo motivo do processo: append-only, cresce,
     // e a listagem não o lê.
-    Client.find(filter).select("-historicoAtivacao").sort({ createdAt: -1 }).skip(skip).limit(limit),
+    //
+    // `.collation()` precisa casar com a do índice (`COLLATION_PT`, em
+    // `models/Client.js`) — collation só na consulta faz o MongoDB ignorar o
+    // índice e ordenar em memória, e collation só no índice não se aplica à
+    // consulta. Os dois lados, ou nenhum.
+    Client.find(filter)
+      .select("-historicoAtivacao")
+      .collation(COLLATION_PT)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit),
     Client.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

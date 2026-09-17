@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import authValidation from "../validations/authValidation.js";
 import { somenteDigitos } from "../utils/documentos.js";
+import { MENSAGEM_EMAIL_INVALIDO, normalizarEmail } from "../utils/email.js";
 
 const generateToken = (userId) => {
   if (!process.env.JWT_SECRET) {
@@ -18,11 +19,34 @@ const generateToken = (userId) => {
   );
 };
 
-const badRequest = (message) => {
+const badRequest = (message, campo) => {
   const error = new Error(message);
   error.statusCode = 400;
+  if (campo) error.campo = campo;
   return error;
 };
+
+// ── DEC-063: qual input destacar quando o cadastro é recusado ─────────────
+//
+// `validateRegisterPayload` devolve UMA string — a primeira falha encontrada —
+// e o `campo` do 400 é o que faz o formulário destacar o input certo. Sem ele,
+// quem erra o e-mail na etapa 1 do assistente lê "E-mail inválido" na etapa 2,
+// sem saber para onde voltar.
+//
+// A associação é por MENSAGEM porque é isso que a validação devolve, e o mapa
+// é curto e fechado de propósito: só os campos que a etapa 1 mostra. Uma
+// mensagem sem entrada aqui sai sem `campo`, e a tela continua exibindo o
+// texto — que é o comportamento de antes, e é aceitável.
+//
+// **Não é regex sobre a mensagem.** É igualdade contra as constantes que a
+// própria validação usa — foi assim que a Fase 1.3 quebrou, roteando a etapa do
+// cadastro por `/mail/i`, e é o que a DEC-031 e o contrato do 409 existem para
+// não repetir.
+const CAMPO_POR_MENSAGEM = Object.freeze({
+  [MENSAGEM_EMAIL_INVALIDO]: "email",
+  "Nome completo é obrigatório": "nomeCompleto",
+  "CPF inválido": "cpf"
+});
 
 // ── 422: credencial conferida DENTRO de uma sessão válida (DEC-050) ────────
 //
@@ -103,10 +127,13 @@ const sanitizeUser = (usuario) => {
 const registerUser = async (data) => {
   const validationError = authValidation.validateRegisterPayload(data);
   if (validationError) {
-    throw badRequest(validationError);
+    throw badRequest(validationError, CAMPO_POR_MENSAGEM[validationError]);
   }
 
-  const normalizedEmail = data.email.toLowerCase().trim();
+  // DEC-063 — a MESMA normalização do login e do model (`lowercase: true`).
+  // É ela que faz `Daniel@X.com ` e `daniel@x.com` serem o mesmo e-mail, e sem
+  // ela o índice único não os veria como iguais.
+  const normalizedEmail = normalizarEmail(data.email);
   const cpf = somenteDigitos(data.cpf);
   const oabNumero = somenteDigitos(data.oab.numero);
   const oabEstado = String(data.oab.estado).trim().toUpperCase();
@@ -161,7 +188,10 @@ const loginUser = async ({ email, senha }) => {
     throw badRequest(validationError);
   }
 
-  const normalizedEmail = email.toLowerCase().trim();
+  // Normalizado ANTES de comparar, e não só antes de gravar: o `lowercase` do
+  // schema atua na escrita, não na consulta. Sem isto, quem se cadastrou como
+  // `daniel@x.com` e digita `Daniel@X.com` no login não seria encontrado.
+  const normalizedEmail = normalizarEmail(email);
 
   const usuario = await User.findOne({ email: normalizedEmail });
 
