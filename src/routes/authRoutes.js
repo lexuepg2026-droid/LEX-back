@@ -50,11 +50,41 @@ const passwordLimiter = criarLimiter(
   "Muitas tentativas de troca de senha. Tente novamente em 15 minutos."
 );
 
+// ── A-2 (DEC-064): três baldes novos, um por operação ──────────────────────
+// Pedir e-mail é a operação que custa (provedor, caixa de entrada de terceiro),
+// e por isso o teto é o mais baixo. Consumir o link não custa nada e é feito por
+// quem já tem o token — o teto é folgado, só para não deixar a rota aberta a
+// varredura.
+const forgotLimiter = criarLimiter(
+  "RATE_LIMIT_RECUPERACAO",
+  5,
+  "Muitos pedidos de recuperação de senha. Tente novamente em 15 minutos."
+);
+
+const resendLimiter = criarLimiter(
+  "RATE_LIMIT_REENVIO",
+  5,
+  "Muitos pedidos de reenvio. Tente novamente em 15 minutos."
+);
+
+const tokenLimiter = criarLimiter(
+  "RATE_LIMIT_TOKEN",
+  20,
+  "Muitas tentativas com links de e-mail. Tente novamente em 15 minutos."
+);
+
 router.post("/register", registerLimiter, authController.register);
 router.post("/login", loginLimiter, authController.login);
 router.post("/logout", authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.patch("/me", authMiddleware, authController.updateMe);
 router.post("/alterar-senha", authMiddleware, passwordLimiter, authController.changePassword);
+
+// Públicas, salvo o reenvio (só a advogada logada pede e-mail para a própria
+// conta). Nomes em inglês: convenção do projeto para rotas novas.
+router.post("/confirm-email", tokenLimiter, authController.confirmEmail);
+router.post("/resend-confirmation", authMiddleware, resendLimiter, authController.resendConfirmation);
+router.post("/forgot-password", forgotLimiter, authController.forgotPassword);
+router.post("/reset-password", tokenLimiter, authController.resetPassword);
 
 export default router;

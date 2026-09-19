@@ -725,6 +725,10 @@ async function main() {
     nomeCompleto: 'Demo LEX Advocacia',
     email: DEMO_EMAIL,
     senhaHash,
+    // A-2: `demo@lex.dev` não é uma caixa de entrada real, então o e-mail nunca
+    // poderia ser confirmado por link — e a demonstração abriria com o aviso de
+    // "confirme seu e-mail" na tela. A conta de demonstração já nasce confirmada.
+    emailConfirmadoEm: new Date(),
     cpf: '52998224725',
     telefone: '(42) 99888-7766',
     oab: { numero: '123456', estado: 'PR' },

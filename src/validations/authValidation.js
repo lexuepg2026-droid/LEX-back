@@ -291,6 +291,17 @@ const validateUpdateProfilePayload = (data) => {
   return null;
 };
 
+// A-2: a redefinição por link. O token é conferido pelo service (ele decide
+// entre "inválido" e "expirado"); aqui só a forma do corpo e a força da senha,
+// que é a mesma regra do cadastro e da troca logada.
+const validateResetPasswordPayload = (data) => {
+  if (data === null || typeof data !== "object") {
+    return "Payload inválido";
+  }
+
+  return validateSenhaForte(data.novaSenha, "nova senha");
+};
+
 const validateChangePasswordPayload = (data) => {
   if (data === null || typeof data !== "object") {
     return "Payload inválido";
@@ -317,6 +328,7 @@ export default {
   validateLoginPayload,
   validateUpdateProfilePayload,
   validateChangePasswordPayload,
+  validateResetPasswordPayload,
   LOGO_MIMES_ACEITOS,
   LOGO_LIMITE_BYTES
 };

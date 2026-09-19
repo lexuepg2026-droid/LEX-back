@@ -5,6 +5,7 @@ import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente, listarProcessosQueBloqueiam } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
 import { regexTermoSimples } from "../utils/texto.js";
 import { filtroSituacao, ordenacaoDeClientes } from "../utils/filtrosDeConsulta.js";
 
@@ -200,12 +201,21 @@ const aplicarSenhaPortal = async (client, senhaPortal) => {
   client.senhaPortalDefinidaEm = null;
 };
 
+// A-2 (DEC-064): o 400 de e-mail malformado leva `campo: "email"`, para o
+// formulário destacar o input — o mesmo contrato do 409 de e-mail duplicado.
+// Por IGUALDADE com a constante da própria validação, e não por regex sobre o
+// texto da mensagem (DEC-063).
+const erroDeValidacao = (mensagem) => {
+  const err = new Error(mensagem);
+  err.statusCode = 400;
+  if (mensagem === MENSAGEM_EMAIL_INVALIDO) err.campo = "email";
+  return err;
+};
+
 const createClient = async (usuarioId, data) => {
   const validationError = clientValidation.validateCreateClientPayload(data);
   if (validationError) {
-    const err = new Error(validationError);
-    err.statusCode = 400;
-    throw err;
+    throw erroDeValidacao(validationError);
   }
 
   const normalizedData = normalizeClientData(data);
@@ -299,12 +309,11 @@ const updateClient = async (usuarioId, clientId, data) => {
 
   const validationError = clientValidation.validateUpdateClientPayload(data, nextTipoPessoa, {
     cpf: client.cpf,
-    cnpj: client.cnpj
+    cnpj: client.cnpj,
+    email: client.email
   });
   if (validationError) {
-    const err = new Error(validationError);
-    err.statusCode = 400;
-    throw err;
+    throw erroDeValidacao(validationError);
   }
 
   const pick = (campo) => (data[campo] !== undefined ? data[campo] : client[campo]);
