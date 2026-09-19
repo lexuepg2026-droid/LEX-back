@@ -73,6 +73,7 @@ Preencha o `.env`:
 | `PORT`        | Porta do backend. Padrão `3001`.                                          |
 | `CORS_ORIGIN` | URL(s) do frontend permitidas. Padrão `http://localhost:5173,http://localhost:5174`. |
 | `NODE_ENV`    | Deixe `development` no ambiente local.                                     |
+| `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM`, `APP_URL` | **Opcionais em desenvolvimento.** Enviam o e-mail de confirmação de conta e o de recuperação de senha. Em branco, o e-mail **não é enviado** e o **link aparece no console do backend** (`[lex:email] ...`) — copie e abra. Em produção são necessárias; ver `.env.production.example`. |
 
 > ⚠️ **Não** deixe `NODE_ENV=production` no `.env` local nem exportado no shell: em produção o cookie de sessão vira `Secure` e o navegador não o grava em `http://localhost`, quebrando o login silenciosamente.
 

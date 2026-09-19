@@ -43,7 +43,10 @@ gerencia exclusivamente os seus próprios dados.
 Variáveis de ambiente: `PORT`, `MONGO_URI`, `JWT_SECRET`,
 **`JWT_PORTAL_SECRET`**, `CORS_ORIGIN`, `RATE_LIMIT_JANELA_MINUTOS` e os tetos
 por operação (inclusive `RATE_LIMIT_PORTAL_LOGIN`) — definidas em `.env` (nunca
-versionado). Ver `.env.example`.
+versionado). Ver `.env.example`. **A-2 (DEC-064)** acrescentou `EMAIL_PROVIDER`,
+`EMAIL_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `APP_URL` e três tetos
+(`RATE_LIMIT_RECUPERACAO`, `RATE_LIMIT_REENVIO`, `RATE_LIMIT_TOKEN`) — todas
+listadas em `.env.production.example`, que um teste obriga a ficar completo.
 
 **`JWT_PORTAL_SECRET` é obrigatório e precisa ser diferente do `JWT_SECRET`.**
 `src/app.js` chama `assertSegredoDoPortal()` na carga e **derruba o processo**
@@ -256,6 +259,10 @@ Todos sob `/api`, todos autenticados por `authMiddleware`, exceto
 | GET   | `/me`            | responde `{ usuario }`                     |
 | PATCH | `/me`            | perfil, endereço, OAB, advocacia, logo     |
 | POST  | `/alterar-senha` | rate limit próprio                         |
+| POST  | `/confirm-email` | **A-2** — público; consome o link; não abre sessão |
+| POST  | `/resend-confirmation` | **A-2** — exige sessão; 429 `aguarde` em 1 min |
+| POST  | `/forgot-password` | **A-2** — público; **200 idêntico** para tudo |
+| POST  | `/reset-password` | **A-2** — público; troca a senha e derruba as sessões |
 
 ### `/api/clients`
 `POST /` · `GET /` · `GET /:id` · `PATCH /:id` · `PUT /:id` (alias) · `DELETE /:id`
@@ -6017,6 +6024,152 @@ Está fora do pedido, e aplicar a regra a um campo que hoje aceita qualquer cois
 **recusaria dado que a advogada já tem gravado** — a primeira edição de um
 cliente com e-mail torto passaria a falhar, num cadastro que nada tem a ver com
 a mudança. A pergunta está no relatório da fase.
+
+---
+
+## DEC-064 — confirmação de e-mail e recuperação de senha da advogada (A-2)
+
+> **A DEC-031 continua valendo.** O cadastro segue aberto e o 409 de e-mail
+> duplicado segue enumerável — esta decisão NÃO o altera. A DEC-031 dizia que a
+> alternativa anti-enumeração "exigiria provedor de e-mail"; agora há provedor,
+> e mesmo assim o cadastro não mudou, porque o login continua livre (ver abaixo)
+> e a razão original — qualquer um cria conta em dez segundos — não se moveu.
+
+### O que existe
+
+| Rota | Quem | O que faz |
+|---|---|---|
+| `POST /auth/confirm-email` | público | consome o link do e-mail de cadastro |
+| `POST /auth/resend-confirmation` | logada | novo e-mail de confirmação; 1 por minuto |
+| `POST /auth/forgot-password` | público | pede o link de recuperação; **sempre o mesmo 200** |
+| `POST /auth/reset-password` | público | troca a senha com o link e derruba as sessões |
+
+Nenhuma emite cookie: **confirmar ou redefinir não abre sessão.** Quem redefine
+volta ao login e digita a senha nova — o link, sozinho, nunca é credencial.
+
+### Duas decisões do Daniel, e o que cada uma custou
+
+1. **Envio por provedor HTTP, com o `fetch` do Node** — zero dependência nova. A
+   alternativa (SMTP com biblioteca) exigia dependência e o plano gratuito do
+   Render costuma bloquear a saída SMTP. O provedor **não foi escolhido**: há
+   dois adaptadores (`brevo`, `resend`) atrás de `EMAIL_PROVIDER`, e trocar é
+   mudar uma variável no painel. **Resend só entrega a terceiros com domínio
+   próprio verificado**; Brevo aceita um remetente único verificado. O formato
+   de cada requisição foi escrito da documentação pública e **nunca foi
+   exercitado contra a API real** — o primeiro envio real é o passo 267.
+2. **O login NÃO é bloqueado até confirmar o e-mail.** Por causa da demonstração:
+   se o e-mail atrasar ou cair no spam, o avaliador entra do mesmo jeito. A
+   consequência é um aviso na tela (`emailConfirmadoEm: null`), não um portão. Há
+   teste nos dois repos travando que nada além do aviso consulta o campo.
+
+### O token
+
+`<idDoUsuário>.<segredo>`, com o segredo de 32 bytes aleatórios. **No banco fica
+só o SHA-256 do segredo** (`utils/tokenUsuario.js`): quem ler a coleção `users`
+não monta um link válido. Dois campos independentes em `User`
+(`confirmacaoEmail`, `recuperacaoSenha`), ambos `select: false` — o
+`authMiddleware` carrega o usuário em TODA requisição e não pode trazer hash de
+token junto. Pedir de novo SUBSTITUI o token anterior, e é isso que invalida o
+link velho.
+
+**Prazos:** confirmação 24 horas; recuperação 60 minutos. **Intervalo mínimo:**
+um e-mail por minuto por conta e por finalidade.
+
+### 🚨 Expiração e uso único vivem NUM lugar só
+
+`consumirToken` (`authService.js`) faz **uma escrita atômica** com o hash E
+`expiraEm > agora` dentro do FILTRO, e ela mesma aplica o efeito e apaga o token.
+Daí saem, de uma vez: uso único (duas requisições simultâneas com o mesmo link —
+só uma encontra o token) e expiração (um `if` antes da escrita seria uma segunda
+checagem, e é a segunda checagem que fica desatualizada). O que vem depois de
+`modifiedCount: 0` é **só diagnóstico**, para a tela separar "expirou"
+(`codigo: "tokenExpirado"`) de "inválido ou já usado" (`"tokenInvalido"`).
+
+**Mutação obrigatória:** tirar `expiraEm` desse filtro derruba 2 testes (o de
+confirmação e o de redefinição expirados).
+
+### 🚨 A recuperação responde IGUAL, aconteça o que acontecer
+
+Conta existe, não existe, envio deu certo, falhou, pedido caiu no intervalo de
+espera: **200 e `MENSAGEM_RECUPERACAO`**, uma constante. É a regra do login
+(DEC-063) aplicada aqui — o login esconde a existência da conta por 401
+idêntico, esta rota a esconde por 200 idêntico.
+
+- **O formato do e-mail NÃO é validado no servidor**, pelo mesmo motivo do login.
+  A tela confere (conveniência); o servidor responde igual. Só a FORMA do corpo
+  (campo ausente ou não-texto) é 400, e isso não é pergunta sobre conta.
+- **O envio corre em segundo plano**, para o TEMPO da resposta também não
+  distinguir. Resta uma escrita só no caminho da conta que existe — milissegundos,
+  e a rota tem limite por IP (`RATE_LIMIT_RECUPERACAO`, 5 / 15 min).
+- **O `catch` de `forgotPassword` engole toda falha** (banco, provedor) e devolve
+  a mesma resposta. Ele é uma SEGUNDA camada da uniformidade — e por isso a
+  mutação que só lança um erro dentro do `try` não derruba teste nenhum. A que
+  derruba muda a RESPOSTA quando a conta não existe (medido: 1 teste cai).
+
+**A confirmação, ao contrário, é honesta**: `resend-confirmation` exige sessão —
+a advogada pede e-mail para a PRÓPRIA conta, então não há o que esconder — e diz
+"já confirmado", "aguarde" e "falha do provedor" (502).
+
+### Encerrar as sessões ativas, num JWT sem estado
+
+`User.senhaAlteradaEm`, escrito só pela redefinição. O `authMiddleware` recusa
+(401, como toda sessão perdida — DEC-050) o token cujo `iat` é anterior ao
+SEGUNDO INTEIRO desse instante: `iat` tem resolução de segundos, e comparar com
+o instante exato derrubaria o login feito logo depois da redefinição, no mesmo
+segundo. **A troca DENTRO da sessão (`alterar-senha`) não escreve esse campo** —
+a advogada que trocou a própria senha continua logada (DEC-050) — mas apaga um
+pedido de recuperação pendente: um link anterior à troca não pode redefinir por
+cima da senha que ela acabou de escolher.
+
+### Três armadilhas, todas com teste
+
+- **`$literal` no hash.** A redefinição é UMA atualização por pipeline (senha,
+  `senhaAlteradaEm`, `emailConfirmadoEm` só se ainda nulo, e o apagamento dos
+  tokens). Um hash bcrypt começa com `$`, e numa expressão de agregação uma string
+  assim é lida como CAMINHO DE CAMPO: sem `$literal` a senha é corrompida. Sem
+  ele, 5 testes caem.
+- **A base dos links é `APP_URL`, nunca o `Host` da requisição.** Com `Host`, quem
+  pede a recuperação de uma conta alheia com `Host: site-do-atacante.com` faz o
+  link legítimo chegar à vítima apontando para o site dele. Em produção, sem
+  `APP_URL`, o e-mail não sai.
+- **Redefinir prova o controle do e-mail**, então também preenche
+  `emailConfirmadoEm` — exigir uma segunda confirmação de quem acabou de provar
+  isso seria atrito.
+
+### O que o log NUNCA carrega
+
+O corpo da mensagem tem o token. Só o status do provedor sai em log, e a resposta
+dele é cortada em 200 caracteres. Há teste provando que nem a chave da API nem o
+segredo do link vazam para a mensagem de erro. **Sem provedor, fora de produção,
+o LINK sai no console** (é assim que se desenvolve); em produção, sem provedor, o
+envio lança — não finge que enviou.
+
+### O e-mail do cliente
+
+`clientValidation.js` passou a usar `utils/email.js` — a MESMA função da advogada,
+sem segunda expressão. **Continua OPCIONAL**: vazio e `null` passam. Na criação o
+formato é sempre conferido; **na edição só quando o valor MUDOU** em relação ao
+gravado, porque a tela reenvia o e-mail em todo salvamento e um cliente antigo com
+e-mail torto travaria a edição do telefone. O 400 leva `campo: "email"`.
+
+### Contas anteriores à A-2
+
+Nascem com `emailConfirmadoEm: null` e mostram o aviso até confirmarem. **A conta
+do seed (`demo@lex.dev`) já nasce confirmada** — não é uma caixa de entrada real.
+Não houve migração, e não se marcou nenhuma conta antiga como confirmada por
+script: confirmar sem prova seria o oposto do que o campo diz.
+
+### Modelo de dados
+
+`users` ganhou `emailConfirmadoEm`, `senhaAlteradaEm`, `confirmacaoEmail` e
+`recuperacaoSenha` (os dois últimos com `tokenHash`, `expiraEm`, `enviadoEm`). **Nenhuma
+coleção nova.**
+
+### O que NÃO se fez, por decisão de escopo
+
+Recuperação de senha do CLIENTE no portal (continua sendo a advogada quem
+redefine), checagem SMTP de que o endereço existe (o link de confirmação já cobre
+o caso real) e qualquer mudança no portal.
 
 ---
 
