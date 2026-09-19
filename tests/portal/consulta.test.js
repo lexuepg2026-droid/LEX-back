@@ -118,9 +118,9 @@ describe("portal: consulta", () => {
       assert.deepEqual(
         Object.keys(r.processo).sort(),
         [
-          "area", "comarca", "dataDistribuicao", "descricao", "id", "meuPapel",
-          "numeroProcesso", "orgao", "souPrincipal", "status", "tipoAcao",
-          "titulo", "vara"
+          "area", "comarca", "dataDistribuicao", "descricao", "fase", "id",
+          "meuPapel", "numeroProcesso", "orgao", "souPrincipal", "status",
+          "tipoAcao", "titulo", "transitoEmJulgadoEm", "vara"
         ]
       );
       assert.deepEqual(
@@ -162,6 +162,102 @@ describe("portal: consulta", () => {
         assert.ok(
           !chaves.has(proibida),
           `VAZAMENTO — a chave "${proibida}" saiu na resposta: ${[...chaves].join(", ")}`
+        );
+      }
+    });
+
+    // ── F-6.1 — fase e encerramento (DEC-054) ────────────────────────────
+    test("expõe a fase e a acompanha quando a advogada a muda", async () => {
+      const { adv, processo, codigoAcesso } = await montarCenarioPortal("consulta-fase");
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
+
+      // Processo recém-criado: fase padrão, sem trânsito em julgado. `null`,
+      // nunca `undefined` — o portal distingue "não tem" de "esqueci de projetar".
+      let r = esperado(await portal.get("/portal/processo"), 200, "processo novo");
+      assert.equal(r.processo.fase, "conhecimento");
+      assert.equal(r.processo.transitoEmJulgadoEm, null);
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(r.processo, "transitoEmJulgadoEm"),
+        "transitoEmJulgadoEm precisa estar presente mesmo nulo"
+      );
+
+      // As quatro fases, em qualquer ordem — inclusive voltando.
+      for (const fase of ["sentenca", "execucao", "recursos", "conhecimento"]) {
+        esperado(
+          await adv.patch(`/processes/${processo._id}/fase`, { fase }),
+          200, `fase ${fase}`
+        );
+        r = esperado(await portal.get("/portal/processo"), 200, `processo em ${fase}`);
+        assert.equal(r.processo.fase, fase);
+      }
+    });
+
+    test("expõe o trânsito em julgado e volta a null quando ele é desfeito", async () => {
+      const { adv, processo, codigoAcesso } = await montarCenarioPortal("consulta-transito");
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
+
+      esperado(
+        await adv.patch(`/processes/${processo._id}`, {
+          transitoEmJulgadoEm: "2026-03-15"
+        }),
+        200, "registrar trânsito em julgado"
+      );
+
+      let r = esperado(await portal.get("/portal/processo"), 200, "processo transitado");
+      assert.equal(new Date(r.processo.transitoEmJulgadoEm).toISOString().slice(0, 10), "2026-03-15");
+      // Eixos independentes: o trânsito não altera a fase mostrada.
+      assert.equal(r.processo.fase, "conhecimento");
+
+      esperado(
+        await adv.patch(`/processes/${processo._id}`, { transitoEmJulgadoEm: null }),
+        200, "desfazer trânsito em julgado"
+      );
+      r = esperado(await portal.get("/portal/processo"), 200, "processo reaberto");
+      assert.equal(r.processo.transitoEmJulgadoEm, null);
+    });
+
+    test("motivo da fase, liminar e motivo de encerramento NÃO saem no portal", async () => {
+      // O que a advogada escreve como texto livre sobre a fase, o encerramento
+      // e a liminar é anotação dela. Expor `fase` não pode arrastar o resto.
+      const { adv, processo, codigoAcesso } = await montarCenarioPortal("consulta-fase-priv");
+
+      esperado(
+        await adv.patch(`/processes/${processo._id}/fase`, {
+          fase: "execucao", motivo: "MOTIVO-INTERNO-DA-FASE"
+        }),
+        200, "fase com motivo"
+      );
+      esperado(
+        await adv.patch(`/processes/${processo._id}`, {
+          transitoEmJulgadoEm: "2026-03-15",
+          motivoEncerramento: "MOTIVO-INTERNO-DO-ENCERRAMENTO",
+          liminar: true,
+          liminarObservacao: "OBSERVACAO-INTERNA-DA-LIMINAR",
+          liminarEm: "2026-02-01"
+        }),
+        200, "encerramento e liminar"
+      );
+
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
+      const r = esperado(await portal.get("/portal/processo"), 200, "processo");
+
+      assert.equal(r.processo.fase, "execucao", "a fase em si SAI");
+
+      const bruto = JSON.stringify(r);
+      for (const valor of [
+        "MOTIVO-INTERNO-DA-FASE", "MOTIVO-INTERNO-DO-ENCERRAMENTO",
+        "OBSERVACAO-INTERNA-DA-LIMINAR"
+      ]) {
+        assert.ok(!bruto.includes(valor), `VAZAMENTO — "${valor}" saiu: ${bruto}`);
+      }
+
+      for (const proibida of [
+        "historicoFase", "motivo", "motivoEncerramento", "liminar",
+        "liminarObservacao", "liminarEm", "autorId", "historicoAtivacao"
+      ]) {
+        assert.ok(
+          !(proibida in r.processo),
+          `VAZAMENTO — a chave "${proibida}" saiu em processo: ${Object.keys(r.processo).join(", ")}`
         );
       }
     });

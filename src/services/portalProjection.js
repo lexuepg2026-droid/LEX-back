@@ -39,6 +39,21 @@ const texto = (valor) => (valor === undefined || valor === null ? null : String(
 // ── Processo ───────────────────────────────────────────────────────────────
 // O que o cliente pode ver do processo dele. `descricao` entra: é o resumo que
 // a advogada escreve PARA ser lido. `observacoes` não entra, nunca.
+//
+// ── F-6.1: `fase` e `transitoEmJulgadoEm` (DEC-054) ────────────────────────
+// A banca apontou que o cliente deve poder acompanhar o processo. `status`
+// ("ativo"/"encerrado"/"suspenso") é o eixo ADMINISTRATIVO antigo e não diz em
+// que ponto o processo está; quem diz é `fase`. E como `status` é escrito à mão
+// e independe do trânsito em julgado, um processo transitado pode continuar
+// "Em andamento" — sem `transitoEmJulgadoEm` a tela do cliente mentiria.
+//
+// Ficam FORA, de propósito, por serem decisão de produto e não ajuste:
+//   `motivoEncerramento`, `liminarObservacao` — texto livre da advogada, o
+//       mesmo risco de `observacoes`;
+//   `liminar`, `liminarEm` — sinalizador interno; expô-lo ao cliente é decisão
+//       da advogada, não nossa;
+//   `historicoFase` — traz `motivo` e `autorId`; expor a linha do tempo exige
+//       decidir o que dela o cliente lê.
 export const projetarProcesso = (processo, vinculo) => ({
   id: String(processo._id),
   numeroProcesso: texto(processo.numeroProcesso),
@@ -49,6 +64,8 @@ export const projetarProcesso = (processo, vinculo) => ({
   vara: texto(processo.vara),
   comarca: texto(processo.comarca),
   status: texto(processo.status),
+  fase: texto(processo.fase),
+  transitoEmJulgadoEm: data(processo.transitoEmJulgadoEm),
   descricao: texto(processo.descricao),
   dataDistribuicao: data(processo.dataDistribuicao),
   // O papel do PRÓPRIO cliente, não a lista de participantes.
