@@ -6155,8 +6155,10 @@ e-mail torto travaria a edição do telefone. O 400 leva `campo: "email"`.
 ### Contas anteriores à A-2
 
 Nascem com `emailConfirmadoEm: null` e mostram o aviso até confirmarem. **A conta
-do seed (`demo@lex.dev`) já nasce confirmada** — não é uma caixa de entrada real.
-Não houve migração, e não se marcou nenhuma conta antiga como confirmada por
+do seed (`demo@lex.dev`) também nasce NÃO confirmada** (decisão do Daniel, na
+semeadura com volume): assim o aviso "Confirme seu e-mail" aparece na
+demonstração e o fluxo pode ser mostrado à banca. O login não é bloqueado, então
+nada mais muda para essa conta. Não houve migração, e não se marcou nenhuma conta antiga como confirmada por
 script: confirmar sem prova seria o oposto do que o campo diz.
 
 ### Modelo de dados

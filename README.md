@@ -174,6 +174,8 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 | `npm run seed:fresh` | **Atalho recomendado.** Derruba a base e recria tudo do zero (`reset:dev` + `seed:demo`). |
 | `npm run seed:demo` | Cria a conta demo e a massa de dados de teste. Recusa rodar se a demo já existir. |
 | `npm run seed:demo:clean` | Remove a conta demo e todos os dados dela. |
+| `npm run seed:demo:volume` | Como `seed:demo`, e depois gera o **volume realista** (~260 clientes, ~300 processos, ~370 honorários, ~1.000 parcelas, ~600 pagamentos, ~130 eventos, ~100 documentos) pelos serviços reais. Determinístico (semente fixa). Exige as tabelas de domínio do frontend (`../lex-frontend/public/tabelas`, ou `LEX_TABELAS_DIR`). Contra banco remoto pede confirmação do nome do banco. Para recriar só a conta demo: `npm run seed:demo:clean && npm run seed:demo:volume`. |
+| `npm run seed:fresh:volume` | `reset:dev` + `seed:demo:volume`. **Apaga o banco inteiro**, inclusive contas de outras pessoas. |
 | `npm run reset:dev` | Derruba as coleções de desenvolvimento (`users`, `clients`, `processes`, `fees`, `installments`, `payments`, `documents`). Abortado se `NODE_ENV=production`. Use quando a base local tiver dados antigos/incompatíveis com o schema atual. |
 
 > Fluxo para recriar a base do zero: `npm run seed:fresh` (equivale a `npm run reset:dev && npm run seed:demo`).
