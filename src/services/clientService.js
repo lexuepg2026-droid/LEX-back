@@ -1,12 +1,13 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import Client from "../models/Client.js";
+import Client, { COLLATION_PT } from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente, listarProcessosQueBloqueiam } from "./processoClienteService.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
+import { MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
 import { regexTermoSimples } from "../utils/texto.js";
-import { filtroSituacao } from "../utils/filtrosDeConsulta.js";
+import { filtroSituacao, ordenacaoDeClientes } from "../utils/filtrosDeConsulta.js";
 import { calcularNacionalidade } from "../config/demonimos.js";
 
 const onlyNumbers = (value) => {
@@ -202,12 +203,21 @@ const aplicarSenhaPortal = async (client, senhaPortal) => {
   client.senhaPortalDefinidaEm = null;
 };
 
+// A-2 (DEC-064): o 400 de e-mail malformado leva `campo: "email"`, para o
+// formulário destacar o input — o mesmo contrato do 409 de e-mail duplicado.
+// Por IGUALDADE com a constante da própria validação, e não por regex sobre o
+// texto da mensagem (DEC-063).
+const erroDeValidacao = (mensagem) => {
+  const err = new Error(mensagem);
+  err.statusCode = 400;
+  if (mensagem === MENSAGEM_EMAIL_INVALIDO) err.campo = "email";
+  return err;
+};
+
 const createClient = async (usuarioId, data) => {
   const validationError = clientValidation.validateCreateClientPayload(data);
   if (validationError) {
-    const err = new Error(validationError);
-    err.statusCode = 400;
-    throw err;
+    throw erroDeValidacao(validationError);
   }
 
   const normalizedData = normalizeClientData(data);
@@ -226,7 +236,10 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
-const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao } = {}) => {
+const getAllClients = async (
+  usuarioId,
+  { page = 1, limit = 20, busca, situacao, ordem } = {}
+) => {
   const skip = (page - 1) * limit;
   // DEC-052: `ativo: true` deixou de ser fixo. Sem `situacao`, nada muda —
   // o padrão do helper é exatamente o filtro de antes.
@@ -251,10 +264,31 @@ const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao 
       { "endereco.estado": regex }
     ];
   }
+
+  // ── DEC-062: ordem alfabética em português ───────────────────────────────
+  //
+  // `_id` é o DESEMPATE, e não enfeite. Com `strength: 1` a collation compara
+  // só a letra base, então "Álvaro" e "Alvaro" — e dois clientes realmente
+  // homônimos — ficam EMPATADOS. Ordenação com empate não é determinística, e
+  // paginação sobre ordem não determinística **repete e pula linhas** entre
+  // páginas. É a mesma correção que o extrato levou na F-1a.
+  const direcao = ordenacaoDeClientes(ordem) === "nome_desc" ? -1 : 1;
+  const sort = { nomeExibicao: direcao, _id: direcao };
+
   const [data, total] = await Promise.all([
     // `-historicoAtivacao` pelo mesmo motivo do processo: append-only, cresce,
     // e a listagem não o lê.
-    Client.find(filter).select("-historicoAtivacao").sort({ createdAt: -1 }).skip(skip).limit(limit),
+    //
+    // `.collation()` precisa casar com a do índice (`COLLATION_PT`, em
+    // `models/Client.js`) — collation só na consulta faz o MongoDB ignorar o
+    // índice e ordenar em memória, e collation só no índice não se aplica à
+    // consulta. Os dois lados, ou nenhum.
+    Client.find(filter)
+      .select("-historicoAtivacao")
+      .collation(COLLATION_PT)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit),
     Client.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -292,12 +326,11 @@ const updateClient = async (usuarioId, clientId, data) => {
 
   const validationError = clientValidation.validateUpdateClientPayload(data, nextTipoPessoa, {
     cpf: client.cpf,
-    cnpj: client.cnpj
+    cnpj: client.cnpj,
+    email: client.email
   });
   if (validationError) {
-    const err = new Error(validationError);
-    err.statusCode = 400;
-    throw err;
+    throw erroDeValidacao(validationError);
   }
 
   const pick = (campo) => (data[campo] !== undefined ? data[campo] : client[campo]);

@@ -463,7 +463,7 @@ export const listarModelosService = async (usuarioId, { page = 1, limit = 20, ti
   if (tipoFiltro) filter.tipo = tipoFiltro;
 
   const [data, total] = await Promise.all([
-    Document.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Document.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
     Document.countDocuments(filter)
   ]);
 

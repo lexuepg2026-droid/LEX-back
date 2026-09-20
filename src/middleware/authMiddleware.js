@@ -53,6 +53,23 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ message: "Usuário do token não encontrado" });
     }
 
+    // ── A-2 (DEC-064): a senha foi redefinida por recuperação DEPOIS que este
+    // token nasceu → a sessão acabou ────────────────────────────────────────
+    //
+    // O JWT não tem estado, então "encerrar as sessões" só pode ser recusar os
+    // tokens anteriores a um instante gravado no usuário. `iat` tem resolução de
+    // segundos, por isso a comparação é contra o segundo INTEIRO do instante:
+    // o login feito logo depois da redefinição nasce no mesmo segundo ou depois,
+    // e passa. É 401, como toda sessão perdida (DEC-050) — a tela já sabe o que
+    // fazer com ele.
+    if (
+      usuario.senhaAlteradaEm &&
+      typeof decoded.iat === "number" &&
+      decoded.iat < Math.floor(usuario.senhaAlteradaEm.getTime() / 1000)
+    ) {
+      return res.status(401).json({ message: "Sessão encerrada: a senha foi redefinida. Entre novamente." });
+    }
+
     req.user = usuario;
     next();
   } catch (error) {

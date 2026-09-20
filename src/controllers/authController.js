@@ -78,11 +78,59 @@ const changePassword = async (req, res, next) => {
   }
 };
 
+// ── A-2 (DEC-064) ───────────────────────────────────────────────────────────
+// Nenhuma destas rotas emite cookie: confirmar o e-mail ou redefinir a senha
+// NÃO abre sessão. Quem redefine volta ao login e digita a senha nova — é o que
+// garante que o link, sozinho, nunca vale como credencial de sessão.
+const confirmEmail = async (req, res, next) => {
+  try {
+    const data = await authService.confirmEmail(req.body);
+    return res.json(data);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
+const resendConfirmation = async (req, res, next) => {
+  try {
+    const data = await authService.resendConfirmation(req.user._id);
+    return res.json(data);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
+const forgotPassword = async (req, res, next) => {
+  try {
+    const data = await authService.forgotPassword(req.body);
+    return res.json(data);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
+const resetPassword = async (req, res, next) => {
+  try {
+    const data = await authService.resetPassword(req.body);
+    return res.json(data);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
 export default {
   register,
   login,
   logout,
   me,
   updateMe,
-  changePassword
+  changePassword,
+  confirmEmail,
+  resendConfirmation,
+  forgotPassword,
+  resetPassword
 };

@@ -13,8 +13,17 @@ const getAllClients = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { busca, situacao } = req.query;
-    const result = await clientService.getAllClients(req.user._id, { page, limit, busca, situacao });
+    // DEC-062 — `ordem` ausente cai no padrão do helper (`nome_asc`). O valor
+    // não é validado aqui: quem o valida é `ordenacaoDeClientes`, no serviço,
+    // que é onde a validação mora neste projeto desde a Fase 2E.1.
+    const { busca, situacao, ordem } = req.query;
+    const result = await clientService.getAllClients(req.user._id, {
+      page,
+      limit,
+      busca,
+      situacao,
+      ordem
+    });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);

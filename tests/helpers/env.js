@@ -137,6 +137,11 @@ const afrouxarRateLimit = () => {
   // que partilha o balde. O teste que verifica o limite de VERDADE sobe um app
   // próprio com o teto baixo, em vez de depender deste valor.
   process.env.RATE_LIMIT_PORTAL_LOGIN = "100000";
+  // A-2: os três baldes de e-mail (recuperação, reenvio, consumo do link). A
+  // suíte de e-mail faz dezenas de pedidos contra o mesmo IP.
+  process.env.RATE_LIMIT_RECUPERACAO = "100000";
+  process.env.RATE_LIMIT_REENVIO = "100000";
+  process.env.RATE_LIMIT_TOKEN = "100000";
   process.env.RATE_LIMIT_JANELA_MINUTOS = "1";
 };
 

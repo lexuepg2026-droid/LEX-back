@@ -100,6 +100,36 @@ export const filtroSituacao = (valor, campo = "situacao") => {
   return { ativo: valor === "ativos" };
 };
 
+// ── DEC-062: a ordenação da listagem de clientes ──────────────────────────
+//
+// Vocabulário FECHADO, pelo mesmo motivo de `SITUACOES` e de `DEPENDENCIA`:
+// sem lista, em duas fases existiriam `nome_asc`, `nomeAsc` e `asc` como
+// valores possíveis, e a tela voltaria a chutar.
+//
+// **O padrão é `nome_asc`, e isso é mudança de comportamento deliberada.**
+// Até a A-1 a listagem saía por `createdAt: -1` — ordem de cadastro, que não
+// significa nada para quem procura um nome. Quem não mexer no seletor passa a
+// ver a lista em ordem alfabética, que é o que foi pedido.
+export const ORDENACOES_CLIENTE = Object.freeze(["nome_asc", "nome_desc"]);
+
+export const ordenacaoDeClientes = (valor, campo = "ordem") => {
+  if (valor === undefined || valor === null || valor === "") return "nome_asc";
+
+  if (typeof valor !== "string" || !ORDENACOES_CLIENTE.includes(valor)) {
+    // 400 com `campo`, e não descarte silencioso: um `?ordem=alfabetica`
+    // ignorado devolveria a lista em OUTRA ordem sem nada dizendo isso, e a
+    // advogada concluiria que a ordenação não funciona. É a mesma escolha que
+    // `filtroSituacao` já faz — e pela mesma razão pela qual texto de busca,
+    // ao contrário, é descartado: aqui quem montou a URL foi a tela.
+    throw erroDeFiltro(
+      campo,
+      `Ordenação inválida. Use uma de: ${ORDENACOES_CLIENTE.join(", ")}.`
+    );
+  }
+
+  return valor;
+};
+
 // Devolve o id quando é string e ObjectId válido; senão `undefined`.
 //
 // A checagem de `typeof` vem ANTES de `isValid`: `isValid` aceita coisas que
@@ -242,6 +272,7 @@ export const filtroPeriodo = (de, ate, { campoDe = "de", campoAte = "ate" } = {}
 export default {
   filtroTexto,
   filtroSituacao,
+  ordenacaoDeClientes,
   filtroObjectId,
   filtroObjectIdExigido,
   filtroDataExigida,

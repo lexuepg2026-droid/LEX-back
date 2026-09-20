@@ -87,7 +87,7 @@ export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, pr
   const [data, total] = await Promise.all([
     Document.find(filter)
       .populate("processoId", "titulo numeroProcesso status")
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit),
     Document.countDocuments(filter)

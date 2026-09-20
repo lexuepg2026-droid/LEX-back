@@ -236,7 +236,7 @@ const listFees = async (
   const statusFiltro = filtroTexto(status);
   if (statusFiltro) filter.status = statusFiltro;
   const [data, total] = await Promise.all([
-    Fee.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
+    Fee.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
     Fee.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

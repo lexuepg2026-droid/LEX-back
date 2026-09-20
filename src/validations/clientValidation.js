@@ -1,4 +1,5 @@
 import { somenteDigitos, validarCPF, validarCNPJ } from "../utils/documentos.js";
+import { emailValido, normalizarEmail, MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
 
 const SEXOS = ["feminino", "masculino"];
 const ESTADOS_CIVIS = [
@@ -117,6 +118,30 @@ const validateDataNascimento = (value) => {
   return null;
 };
 
+// ── A-2 (DEC-064): o e-mail do CLIENTE tem formato, mas segue OPCIONAL ──────
+//
+// A MESMA função da advogada (`utils/email.js`, DEC-063) — não há segunda regra.
+// O e-mail continua sendo opcional: cliente sem e-mail é estado válido, e o
+// campo só é conferido quando vem PREENCHIDO. Vazio e `null` (é como a tela
+// apaga o campo) passam.
+//
+// Na CRIAÇÃO o valor é sempre novo. Na EDIÇÃO só é conferido se MUDOU em relação
+// ao gravado: a tela reenvia o e-mail em todo salvamento, e um cliente antigo
+// com o e-mail torto que já estava no banco travaria a edição do telefone ou do
+// endereço por causa de um campo que ninguém tocou. Quem for CORRIGIR o e-mail
+// continua sendo obrigado a digitar um válido.
+const validateEmailDoCliente = (data, { emailAtual } = {}) => {
+  if (!hasOwnProperty(data, "email") || !isFilled(data.email)) {
+    return null;
+  }
+
+  if (emailAtual !== undefined && normalizarEmail(data.email) === normalizarEmail(emailAtual)) {
+    return null;
+  }
+
+  return emailValido(data.email) ? null : MENSAGEM_EMAIL_INVALIDO;
+};
+
 // Validações de formato aplicadas a create e update quando o campo está presente.
 const validateCamposComuns = (data) => {
   if (hasOwnProperty(data, "rg") && data.rg !== undefined && data.rg !== null && String(data.rg).length > 20) {
@@ -202,6 +227,11 @@ const validateCreateClientPayload = (data) => {
   const exclusividadeError = validateExclusividade(data, data.tipoPessoa);
   if (exclusividadeError) {
     return exclusividadeError;
+  }
+
+  const emailError = validateEmailDoCliente(data);
+  if (emailError) {
+    return emailError;
   }
 
   if (data.tipoPessoa === "fisica") {
@@ -309,6 +339,11 @@ const validateUpdateClientPayload = (data, tipoPessoaEfetivo, documentosAtuais =
     if (exclusividadeError) {
       return exclusividadeError;
     }
+  }
+
+  const emailError = validateEmailDoCliente(data, { emailAtual: documentosAtuais.email });
+  if (emailError) {
+    return emailError;
   }
 
   if (hasOwnProperty(data, "cpf")) {

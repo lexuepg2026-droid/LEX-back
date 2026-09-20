@@ -33,6 +33,8 @@ import {
   hojeComoDataDeCalendario, lerDataDeCalendario, escreverDataDeCalendario
 } from '../src/utils/dataDeCalendario.js';
 import { exigirConfirmacaoDeBanco } from './lib/guardaDeBanco.js';
+import { gerarVolume, imprimirResumoDoVolume } from './lib/volume/gerarVolume.js';
+import { carregarTabelas } from './lib/volume/tabelas.js';
 
 // ── Guard de ambiente ─────────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'development') {
@@ -55,6 +57,10 @@ const DEMO_SENHA = 'Lex123456';
 const PORTAL_SENHA_PROVISORIA = 'Portal2026';
 const PORTAL_SENHA_PROPRIA    = 'MinhaSenha2026';
 const IS_CLEAN   = process.argv.includes('--clean');
+// `--volume` acrescenta ao seed curado o VOLUME de um escritório de verdade
+// (~250 clientes e o que pende deles). Sem a flag, o seed continua sendo o
+// pequeno e conhecido de sempre — os passos do roteiro manual dependem dele.
+const IS_VOLUME  = process.argv.includes('--volume');
 
 // ── Logo de demonstracao ──────────────────────────────────────────────────────
 // Monograma "LEX" 96x96, PNG embutido como constante: 450 caracteres, 0,22% do
@@ -656,6 +662,9 @@ async function main() {
   }
 
   await connectDB();
+  // O banco em que ESTA execução escreve, dito antes de qualquer escrita. O
+  // `.env` deste repositório já apontou para produção sem ninguém perceber.
+  console.log(`Banco alvo: ${mongoose.connection.name}`);
 
   const existingUser = await User.findOne({ email: DEMO_EMAIL });
 
@@ -668,7 +677,12 @@ async function main() {
     const uid = existingUser._id;
     console.log(`Removendo dados do usuario demo (${DEMO_EMAIL})...`);
 
-    const [pay, inst, fee, vinc, sec, doc, procCli, proc, cli] = await Promise.all([
+    // Os treze NOMES na ordem exata das treze promessas abaixo. A versão
+    // anterior desestruturava só nove, e cada rótulo ficava três posições à
+    // frente: o relatório dizia "pagamentos" com o número das alocações.
+    const [
+      alocacoes, estornos, reparcelamentos, pay, inst, fee, vinc, sec, doc, procCli, proc, cli, confirmacoes
+    ] = await Promise.all([
       // As três coleções da F-1a saem ANTES do pagamento e da parcela, na
       // ordem da cascata: alocação e estorno apontam para pagamento,
       // reparcelamento aponta para parcela. A ordem não importa para
@@ -697,6 +711,9 @@ async function main() {
     await User.deleteOne({ _id: uid });
 
     console.log(`Removidos:`);
+    console.log(`  ${alocacoes.deletedCount}  alocacoes`);
+    console.log(`  ${estornos.deletedCount}  estornos`);
+    console.log(`  ${reparcelamentos.deletedCount}  reparcelamentos`);
     console.log(`  ${pay.deletedCount}  pagamentos`);
     console.log(`  ${inst.deletedCount} parcelas`);
     console.log(`  ${fee.deletedCount}  honorarios`);
@@ -706,6 +723,7 @@ async function main() {
     console.log(`  ${procCli.deletedCount} vinculos processo-cliente`);
     console.log(`  ${proc.deletedCount} processos`);
     console.log(`  ${cli.deletedCount}  clientes`);
+    console.log(`  ${confirmacoes.deletedCount}  confirmacoes de visualizacao do portal`);
     console.log(`  ${eventosRemovidos.deletedCount}  eventos da agenda`);
     console.log(`  1  usuario demo`);
     console.log('Cleanup concluido.');
@@ -725,6 +743,11 @@ async function main() {
     nomeCompleto: 'Demo LEX Advocacia',
     email: DEMO_EMAIL,
     senhaHash,
+    // A-2: a conta demo NASCE SEM e-mail confirmado (`emailConfirmadoEm: null`,
+    // o default), por decisão do Daniel: o aviso "Confirme seu e-mail" é parte
+    // do que a demonstração mostra. `demo@lex.dev` não é uma caixa de entrada
+    // real, então o aviso não some por link — some por "Já confirmei" só quando
+    // o campo mudar, e isso é escolha de quem demonstra, não do seed.
     cpf: '52998224725',
     telefone: '(42) 99888-7766',
     oab: { numero: '123456', estado: 'PR' },
@@ -1346,6 +1369,22 @@ async function main() {
   console.log('  1 participante com 2 confirmacoes (1 vista, 1 NAO vista)');
   console.log('  1 participante que acessou e NAO confirmou');
 
+  // ── VOLUME (--volume) ─────────────────────────────────────────────────────
+  let volume = null;
+  if (IS_VOLUME) {
+    console.log(`\n${'='.repeat(66)}\n  VOLUME DA DEMONSTRACAO (--volume)\n${'='.repeat(66)}`);
+    const tabelas = carregarTabelas();
+    console.log('  Tabelas de dominio: lex-frontend/public/tabelas (comarcas, CBO, nacionalidades, CNJ)');
+    volume = await gerarVolume({
+      uid,
+      hoje: HOJE_SEED,
+      tabelas,
+      modelos: modelosPorChave,
+      cpfsExistentes: CLIENTS_DATA.flatMap(c => [c.cpf, c.representanteLegal?.cpf]).filter(Boolean),
+      cnpjsExistentes: CLIENTS_DATA.map(c => c.cnpj).filter(Boolean),
+    });
+  }
+
   // ── RESUMO ────────────────────────────────────────────────────────────────
   // Contagens lidas do banco, não das constantes: se algo deixar de ser criado,
   // o resumo mostra o número real em vez de repetir a expectativa.
@@ -1470,7 +1509,7 @@ async function main() {
   console.log('-'.repeat(66));
   console.log('  DADOS CRIADOS');
   console.log(`    Usuario           : 1`);
-  console.log(`    Clientes          : ${nClients}   (5 PF + 3 PJ)`);
+  console.log(`    Clientes          : ${nClients}${IS_VOLUME ? '   (8 do seed curado + o volume)' : '   (5 PF + 3 PJ)'}`);
   console.log(`    Processos         : ${nProcesses}  ${statusProcessos}`);
   console.log(`    Vinculos proc-cli : ${nProcCli}  ${papeis}`);
   console.log(`    Honorarios        : ${nFees}  ${statusHonorarios}`);
@@ -1560,10 +1599,15 @@ async function main() {
   console.log('      legal, para exibir os dois estados na tela de detalhe.');
   console.log(L);
 
+  if (volume) {
+    imprimirResumoDoVolume(volume, console.log);
+    if (volume.falhas.length > 0) return 1;
+  }
+  return 0;
 }
 
 main()
-  .then(() => process.exit(0))
+  .then((codigo) => process.exit(codigo ?? 0))
   .catch(e => {
     console.error('Erro fatal no seed:', e.message || e);
     process.exit(1);
