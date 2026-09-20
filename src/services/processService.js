@@ -328,7 +328,7 @@ export const listProcesses = async (
       //
       // Quem quiser ver só as liminares usa o filtro `?liminar=com`, e decide
       // QUANDO.
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO)
