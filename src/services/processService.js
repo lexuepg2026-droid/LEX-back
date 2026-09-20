@@ -4,6 +4,8 @@ import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { filtroTexto, filtroSituacao } from "../utils/filtrosDeConsulta.js";
 import { regexTermoSimples } from "../utils/texto.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
+import Client from "../models/Client.js";
+
 import {
   normalizarClientesDoPayload,
   validateCreateProcess,
@@ -294,10 +296,24 @@ export const listProcesses = async (
   // desativado não aparece em lugar nenhum — e é por isso que ele precisa deste
   // filtro para voltar a ser alcançável.
   const filter = { usuarioId, ...filtroSituacao(situacao), ...filtroLiminar(liminar) };
-  // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
   const regex = regexTermoSimples(busca);
   if (regex) {
-    filter.$or = [{ titulo: regex }, { numeroProcesso: regex }];
+    const clientesCorrespondentes = await Client.find({
+      usuarioId,
+      $or: [{ nomeCompleto: regex }, { razaoSocial: regex }]
+    }).select("_id");
+
+    filter.$or = [
+      { titulo: regex },
+      { numeroProcesso: regex },
+      { tipoAcao: regex },
+      { area: regex },
+      { orgao: regex },
+      { vara: regex },
+      { comarca: regex },
+      { descricao: regex },
+      { clientePrincipalId: { $in: clientesCorrespondentes.map((c) => c._id) } }
+    ];
   }
   const statusFiltro = filtroTexto(status);
   if (statusFiltro) filter.status = statusFiltro;

@@ -7,6 +7,7 @@ import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { regexTermoSimples } from "../utils/texto.js";
 import { filtroSituacao } from "../utils/filtrosDeConsulta.js";
+import { calcularNacionalidade } from "../config/demonimos.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -71,7 +72,8 @@ const normalizeClientData = (data) => {
     sexo: data.sexo,
     estadoCivil: data.estadoCivil,
     profissao: data.profissao,
-    nacionalidade: data.nacionalidade,
+    paisOrigem: data.paisOrigem,
+    nacionalidade: calcularNacionalidade(data.paisOrigem, data.sexo),
     razaoSocial: data.razaoSocial,
     nomeFantasia: data.nomeFantasia,
     cnpj: onlyNumbers(data.cnpj),
@@ -229,10 +231,25 @@ const getAllClients = async (usuarioId, { page = 1, limit = 20, busca, situacao 
   // DEC-052: `ativo: true` deixou de ser fixo. Sem `situacao`, nada muda —
   // o padrão do helper é exatamente o filtro de antes.
   const filter = { usuarioId, ...filtroSituacao(situacao) };
-  // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
   const regex = regexTermoSimples(busca);
   if (regex) {
-    filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
+    filter.$or = [
+      { nomeCompleto: regex },
+      { razaoSocial: regex },
+      { nomeFantasia: regex },
+      { email: regex },
+      { telefone: regex },
+      { cpf: regex },
+      { cnpj: regex },
+      { rg: regex },
+      { profissao: regex },
+      { nacionalidade: regex },
+      { observacoes: regex },
+      { "endereco.logradouro": regex },
+      { "endereco.bairro": regex },
+      { "endereco.cidade": regex },
+      { "endereco.estado": regex }
+    ];
   }
   const [data, total] = await Promise.all([
     // `-historicoAtivacao` pelo mesmo motivo do processo: append-only, cresce,
@@ -294,7 +311,7 @@ const updateClient = async (usuarioId, clientId, data) => {
     sexo: pick("sexo"),
     estadoCivil: pick("estadoCivil"),
     profissao: pick("profissao"),
-    nacionalidade: pick("nacionalidade"),
+    paisOrigem: pick("paisOrigem"),
     razaoSocial: pick("razaoSocial"),
     nomeFantasia: pick("nomeFantasia"),
     cnpj: pick("cnpj"),
@@ -314,6 +331,7 @@ const updateClient = async (usuarioId, clientId, data) => {
   client.sexo = nextData.sexo;
   client.estadoCivil = nextData.estadoCivil;
   client.profissao = nextData.profissao;
+  client.paisOrigem = nextData.paisOrigem;
   client.nacionalidade = nextData.nacionalidade;
   client.razaoSocial = nextData.razaoSocial;
   client.nomeFantasia = nextData.nomeFantasia;

@@ -72,6 +72,12 @@ const clientSchema = new mongoose.Schema(
       trim: true,
       maxlength: 60
     },
+
+    paisOrigem: {
+      type: String,
+      trim: true
+    },
+    
     nacionalidade: {
       type: String,
       trim: true,

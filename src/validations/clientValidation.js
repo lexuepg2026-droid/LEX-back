@@ -217,6 +217,10 @@ const validateCreateClientPayload = (data) => {
       return "CPF inválido";
     }
 
+    if (!data.paisOrigem || !String(data.paisOrigem).trim()) {
+      return "País de origem é obrigatório para pessoa física";
+    }
+
     const comunsError = validateCamposComuns(data);
     if (comunsError) {
       return comunsError;
