@@ -13,6 +13,8 @@
     "seed:demo": "NODE_ENV=development node scripts/seedDemo.js",
     "seed:fresh": "npm run reset:dev && npm run seed:demo",
     "seed:demo:clean": "NODE_ENV=development node scripts/seedDemo.js --clean",
+    "seed:demo:volume": "NODE_ENV=development node scripts/seedDemo.js --volume",
+    "seed:fresh:volume": "npm run reset:dev && npm run seed:demo:volume",
     "reset:dev": "NODE_ENV=development node scripts/resetDev.js",
     "auditar:orfaos": "node scripts/auditarOrfaos.js",
     "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/",

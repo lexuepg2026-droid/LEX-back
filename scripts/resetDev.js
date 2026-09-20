@@ -49,6 +49,11 @@ const COLLECTIONS = [
   // confirmação não some por desativação de vínculo, processo ou cliente
   // continua valendo em toda a API; ver `models/ConfirmacaoVisualizacao.js`.
   'confirmacoes_visualizacao',
+  // Faltavam aqui: `seed:fresh` deixava a agenda (F-3) e as chaves de
+  // idempotência (F-5b) de um seed anterior de pé, apontando para processos que
+  // o reset acabara de derrubar.
+  'events',
+  'idempotency_keys',
 ];
 
 async function main() {
@@ -59,7 +64,7 @@ async function main() {
   // Banco local passa direto. Remoto interrompe e exige o nome digitado.
   await exigirConfirmacaoDeBanco({
     uri: process.env.MONGO_URI,
-    acao: 'reset do banco de desenvolvimento (derruba 13 coleções)'
+    acao: `reset do banco de desenvolvimento (derruba ${COLLECTIONS.length} coleções)`
   });
 
   // Conexão direta (sem connectDB) para não disparar syncIndexes sobre dados
