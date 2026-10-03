@@ -112,48 +112,76 @@ tabela.
 
 No painel do Atlas → **Network Access** → confirme que seu IP (ou `0.0.0.0/0` para o ambiente de dev da equipe) está liberado. Sem isso, o backend não conecta e encerra na inicialização.
 
-### 3.4. Popular a conta de teste (seed)
+### 3.4. Popular a conta de demonstração (seed da 3ª banca)
+
+> ⚠️ **O `.env` local aponta para o banco de PRODUÇÃO (`lex_prod`).** Todo seed
+> abaixo escolhe o banco por `LEX_BANCO=<nome>` na linha de comando — sem
+> editar o `.env` — e confere o nome real do banco conectado contra `--banco`.
 
 ```bash
-npm run seed:demo
+LEX_BANCO=lex_test npm run seed:banca3 -- --banco lex_test --confirmar-reset
 ```
 
-Isso cria o usuário de teste e a massa de dados (clientes, processos, honorários, parcelas, pagamentos):
+O seed **apaga as 16 coleções** do banco alvo (`deleteMany`, coleção por
+coleção; nada de `dropDatabase`, nenhum índice é apagado) e recria o cenário da
+demonstração **pela API da aplicação**, rodando no mesmo processo — cada
+registro passa por rota, validação e service, como um clique na tela. É
+idempotente: rodar duas vezes deixa o mesmo cenário. Recusa rodar sem
+`--confirmar-reset` ou se o banco conectado não for o de `--banco`.
 
-- **E-mail:** `demo@lex.dev`
-- **Senha:** `Lex123456`
+As datas são relativas a **05/10/2026** (o dia da banca) e calculadas quando o
+seed roda; `--hoje AAAA-MM-DD` troca a âncora. O seed recusa rodar se alguma
+parcela vencer entre hoje e a âncora (o status "vencido" é gravado, não lido na
+hora). Cenário, roteiro e riscos: `RELATORIO-SEED-BANCA3.md` (DEC-065).
 
-#### Portal do cliente (Fase 3.1)
+**Advogada:**
 
-O login do portal é **código de acesso + senha**, e não e-mail. O código sai por
-vínculo processo-cliente, em `GET /api/processes/:id/clientes/:clienteId/codigo-acesso`
-— o seed imprime todos no resumo final, no formato `LEX-XXXX-XXXX`.
+- **E-mail:** `lexuepg2026@gmail.com`
+- **Senha:** `LexBanca2026`
 
-O seed deixa os **três estados** que a interface precisa desenhar:
+A conta nasce com o e-mail **não confirmado** (DEC-064), para o aviso aparecer.
+O seed não envia e-mail nenhum.
 
-| Cliente | Senha | Estado |
-|---|---|---|
-| Ana Lima Santos | `Portal2026` | **provisória** — o portal só oferece a tela de troca |
-| Maria Aparecida Costa | `MinhaSenha2026` | já trocada pelo cliente — portal liberado |
-| Joao Paulo Oliveira | `MinhaSenha2026` | já trocada pelo cliente — portal liberado |
-| os outros 5 | — | **sem senha**: não acessam o portal, e isso é estado válido |
+**Portal do cliente** (Mariana Kloster Ribeiro — `lexuepg2026+portal@gmail.com`):
 
-No processo **"Inventario e Partilha de Bens"** (litisconsórcio) os dois
-herdeiros têm acesso e a procuração de cada um está liberada no portal. Maria
-**confirmou duas vezes** (uma já vista pela advogada, outra não — é a que o
-contador do dashboard mostra); Joao **acessou e não confirmou**.
+- **Código de acesso:** `LEX-2026-BANC`
+- **Senha:** `LexBanca2026`
 
-> A senha provisória serve para a primeira entrada e nada mais. Enquanto ela
-> valer, a advogada ainda conhece a senha, e por isso a **confirmação de
-> visualização é recusada** — ela só vale como recibo depois que o cliente
-> definir uma senha que só ele conhece.
+O login do portal é **código de acesso + senha**, e não e-mail (DEC-029). A
+senha já é a **própria** do cliente: o seed fez a troca obrigatória do primeiro
+acesso pela rota do portal, então a tela de troca não aparece. O limite é de
+**5 tentativas de login no portal por IP a cada 15 minutos**.
 
-O seed é protegido: se a conta demo já existir, ele recusa rodar. Para recriar do zero:
+Os outros dois comandos do seed da banca:
 
 ```bash
-npm run seed:demo:clean   # remove a conta demo e todos os dados dela
-npm run seed:demo         # cria de novo
+# Percorre o fluxo pela API (ESCREVE no banco: rode o seed de novo depois)
+LEX_BANCO=lex_test npm run smoke:banca3 -- --banco lex_test
+
+# Só leitura: contagem e assinatura do conteúdo de cada coleção; com --url,
+# um login da advogada na API publicada; com --portal, um login no portal
+LEX_BANCO=lex_prod npm run conferir:banca3 -- --banco lex_prod --url https://lex-uepg-app.onrender.com --portal
 ```
+
+#### Seeds antigos — legado, não usar na banca
+
+`seed:demo`, `seed:demo:volume`, `seed:fresh` e `seed:fresh:volume` continuam
+no repositório e **ainda rodam** sobre o schema atual (conferido num MongoDB
+local em 03/10/2026), mas estão **obsoletos para a demonstração**:
+
+- leem o banco da `MONGO_URI` do `.env` — hoje, **produção** —, sem como
+  escolher outro sem editar o `.env`;
+- `reset:dev` (dentro de `seed:fresh`) usa `dropCollection`, que **apaga os
+  índices** junto;
+- o seed curado cria advogada, clientes, seções, modelos e confirmações por
+  `Model.create`, sem passar pela validação; grava telefone e CEP **com
+  máscara** (a tela grava só dígitos); cria 8 documentos de **upload** com URLs
+  fictícias (`demo.lex.dev`), que a interface não usa (decisão 16);
+- os 10 números de processo do seed curado têm o **dígito verificador CNJ
+  inválido**.
+
+A conta deles era `demo@lex.dev` / `Lex123456`, com as senhas de portal
+`Portal2026` (provisória) e `MinhaSenha2026` (própria).
 
 ### 3.5. Subir o backend
 
@@ -171,14 +199,17 @@ API em `http://localhost:3001`. Ao subir com sucesso o console mostra `MongoDB c
 |--------|-----------|
 | `npm run dev` | Sobe a API com `nodemon` (reload automático), porta 3001. |
 | `npm start` | Sobe a API com `node` puro (sem reload) — uso mais próximo de produção. |
-| `npm run seed:fresh` | **Atalho recomendado.** Derruba a base e recria tudo do zero (`reset:dev` + `seed:demo`). |
-| `npm run seed:demo` | Cria a conta demo e a massa de dados de teste. Recusa rodar se a demo já existir. |
+| `npm run seed:banca3` | **O seed da demonstração (DEC-065).** Limpa as 16 coleções do banco de `LEX_BANCO` e recria o cenário da 3ª banca pela API. Exige `--banco <nome>` igual ao banco conectado e `--confirmar-reset`. Ver 3.4. |
+| `npm run smoke:banca3` | Percorre o fluxo da banca pela API sobre o cenário (8 passos). Escreve; recusa `lex_prod`. |
+| `npm run conferir:banca3` | Só leitura: contagem e assinatura de cada coleção; `--url` e `--portal` fazem um login na API publicada. |
+| `npm run seed:fresh` | *Legado (ver 3.4).* Derruba a base e recria tudo do zero (`reset:dev` + `seed:demo`). |
+| `npm run seed:demo` | *Legado (ver 3.4).* Cria a conta demo e a massa de dados de teste. Recusa rodar se a demo já existir. |
 | `npm run seed:demo:clean` | Remove a conta demo e todos os dados dela. |
-| `npm run seed:demo:volume` | Como `seed:demo`, e depois gera o **volume realista** (~260 clientes, ~300 processos, ~370 honorários, ~1.000 parcelas, ~600 pagamentos, ~130 eventos, ~100 documentos) pelos serviços reais. Determinístico (semente fixa). Exige as tabelas de domínio do frontend (`../lex-frontend/public/tabelas`, ou `LEX_TABELAS_DIR`). Contra banco remoto pede confirmação do nome do banco. Para recriar só a conta demo: `npm run seed:demo:clean && npm run seed:demo:volume`. |
+| `npm run seed:demo:volume` | *Legado (ver 3.4).* Como `seed:demo`, e depois gera o **volume realista** (~260 clientes, ~300 processos, ~370 honorários, ~1.000 parcelas, ~600 pagamentos, ~130 eventos, ~100 documentos) pelos serviços reais. Determinístico (semente fixa). Exige as tabelas de domínio do frontend (`../lex-frontend/public/tabelas`, ou `LEX_TABELAS_DIR`). Contra banco remoto pede confirmação do nome do banco. Para recriar só a conta demo: `npm run seed:demo:clean && npm run seed:demo:volume`. |
 | `npm run seed:fresh:volume` | `reset:dev` + `seed:demo:volume`. **Apaga o banco inteiro**, inclusive contas de outras pessoas. |
 | `npm run reset:dev` | Derruba as coleções de desenvolvimento (`users`, `clients`, `processes`, `fees`, `installments`, `payments`, `documents`). Abortado se `NODE_ENV=production`. Use quando a base local tiver dados antigos/incompatíveis com o schema atual. |
 
-> Fluxo para recriar a base do zero: `npm run seed:fresh` (equivale a `npm run reset:dev && npm run seed:demo`).
+> Fluxo para recriar a base do zero: `LEX_BANCO=<banco> npm run seed:banca3 -- --banco <banco> --confirmar-reset`.
 
 ### 3.7. Rodar a suíte de testes (`.env.test`)
 
@@ -235,8 +266,8 @@ App em `http://localhost:5173`. Requer o backend deste repositório já rodando 
 
 1. Abra `http://localhost:5173`.
 2. Faça login com:
-   - **E-mail:** `demo@lex.dev`
-   - **Senha:** `Lex123456`
+   - **E-mail:** `lexuepg2026@gmail.com`
+   - **Senha:** `LexBanca2026`
 3. O sistema redireciona para o dashboard com os dados populados.
 
 ---
@@ -323,7 +354,7 @@ git clone https://github.com/lexuepg2026-droid/LEX-back.git
 cd LEX-back
 npm install
 cp .env.example .env      # depois preencha MONGO_URI e JWT_SECRET
-npm run seed:demo
+LEX_BANCO=lex_test npm run seed:banca3 -- --banco lex_test --confirmar-reset
 npm run dev               # porta 3001 (dev, com reload); ou "npm start" sem reload
 
 # Frontend (outro repositório, outro terminal/pasta)
@@ -332,7 +363,7 @@ cd LEX-front
 npm install
 npm run dev               # porta 5173
 
-# Login: demo@lex.dev / Lex123456
+# Login: lexuepg2026@gmail.com / LexBanca2026  ·  portal: LEX-2026-BANC / LexBanca2026
 ```
 
 ---

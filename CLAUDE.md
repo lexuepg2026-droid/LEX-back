@@ -1687,12 +1687,15 @@ código.**
 ```bash
 npm run dev            # nodemon src/server.js — porta 3001
 npm start              # node src/server.js
-npm run seed:fresh     # reset + seed (derruba e repovoa)  ← o usual
-npm run seed:demo      # só popula
-npm run reset:dev      # só derruba (bloqueado em produção)
+LEX_BANCO=lex_test npm run seed:banca3 -- --banco lex_test --confirmar-reset   # ← o usual (DEC-065)
+npm run seed:fresh     # LEGADO: reset + seed:demo no banco do .env (hoje, lex_prod)
+npm run seed:demo      # LEGADO: só popula
+npm run reset:dev      # LEGADO: só derruba (dropCollection — apaga índices)
 ```
 
-Conta do seed: **demo@lex.dev** / **Lex123456**
+Conta do seed da banca: **lexuepg2026@gmail.com** / **LexBanca2026**; portal
+**LEX-2026-BANC** / **LexBanca2026**. A conta do seed legado era
+`demo@lex.dev` / `Lex123456`.
 
 Portal do cliente (Fase 3.1): senha **provisória** `Portal2026` (Ana Lima) e
 senha **própria** `MinhaSenha2026` (Maria e Joao, do litisconsórcio). O código
@@ -6172,6 +6175,78 @@ coleção nova.**
 Recuperação de senha do CLIENTE no portal (continua sendo a advogada quem
 redefine), checagem SMTP de que o endereço existe (o link de confirmação já cobre
 o caso real) e qualquer mudança no portal.
+
+---
+
+## DEC-065 — o seed da 3ª banca: o cenário entra PELA API, e o banco é escolhido duas vezes
+
+**O pedido (03/10/2026):** levar `lex_prod` e `lex_test` à banca de 05/10/2026
+com o mesmo cenário completo, já populado — nada é criado ao vivo.
+
+**`scripts/banca3/`**, três comandos:
+
+| Comando | O que faz | Escreve? |
+|---|---|---|
+| `seed:banca3` | limpa as 16 coleções e recria o cenário | sim |
+| `smoke:banca3` | percorre o fluxo da banca em 8 passos | sim — recusa `lex_prod` e `lex` |
+| `conferir:banca3` | contagem + assinatura do conteúdo; `--url`/`--portal` fazem 1 login no ar | não |
+
+### O banco é escolhido duas vezes, e as duas precisam concordar
+
+`LEX_BANCO=<nome>` na linha de comando **sobrescreve** o nome do banco da
+`MONGO_URI` (por `dbName`), sem editar o `.env`. `--banco <nome>` é
+**obrigatório** e é conferido contra o nome **real** do banco depois de
+conectar. Quem esquece a variável e digita `--banco lex_test` é recusado,
+porque a conexão caiu no banco do `.env` — **que hoje é `lex_prod`**. O seed
+exige ainda `--confirmar-reset`.
+
+### A limpeza é `deleteMany`, coleção por coleção
+
+Nunca `dropDatabase` nem `dropCollection`: os dois levam os índices junto. O
+`deleteMany` deixa coleção e índices de pé, e o `init()` dos models garante os
+do schema sem derrubar nenhum (`syncIndexes`, que derruba índice fora do
+schema, **não** é chamado).
+
+### Pela API, e não pelos services soltos
+
+O seed sobe o `app` do Express **no próprio processo**, numa porta efêmera, e
+fala HTTP com ele. Cada registro atravessa rota → controller → validação →
+service. Chamar os services direto pularia a validação que mora nos
+controllers (reparcelamento, modelo, troca de senha do portal) — e o pedido era
+"dados iguais aos criados pela interface". Telefone e CEP vão só com dígitos,
+como a tela os envia.
+
+**Duas escritas diretas, e só duas**, ambas declaradas no cabeçalho do script:
+
+1. o **código de acesso** do vínculo do portal é fixado em `LEX-2026-BANC` —
+   ele nasce sorteado, e a credencial precisa ser fixa (README) e igual nos dois
+   bancos;
+2. o **`createdAt` dos honorários** é retrodatado ao mês do contrato, para o
+   gráfico "Honorários por mês" ter seis meses (o seed antigo fazia o mesmo).
+
+### A conta nasce NÃO confirmada, e o seed não manda e-mail
+
+A DEC-064 diz que nenhuma conta é marcada confirmada por script ("confirmar sem
+prova seria o oposto do que o campo diz"). O seed respeita: o cadastro é o
+`POST /auth/register` normal, e o transporte de e-mail é trocado
+(`definirTransporteDeEmail`) por um que só conta — o link não é impresso,
+porque ele confirmaria a conta.
+
+### As datas são da âncora, e o status "vencido" é o risco
+
+Tudo é relativo a 05/10/2026 (`--hoje` troca). Eventos são classificados na
+leitura e caem certo no dia; **parcela não**: `definirStatusInstallment` grava
+"vencido" no recálculo, e nada recalcula na leitura. Uma parcela que vencesse
+entre o dia do seed e a âncora ficaria "pendente" no dia da banca. O seed
+**recusa rodar** se isso acontecer.
+
+### O portal é código + senha, não e-mail
+
+O pedido falava em "cliente do portal: e-mail + senha". O portal (DEC-029 ponto
+1) entra por **código de acesso**; o e-mail `lexuepg2026+portal@gmail.com` é o
+cadastro da cliente. O `+` é aceito pela validação (DEC-063, de propósito) e não
+há regra de unicidade de e-mail ENTRE advogada e cliente: `users.email` é único
+global, `clients.email` é único por advogada — coleções diferentes.
 
 ---
 
