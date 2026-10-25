@@ -215,6 +215,10 @@ export const getFinanceiroResumo = async (usuarioId) => {
   const honorarioPorId = new Map(honorarios.map((f) => [String(f._id), f]));
 
   // ── 3. Parcelas desses honorários ─────────────────────────────────────────
+  // TODAS, inclusive as canceladas por reparcelamento: o `valorPago` delas é
+  // dinheiro recebido (DEC-037) e entra em `recebido` e no pago por honorário
+  // que sustenta `pendente`, como na ficha. Quem as tira é o recorte de
+  // VENCIMENTO, mais abaixo (DEC-068).
   const parcelas = await Installment.find({
     usuarioId: uid,
     ativo: true,
@@ -344,12 +348,23 @@ export const getFinanceiroResumo = async (usuarioId) => {
     )
   );
 
-  const noMes = linhas.filter(
+  // ── A parcela CANCELADA não é vencimento (Fase 0, DEC-068) ───────────────
+  // O filtro do honorário cancelado (passo 2) não a alcança: a parcela
+  // cancelada por REPARCELAMENTO pertence a um honorário VIGENTE. Ela entrava
+  // em `proximosVencimentos` e em `aReceberNoMes` com o valor cheio — o Início
+  // listava como próxima uma cobrança que a advogada substituiu.
+  //
+  // O recorte é AQUI, e não na consulta: na consulta ele tiraria também o
+  // `valorPago` da parcela PARCIAL reparcelada, e `recebido`/`pendente`
+  // deixariam de fechar com a ficha (há teste para os dois lados).
+  const aVencer = linhas.filter((l) => l.status !== "cancelado");
+
+  const noMes = aVencer.filter(
     (l) => l.dataVencimento >= inicioDoMes && l.dataVencimento <= fimDoMes
   );
   const vencidasLinhas = linhas.filter((l) => l.status === "vencido");
 
-  const proximosVencimentos = linhas
+  const proximosVencimentos = aVencer
     .filter((l) => l.emAberto > 0 && l.dataVencimento >= hoje)
     .sort((a, b) => a.dataVencimento - b.dataVencimento || a.numeroParcela - b.numeroParcela)
     .slice(0, PROXIMOS_VENCIMENTOS);

@@ -374,10 +374,10 @@ não cumprida e exibiu com rótulos honestos.
 | `pendente` | number | `valorContratado − recebido` |
 | `vencidas` | number | **contagem** de parcelas com status `vencido` |
 | `mesReferencia` | string | `"2026-08"` — mês do **servidor**, em UTC |
-| `aReceberNoMes` | number | Σ `emAberto` das parcelas que vencem no mês corrente |
+| `aReceberNoMes` | number | Σ `emAberto` das parcelas **não canceladas** que vencem no mês corrente (DEC-068) |
 | `recebidoNoMes` | number | Σ `Payment.valorPago` com `dataPagamento` no mês |
 | `valorVencido` | number | Σ `emAberto` das parcelas com status `vencido` |
-| `proximosVencimentos` | array | ≤ 5 parcelas não quitadas, `dataVencimento` ≥ hoje |
+| `proximosVencimentos` | array | ≤ 5 parcelas não quitadas e **não canceladas**, `dataVencimento` ≥ hoje (DEC-068) |
 
 Cada item de `proximosVencimentos`: `{ _id, descricaoHonorario, numeroParcela,
 valor, valorPago, emAberto, dataVencimento, status, processoId,
@@ -6247,6 +6247,58 @@ O pedido falava em "cliente do portal: e-mail + senha". O portal (DEC-029 ponto
 cadastro da cliente. O `+` é aceito pela validação (DEC-063, de propósito) e não
 há regra de unicidade de e-mail ENTRE advogada e cliente: `users.email` é único
 global, `clients.email` é único por advogada — coleções diferentes.
+
+---
+
+## DEC-068 — parcela cancelada não é vencimento (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** Uma parcela cancelada por
+**reparcelamento** aparecia em "Próximos vencimentos" no Início, e o cartão
+"A receber em {mês}" a somava com o valor cheio.
+
+**Por que o filtro existente não a pegava.** O resumo já excluía honorário
+`cancelado` (Fase 4.3) — mas a parcela cancelada pelo reparcelamento (DEC-037)
+pertence a um honorário **vigente**. `proximosVencimentos` só exigia
+`emAberto > 0` e vencimento futuro, e uma parcela cancelada antes de receber tem
+`emAberto` igual ao valor inteiro.
+
+### O recorte é nos derivados de VENCIMENTO, e NÃO na consulta
+
+O pedido da fase era excluir a cancelada **da consulta** de parcelas. A primeira
+versão fez isso, e o teste escrito em seguida mostrou o preço:
+
+| Caso: parcela de 4.000, pagamento parcial de 1.000, reparcelada | Filtro na consulta | Filtro nos derivados |
+|---|---|---|
+| `recebido` | **0** | 1.000 |
+| `pendente` | **4.000** | 3.000 |
+| resumo = ficha? | **não** | sim |
+
+A parcela parcial reparcelada **guarda** o dinheiro recebido — ele não volta, e
+o saldo renegociado já o descontou (DEC-037). A ficha o conta (emenda de 17/08
+à DEC-028), e `recebido` e o pago-por-honorário que sustenta `pendente` saem do
+`valorPago` das parcelas carregadas por aquela consulta. Tirá-la da consulta
+apagava dinheiro do resumo e quebrava a igualdade com as fichas, que é o que a
+Fase 4.3 existiu para garantir.
+
+Por isso a consulta continua trazendo **todas** as parcelas, e um único array
+`aVencer = linhas.filter(status !== "cancelado")` alimenta os dois derivados de
+vencimento:
+
+| Campo | Efeito da DEC-068 |
+|---|---|
+| `proximosVencimentos`, `aReceberNoMes` | a cancelada **sai** |
+| `vencidas`, `valorVencido` | nenhum — já filtram `status === "vencido"` |
+| `recebido`, `pendente` | nenhum — continuam somando o `valorPago` das canceladas |
+
+**Testes:** `tests/financial/resumo.test.js`, dois blocos com usuário próprio,
+os dois produzindo a cancelada pelo reparcelamento real (e conferindo que ela
+está mesmo `cancelado` antes de afirmar qualquer coisa):
+
+- *parcela cancelada por reparcelamento* — sem pagamento; ela não aparece em
+  nenhum dos dois derivados;
+- *parcela PARCIAL reparcelada* — `recebido` 1.000, `pendente` 3.000, e o resumo
+  fechando com a ficha. É o bloco que falha se alguém "simplificar" o recorte de
+  volta para a consulta.
 
 ---
 
