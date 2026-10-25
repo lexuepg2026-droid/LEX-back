@@ -28,10 +28,19 @@ import mongoose from "mongoose";
 // segredo esqueceria dela.
 const SEGREDOS = ["senhaHash", "senhaPortalHash"];
 
+// Fase 2.5 (DEC-089): o código PESSOAL do portal é metade da credencial do
+// cliente, e segue a regra que o código de vínculo sempre teve — não sai em
+// leitura ampla (listagem, detalhe, populate de participante). Sai só pelas
+// duas rotas dedicadas, que o montam campo a campo sem passar por aqui:
+// `GET /processes/:id/clientes/:clienteId/codigo-acesso` e
+// `GET /clients/:id/acesso-portal`.
+const CREDENCIAIS_SO_EM_ROTA_DEDICADA = ["codigoAcessoPessoal"];
+
 mongoose.set("toJSON", {
   transform: (_doc, ret) => {
     delete ret.__v;
     for (const campo of SEGREDOS) delete ret[campo];
+    for (const campo of CREDENCIAIS_SO_EM_ROTA_DEDICADA) delete ret[campo];
     return ret;
   }
 });

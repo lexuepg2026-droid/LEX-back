@@ -8,21 +8,24 @@
 // códigos de acesso válidos. Compartilhar código faria as duas regras
 // derivarem uma para a outra na primeira refatoração.
 //
-// ── O fluxo ───────────────────────────────────────────────────────────────
-//   código de acesso → vínculo (ProcessoCliente) → cliente → senha
+// ── O fluxo, desde a Fase 2.5 (DEC-089) ──────────────────────────────────
+//   código PESSOAL → cliente → senha
 //
-// A sessão é escopada ao VÍNCULO, não ao cliente (DEC-029 ponto 6). Um cliente
-// com três processos tem três códigos e uma senha; cada código abre uma sessão
-// que enxerga um processo. Sem isso, entrar com o código do processo A daria
-// acesso ao processo B, e o código deixaria de significar alguma coisa.
+// Até a 2.5 era código do VÍNCULO → vínculo → cliente → senha, e a sessão
+// enxergava um processo (DEC-029 ponto 6). A 3ª banca apontou o custo (itens
+// 14 e 15): um login por processo. Agora a sessão é da PESSOA, e QUAIS
+// processos ela vê é `ProcessoCliente.liberadoNoPortal`, conferido a cada
+// requisição pelo middleware (`exigirVinculoLiberado`) — não no login, e não
+// guardado no token. Desliberar no meio da sessão vale na próxima requisição.
+//
+// **Sem transição (DEC-090):** o código de vínculo antigo não autentica. Ele
+// nem é consultado aqui — recebe o mesmo 401 de qualquer código inexistente.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
-import ProcessoCliente from "../models/ProcessoCliente.js";
 import Client from "../models/Client.js";
-import Process from "../models/Process.js";
 import { isCodigoAcessoValido } from "../utils/accessCode.js";
 import { ERRO_PORTAL, MENSAGEM_CREDENCIAIS_INVALIDAS } from "../config/portalErrors.js";
 import { validateSenhaPortal } from "../validations/clientValidation.js";
@@ -49,9 +52,11 @@ export const TIPO_TOKEN_PORTAL = "portal";
 // CONTINUA 401 sob a DEC-050: é o LOGIN do portal, e ali não há sessão — é o
 // pedido para criar uma. O interceptor do portal já não reage a ele (a rota
 // está fora da reação por não trazer `sessaoPortalInvalida`).
-// UMA função, um ponto único. Código inexistente, vínculo inativo, cliente sem
-// senha, senha errada, cliente inativo e processo inativo devolvem o MESMO
-// corpo e o MESMO status.
+// UMA função, um ponto único. Código inexistente (inclusive o código de
+// vínculo antigo, DEC-090), cliente sem senha, senha errada e cliente inativo
+// devolvem o MESMO corpo e o MESMO status. "Vínculo inativo" e "processo
+// inativo" saíram da lista na 2.5: o login não olha processo nenhum — entrar
+// sem nenhum processo liberado é estado válido, e a lista vem vazia.
 //
 // Não é preciosismo: o código de acesso tem formato conhecido e alfabeto de 32
 // símbolos. Distinguir "esse código não existe" de "senha errada" transforma o
@@ -97,14 +102,19 @@ const compararSenha = async (senha, hash) => {
 export const carimboDaSenha = (cliente) =>
   cliente?.senhaPortalDefinidaEm ? new Date(cliente.senhaPortalDefinidaEm).toISOString() : null;
 
-export const assinarTokenPortal = (vinculo, cliente) =>
+// `escopo: "pessoa"` (Fase 2.5): o token da sessão por vínculo, emitido antes
+// da 2.5, tinha `processoClienteId` e nenhum escopo. O middleware exige o
+// escopo novo, e o token antigo cai como sessão inválida — volta ao login,
+// sem transição (DEC-090). Ele expiraria em 2 h de qualquer forma.
+export const ESCOPO_SESSAO_PORTAL = "pessoa";
+
+export const assinarTokenPortal = (cliente) =>
   jwt.sign(
     {
       tipo: TIPO_TOKEN_PORTAL,
-      processoClienteId: String(vinculo._id),
-      clienteId: String(vinculo.clienteId),
-      processoId: String(vinculo.processoId),
-      usuarioId: String(vinculo.usuarioId),
+      escopo: ESCOPO_SESSAO_PORTAL,
+      clienteId: String(cliente._id),
+      usuarioId: String(cliente.usuarioId),
       senhaCarimbo: carimboDaSenha(cliente)
     },
     process.env.JWT_PORTAL_SECRET,
@@ -122,33 +132,24 @@ export const login = async ({ codigoAcesso, senha }) => {
 
   const codigo = String(codigoAcesso).trim().toUpperCase();
 
-  // Sem filtro de `ativo` na busca: o vínculo inativo PRECISA ser encontrado
-  // para que o código continue reservado globalmente (Fase 2B) e para que a
-  // resposta seja a mesma de um código inexistente. Filtrar aqui devolveria
-  // "não achei" mais rápido para vínculo desativado.
-  const vinculo = await ProcessoCliente.findOne({ codigoAcesso: codigo });
-
-  if (!vinculo) {
-    await compararSenha(senha, null);
-    throw credenciaisInvalidas();
-  }
-
-  // O hash só vem por pedido explícito: `select: false` no schema.
-  const cliente = await Client.findById(vinculo.clienteId).select("+senhaPortalHash");
-  const processo = await Process.findById(vinculo.processoId);
+  // Só o código PESSOAL (DEC-089). O de vínculo não é consultado: digitá-lo
+  // cai em "não achei", com o mesmo corpo e o mesmo tempo (DEC-090).
+  //
+  // Sem filtro de `ativo` na busca, pela mesma razão de antes: o cliente
+  // inativo precisa ser encontrado para gastar o mesmo bcrypt e responder o
+  // mesmo 401 de um código inexistente. O hash só vem por pedido explícito
+  // (`select: false` no schema).
+  const cliente = await Client.findOne({ codigoAcessoPessoal: codigo }).select("+senhaPortalHash");
 
   const podeEntrar =
-    vinculo.ativo === true &&
     Boolean(cliente) &&
     cliente.ativo === true &&
-    Boolean(processo) &&
-    processo.ativo === true &&
     typeof cliente.senhaPortalHash === "string" &&
     cliente.senhaPortalHash.length > 0;
 
   // A comparação de senha roda SEMPRE, mesmo quando já se sabe que o acesso
   // será negado. É o que mantém o tempo de resposta indistinguível entre os
-  // seis casos.
+  // casos.
   const senhaConfere = await compararSenha(senha, podeEntrar ? cliente.senhaPortalHash : null);
 
   if (!podeEntrar || !senhaConfere) {
@@ -156,11 +157,9 @@ export const login = async ({ codigoAcesso, senha }) => {
   }
 
   return {
-    token: assinarTokenPortal(vinculo, cliente),
+    token: assinarTokenPortal(cliente),
     senhaPortalProvisoria: cliente.senhaPortalProvisoria === true,
-    clienteId: cliente._id,
-    processoId: processo._id,
-    processoClienteId: vinculo._id
+    clienteId: cliente._id
   };
 };
 
@@ -248,16 +247,8 @@ export const trocarSenha = async ({ clienteId, senhaAtual, novaSenha }) => {
 
 // Reemissão da sessão depois da troca. O token anterior foi emitido num estado
 // em que a advogada conhecia a senha; mantê-lo válido deixaria essa janela
-// aberta pelo resto das 2 horas.
-export const reemitirSessao = async (processoClienteId, cliente) => {
-  const vinculo = await ProcessoCliente.findById(processoClienteId);
-  if (!vinculo) {
-    const error = new Error("Sessão inválida.");
-    error.statusCode = 401;
-    error.codigo = ERRO_PORTAL.SESSAO_INVALIDA;
-    throw error;
-  }
-  return assinarTokenPortal(vinculo, cliente);
-};
+// aberta pelo resto das 2 horas. Desde a 2.5 a sessão é da pessoa: não há
+// vínculo a reler, só o cliente que acabou de trocar a senha.
+export const reemitirSessao = (cliente) => assinarTokenPortal(cliente);
 
 export default { login, trocarSenha, reemitirSessao, assinarTokenPortal };
