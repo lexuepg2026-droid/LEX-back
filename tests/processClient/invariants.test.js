@@ -386,12 +386,23 @@ describe("invariantes do vínculo processo-cliente", () => {
         { clienteId: b._id, papel: "litisconsorte", principal: false }
       ]);
 
+      // Fase 2.5: dois espaços de código no mesmo formato — o de VÍNCULO, que
+      // continua sendo gerado e reservado (DEC-090), e o PESSOAL, que a rota
+      // devolve quando o cliente tem senha de portal (DEC-093). Os dois saem
+      // do mesmo gerador e precisam passar pelas mesmas regras.
+      const { codigoDeVinculoDe } = await import("../helpers/portal.js");
+      const codigos = [];
       for (const cliente of [a, b]) {
-        const r = esperado(
+        codigos.push({ codigoAcesso: await codigoDeVinculoDe(processo._id, cliente._id) });
+        esperado(await api.patch(`/clients/${cliente._id}`, { senhaPortal: "Provisoria123" }), 200, "senha");
+        codigos.push(esperado(
           await api.get(`/processes/${processo._id}/clientes/${cliente._id}/codigo-acesso`),
           200,
           "código de acesso"
-        );
+        ));
+      }
+
+      for (const r of codigos) {
 
         assert.equal(r.codigoAcesso.length, TAMANHO_CODIGO, "13 = LEX + - + 4 + - + 4");
         assert.equal(r.codigoAcesso.length, 13);

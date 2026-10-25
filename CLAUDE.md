@@ -6416,6 +6416,154 @@ inválido, para telefone e para CEP.
 
 ---
 
+## Fase 2.5 — o portal por PESSOA (DEC-089 a DEC-095)
+
+> **Emenda à DEC-029.** Os pontos 1 (login = código + senha) e 6 (sessão
+> escopada ao VÍNCULO) mudam aqui; os outros dez continuam de pé. A tabela de
+> rotas `/api/portal` mais acima descreve a Fase 3.1 — a de agora está na
+> DEC-092. Apontamentos 14 e 15 da 3ª banca: o código deve ser da pessoa, e uma
+> senha deve abrir todos os processos liberados.
+
+### DEC-089 — o código de acesso é da PESSOA
+
+`Client.codigoAcessoPessoal` (String, 13 caracteres, **índice único global e
+`sparse`**). Mesmo formato e mesmo gerador do código de vínculo
+(`utils/accessCode.js`). É sorteado quando o cliente passa a ter senha de portal
+e ainda não tem código (`clientService.aplicarSenhaPortal`); redefinir a senha
+**mantém** o código, e revogar o acesso **não o apaga** (fica reservado e volta
+a valer com a próxima senha — sem senha não há login).
+
+**Não é o CPF/CNPJ:** o mesmo CPF pode ser cliente de duas advogadas (o `Client`
+é por `usuarioId`), e o CPF é dado conhecido de terceiros.
+
+**Unicidade nos DOIS espaços** (`services/codigoPessoal.js`). Índice não
+atravessa coleção; os dois geradores do sistema (`gerarCodigoPessoal` e
+`gerarCodigoParaVinculo`) consultam `codigoEmUso`, que olha
+`clients.codigoAcessoPessoal` **e** `processo_clientes.codigoAcesso`. Dentro de
+cada espaço a corrida é fechada pelo índice (o 11000 do código pessoal repete a
+geração em `salvarClienteComCodigo`). Entre os espaços, a janela de corrida é a
+de sortear duas vezes o mesmo em 32^8 no mesmo milissegundo — e seria
+inofensiva, porque o login só procura o código pessoal. Testado com o sorteio
+**forçado** a colidir nos dois sentidos (`tests/portal/isolamento.test.js`).
+
+**Não sai em leitura ampla.** `codigoAcessoPessoal` está no `toJSON` global
+(`config/mongooseDefaults.js`), como o código de vínculo sempre esteve fora das
+listagens. Sai só por `GET /processes/:id/clientes/:clienteId/codigo-acesso` e
+`GET /clients/:id/acesso-portal`, que o montam campo a campo.
+
+### DEC-090 — sem transição: o código de vínculo deixa de autenticar
+
+O login procura **só** `codigoAcessoPessoal`. Um código de vínculo digitado,
+mesmo com a senha certa, cai no mesmo 401 `credenciaisInvalidas`, com o mesmo
+bcrypt gasto. `ProcessoCliente.codigoAcesso` continua no schema, continua sendo
+gerado e continua no **índice único global** — por RESERVA: um papel antigo tem
+código de formato válido, e se ele fosse sorteado como código pessoal de outra
+pessoa, abriria a conta errada.
+
+O token da sessão por vínculo (sem `escopo`) também cai: o middleware exige
+`escopo: "pessoa"`, e o token antigo volta ao login.
+
+### DEC-091 — a liberação é por processo, e o vínculo novo nasce NÃO liberado
+
+`ProcessoCliente.liberadoNoPortal` (Boolean, obrigatório, **padrão `false`**).
+Login por pessoa; o que ela vê é decidido processo a processo pela advogada:
+`PATCH /api/processes/:id/clientes/:clienteId/liberacao { liberadoNoPortal }`
+(só vínculo ativo, isolado por `usuarioId`; o corpo aceita uma chave booleana, e
+o resto é 400 com `campo`).
+
+**Independe de `ativo`.** A cascata da DEC-052 não toca no campo: desativar
+tira o acesso pelo `ativo`; reativar devolve o vínculo como ele estava —
+liberado ou não. Há teste para "reativar não libera sozinho".
+
+Os vínculos que existiam antes da 2.5 foram migrados como liberados (DEC-094).
+
+### DEC-092 — sessão da pessoa; a liberação é conferida A CADA requisição
+
+**Token:** `{ tipo: "portal", escopo: "pessoa", clienteId, usuarioId,
+senhaCarimbo }`, sem processo, 2 h. **Login** (401 unificado): código
+inexistente, código de vínculo (ativo ou inativo), cliente sem senha, senha
+errada e cliente inativo — byte-idênticos. Vínculo e processo inativos saíram
+da lista: o login não olha processo; entrar sem nenhum liberado é estado válido
+(lista vazia).
+
+**Dois portões** em `middleware/portalAuthMiddleware.js`:
+`portalAuthMiddleware` (token, cliente ativo da mesma advogada, carimbo) e
+`exigirVinculoLiberado` em toda rota com `:processoId` (vínculo ativo **e**
+liberado, processo ativo, tudo pelo `usuarioId` do token). Desliberar no meio da
+sessão vale na requisição seguinte — a liberação **não** vai no token. "Não
+existe", "não é seu", "não liberado" e id malformado respondem o **mesmo** 404
+`{ "message": "Processo não encontrado" }`.
+
+| Verbo | Caminho | Nota |
+|---|---|---|
+| POST | `/login` | código PESSOAL + senha → `{ senhaPortalProvisoria, clienteId }` |
+| POST | `/logout` | — |
+| GET | `/sessao` | `{ senhaPortalProvisoria, cliente: { id, nome, tipoPessoa, senhaPortalProvisoria } }` |
+| PATCH | `/senha` | sem mudança; reemite a sessão da pessoa |
+| GET | `/confirmacoes/texto` | sem processo: é constante |
+| POST | `/processos/:processoId/confirmacoes` | antes do portão da senha provisória (403 próprio) |
+| GET | `/processos` | ⬇ daqui para baixo, 403 com senha provisória. Envelope; cada item: `id, titulo, numeroProcesso, status, fase, transitoEmJulgadoEm, meuPapel, documentosVisiveis, documentosNovos, confirmacaoPendente, ultimaConfirmacao` |
+| GET | `/processos/:processoId` | `{ processo, cliente, acesso }`, como o antigo `/processo` |
+| GET | `/processos/:processoId/documentos` | envelope |
+| GET | `/processos/:processoId/documentos/:id/download` | `?formato=pdf\|docx` |
+| GET | `/processos/:processoId/confirmacoes` | envelope; cada recibo traz `processo: { id, titulo, numeroProcesso }` |
+
+**Removidas:** `GET /processo`, `GET /documentos`, `GET /documentos/:id/download`,
+`GET /confirmacoes` e `POST /confirmacoes`.
+
+`documentosNovos` = documentos visíveis gerados depois da última confirmação
+daquele vínculo (todos, se nunca confirmou); `confirmacaoPendente` =
+`documentosNovos > 0`. A confirmação continua **por vínculo**
+(`ConfirmacaoVisualizacao`), e o acesso é registrado no vínculo do processo
+aberto — a lista não registra acesso.
+
+### DEC-093 — `codigo-acesso` continua, e devolve o código PESSOAL
+
+`GET /processes/:id/clientes/:clienteId/codigo-acesso` foi **mantida** — é a que
+quebra menos: a tela de entrega e a suíte já a usam, e a chave `codigoAcesso`
+continua a mesma. O que mudou é o valor (o código **pessoal**, `null` sem
+senha de portal) e os campos novos: `liberadoNoPortal`, `temSenhaPortal`,
+`senhaPortalProvisoria`. O código de VÍNCULO não sai mais por rota nenhuma: não
+abre nada, e mostrá-lo seria convidar a advogada a entregar um papel inútil.
+
+`GET /clients/:id/acesso-portal` (novo): `{ clienteId, codigoAcessoPessoal,
+temSenhaPortal, senhaPortalProvisoria, senhaPortalDefinidaEm,
+processosLiberados, processosAtivos, processos: [{ processoId, titulo,
+numeroProcesso, papel, principal, liberadoNoPortal, situacao, …acessos }] }` —
+objeto, sem envelope (é UM cliente). `situacao` é `ativo`, `vinculoDesativado`
+ou `processoDesativado`.
+
+`GET /processes/:id/clientes` ganhou `temAcessoPortal` (booleano; uma consulta
+para todos os participantes, o hash não sai).
+
+### DEC-094 — a migração e o seed
+
+`npm run migrar:portal-pessoal` (`scripts/migrarPortalPessoal.js`), com a
+guarda de banco da F-2b e `--dry-run`. Gera `codigoAcessoPessoal` para todo
+cliente com senha e sem código; marca `liberadoNoPortal: true` em vínculo
+**ativo** sem o campo e `false` em vínculo inativo sem o campo. Todo filtro de
+escrita exige o campo ausente: a segunda execução não muda nada
+(`tests/integrity/migracaoPortal.test.js` compara o banco inteiro). Imprime só
+contagens — nenhum código. Usa `createIndexes`, nunca `syncIndexes`.
+
+**Num banco migrado o código pessoal da Mariana é sorteado**, e não o
+`LEX-2026-BANC` do README (que era do vínculo). Ele aparece na tela da advogada,
+e `conferir:banca3 --portal` o lê pela API em vez de supô-lo.
+
+`seed:banca3` fixa o código **pessoal** da Mariana em `LEX-2026-BANC`, libera P1
+pela rota e a põe em P3 (litisconsorte) **sem** liberação — o caso da
+demonstração.
+
+### DEC-095 — as duas pendências da 2b
+
+- `GET /fees` popula `processoId.clientePrincipalId` com
+  `CAMPOS_CLIENTE_POPULADO`; o resto do retorno não mudou.
+- O botão dos e-mails transacionais sai do dourado `#b89d4b`/`#111` para
+  `#174034`/`#EDE3CF` (10,4:1). As demais cores dos modelos (`#222`, `#555`
+  sobre branco) são neutras e ficaram.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

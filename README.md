@@ -144,13 +144,25 @@ O seed não envia e-mail nenhum.
 
 **Portal do cliente** (Mariana Kloster Ribeiro — `lexuepg2026+portal@gmail.com`):
 
-- **Código de acesso:** `LEX-2026-BANC`
+- **Código de acesso (pessoal):** `LEX-2026-BANC`
 - **Senha:** `LexBanca2026`
 
-O login do portal é **código de acesso + senha**, e não e-mail (DEC-029). A
-senha já é a **própria** do cliente: o seed fez a troca obrigatória do primeiro
-acesso pela rota do portal, então a tela de troca não aparece. O limite é de
-**5 tentativas de login no portal por IP a cada 15 minutos**.
+O login do portal é **código de acesso + senha**, e não e-mail (DEC-029). Desde
+a Fase 2.5 o código é **da pessoa** (DEC-089): um código e uma senha abrem
+todos os processos que a advogada **liberou** para ela, processo a processo
+(DEC-091). No seed, a Mariana está em dois processos e só um está liberado — ela
+entra e vai direto para ele; liberar o segundo na tela da advogada (detalhe do
+processo "Inventário de Ernesto Wosch" → participantes) faz a lista aparecer.
+
+A senha já é a **própria** do cliente: o seed fez a troca obrigatória do
+primeiro acesso pela rota do portal, então a tela de troca não aparece. O limite
+é de **5 tentativas de login no portal por IP a cada 15 minutos**.
+
+> **Num banco migrado** (`npm run migrar:portal-pessoal`, o caminho do
+> `lex_prod` de antes da 2.5), o código pessoal é o que a migração sorteou, e
+> **não** o de cima: o antigo era do vínculo, e código de vínculo não vira
+> código pessoal (DEC-090). Ele aparece na tela da advogada: Clientes → Mariana
+> → **Acesso ao portal**.
 
 Os outros dois comandos do seed da banca:
 

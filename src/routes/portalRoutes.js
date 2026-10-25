@@ -14,7 +14,8 @@ import portalAuthController from "../controllers/portalAuthController.js";
 import portalController from "../controllers/portalController.js";
 import portalService from "../services/portalService.js";
 import portalAuthMiddleware, {
-  exigirSenhaDefinitiva
+  exigirSenhaDefinitiva,
+  exigirVinculoLiberado
 } from "../middleware/portalAuthMiddleware.js";
 
 const router = Router();
@@ -49,51 +50,62 @@ router.post("/logout", portalAuthController.logout);
 // ── Autenticadas ───────────────────────────────────────────────────────────
 router.use(portalAuthMiddleware);
 
-// Sessão e troca de senha NÃO passam por `exigirSenhaDefinitiva`: são as duas
-// únicas operações que fazem sentido com senha provisória. Todo o resto é
-// barrado por 403 até o cliente definir a senha dele.
 router.get("/sessao", portalAuthController.sessao);
 router.patch("/senha", portalAuthController.trocarSenha);
 
 // O texto da declaração é constante do backend e a tela precisa dele para
 // renderizar a área de confirmação mesmo antes da troca — inclusive para
-// explicar por que a confirmação ainda está bloqueada.
+// explicar por que a confirmação ainda está bloqueada. Não é dado de processo
+// nenhum, e por isso continua sem `:processoId`.
 router.get("/confirmacoes/texto", portalController.textoConfirmacao);
 
-// `POST /confirmacoes` fica ANTES do portão genérico de propósito. Ele é
+// ── Fase 2.5 (DEC-092): todo dado de processo leva `:processoId` ──────────
+// `exigirVinculoLiberado` confere, A CADA REQUISIÇÃO, que o vínculo (cliente
+// da sessão, processo da URL) existe, está ativo e liberado, e que o processo
+// está ativo. Desliberar no meio da sessão vale na próxima requisição.
+//
+// `POST .../confirmacoes` fica ANTES do portão genérico de propósito. Ele é
 // bloqueado do mesmo jeito, mas por `confirmacaoService`, que devolve o código
 // `confirmacaoExigeSenhaPropria` em vez do genérico `senhaPortalProvisoria`.
-//
 // Os dois 403 acontecem na mesma condição e mesmo assim são distintos, porque
 // a tela precisa dizer coisas diferentes: "troque a senha para continuar" e "a
 // confirmação só vale depois que você definir uma senha que só você conhece".
-// O segundo explica o PORQUÊ, e é o que sustenta o valor do recibo. Passar
-// pelo portão genérico apagaria essa distinção.
-router.post("/confirmacoes", portalController.confirmar);
+router.post(
+  "/processos/:processoId/confirmacoes",
+  exigirVinculoLiberado,
+  portalController.confirmar
+);
 
 router.use(exigirSenhaDefinitiva);
+
+// A lista dos processos LIBERADOS da pessoa. Não registra acesso: ver a lista
+// não é abrir o processo, e é o "acessou" de UM processo que a advogada lê.
+router.get("/processos", portalController.processos);
 
 // ── Registro de acesso ─────────────────────────────────────────────────────
 // Depois do portão da senha provisória, de propósito: enquanto o cliente não
 // tiver assumido a senha, quem está entrando pode ser a advogada testando a
 // credencial que acabou de criar. Registrar isso como "o cliente acessou"
-// seria rastro falso — e é justamente o rastro que a advogada vai olhar antes
-// de afirmar que a pessoa foi informada.
+// seria rastro falso.
 //
 // Aguardado, e não disparado e esquecido: sem `await` a escrita corria com a
 // leitura da requisição seguinte e o rastro gravava de forma intermitente.
-// Rastro que às vezes grava é pior que rastro nenhum — a advogada leria "nunca
-// acessou" para alguém que acessou.
-router.use(async (req, _res, next) => {
+// Desde a 2.5 ele é do vínculo da URL — o processo que a pessoa abriu.
+const registrarAcesso = async (req, _res, next) => {
   await portalService.registrarAcesso(req.portal.processoClienteId);
   next();
-});
+};
 
-router.get("/processo", portalController.processo);
-router.get("/documentos", portalController.documentos);
-router.get("/documentos/:id/download", portalController.baixarDocumento);
+const doProcesso = [exigirVinculoLiberado, registrarAcesso];
 
+router.get("/processos/:processoId", ...doProcesso, portalController.processo);
+router.get("/processos/:processoId/documentos", ...doProcesso, portalController.documentos);
+router.get(
+  "/processos/:processoId/documentos/:id/download",
+  ...doProcesso,
+  portalController.baixarDocumento
+);
 // O histórico é DADO, e por isso fica depois do portão genérico.
-router.get("/confirmacoes", portalController.minhasConfirmacoes);
+router.get("/processos/:processoId/confirmacoes", ...doProcesso, portalController.minhasConfirmacoes);
 
 export default router;

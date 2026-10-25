@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import Client, { COLLATION_PT } from "../models/Client.js";
 import clientValidation from "../validations/clientValidation.js";
 import { contarProcessosDoCliente, listarProcessosQueBloqueiam } from "./processoClienteService.js";
+import { garantirCodigoPessoal, salvarClienteComCodigo } from "./codigoPessoal.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
@@ -199,6 +200,12 @@ const aplicarSenhaPortal = async (client, senhaPortal) => {
   client.senhaPortalHash = await bcrypt.hash(senhaPortal, 10);
   client.senhaPortalProvisoria = true;
   client.senhaPortalDefinidaEm = null;
+
+  // Fase 2.5 (DEC-089): com senha, a pessoa precisa do código pessoal para
+  // entrar. Gerado aqui, uma vez — redefinir a senha mantém o código que ela
+  // já anotou. A revogação (o ramo acima) NÃO apaga o código: ele continua
+  // reservado e volta a valer com a próxima senha.
+  await garantirCodigoPessoal(client);
 };
 
 // A-2 (DEC-064): o 400 de e-mail malformado leva `campo: "email"`, para o
@@ -227,7 +234,7 @@ const createClient = async (usuarioId, data) => {
       await aplicarSenhaPortal(client, data.senhaPortal);
     }
 
-    await client.save();
+    await salvarClienteComCodigo(client);
     return client;
   } catch (error) {
     handleDuplicateKeyError(error);
@@ -370,7 +377,7 @@ const updateClient = async (usuarioId, clientId, data) => {
   }
 
   try {
-    await client.save();
+    await salvarClienteComCodigo(client);
   } catch (error) {
     handleDuplicateKeyError(error);
   }

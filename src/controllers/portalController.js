@@ -13,6 +13,14 @@ import User from "../models/User.js";
 // pedir outro.
 // ═══════════════════════════════════════════════════════════════════════════
 
+const processos = async (req, res, next) => {
+  try {
+    return res.status(200).json(await portalService.listarProcessos(req.portal));
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const processo = async (req, res, next) => {
   try {
     return res.status(200).json(portalService.obterProcesso(req.portal));
@@ -94,7 +102,7 @@ const textoConfirmacao = (_req, res) =>
 const confirmar = async (req, res, next) => {
   try {
     const confirmacao = await confirmacaoService.registrarConfirmacao(req.portal);
-    return res.status(201).json(projetarConfirmacao(confirmacao));
+    return res.status(201).json(projetarConfirmacao(confirmacao, req.portal.processo));
   } catch (error) {
     return next(error);
   }
@@ -107,7 +115,7 @@ const minhasConfirmacoes = async (req, res, next) => {
     const confirmacoes = await confirmacaoService.listarConfirmacoesDoVinculo(
       req.portal.processoClienteId
     );
-    const data = projetarConfirmacoes(confirmacoes);
+    const data = projetarConfirmacoes(confirmacoes, req.portal.processo);
     return res.status(200).json({
       data, total: data.length, page: 1, limit: data.length, totalPages: 1
     });
@@ -117,6 +125,6 @@ const minhasConfirmacoes = async (req, res, next) => {
 };
 
 export default {
-  processo, documentos, baixarDocumento,
+  processos, processo, documentos, baixarDocumento,
   textoConfirmacao, confirmar, minhasConfirmacoes
 };

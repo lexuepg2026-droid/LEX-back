@@ -25,7 +25,7 @@ import {
 import { dadosClientePF } from "../helpers/factories.js";
 import {
   montarCenarioPortal, entrarNoPortal, entrarNoPortalComSenhaPropria,
-  codigoAcessoDe, SENHA_PROVISORIA
+  codigoAcessoDe, SENHA_PROVISORIA, liberarNoPortal
 } from "../helpers/portal.js";
 import { ERRO_PORTAL } from "../../src/config/portalErrors.js";
 import { TEXTO_CONFIRMACAO } from "../../src/config/textoConfirmacao.js";
@@ -84,10 +84,10 @@ describe("portal: confirmação de visualização", () => {
 
   describe("só vale com senha própria", () => {
     test("confirmar com senha provisória é recusado, com código PRÓPRIO", async () => {
-      const { codigoAcesso } = await montarCenarioPortal("conf-provisoria");
+      const { processo, codigoAcesso } = await montarCenarioPortal("conf-provisoria");
       const portal = await entrarNoPortal(codigoAcesso);
 
-      const r = await portal.post("/portal/confirmacoes");
+      const r = await portal.post(`/portal/processos/${processo._id}/confirmacoes`);
 
       assert.equal(r.status, 403, `esperado 403, veio ${r.status} — ${JSON.stringify(r.body)}`);
       // Distinto do 403 genérico da senha provisória: a tela precisa dizer
@@ -106,7 +106,7 @@ describe("portal: confirmação de visualização", () => {
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
       const antes = Date.now();
-      const r = await portal.post("/portal/confirmacoes");
+      const r = await portal.post(`/portal/processos/${processo._id}/confirmacoes`);
 
       assert.equal(r.status, 201, `esperado 201 — ${JSON.stringify(r.body)}`);
       assert.ok(r.body.dataHora, "faltou dataHora");
@@ -129,7 +129,7 @@ describe("portal: confirmação de visualização", () => {
     test("o texto exposto ao portal é o mesmo que é gravado", async () => {
       // A tela e o recibo saem da mesma constante, e por isso não podem
       // divergir.
-      const { codigoAcesso } = await montarCenarioPortal("conf-texto");
+      const { processo, codigoAcesso } = await montarCenarioPortal("conf-texto");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
       const exibido = esperado(
@@ -138,7 +138,7 @@ describe("portal: confirmação de visualização", () => {
       assert.equal(exibido.texto, TEXTO_CONFIRMACAO);
       assert.ok(exibido.versao, "faltou a versão do texto");
 
-      const gravado = esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      const gravado = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
       assert.equal(gravado.textoConfirmado, exibido.texto);
     });
 
@@ -146,11 +146,11 @@ describe("portal: confirmação de visualização", () => {
       // Se o texto viesse do corpo, alguém com o cookie gravaria "declaro que
       // li" com qualquer redação — inclusive uma que não diz nada. O recibo tem
       // de registrar o que o SISTEMA apresentou.
-      const { codigoAcesso } = await montarCenarioPortal("conf-texto-forjado");
+      const { processo, codigoAcesso } = await montarCenarioPortal("conf-texto-forjado");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
       const r = esperado(
-        await portal.post("/portal/confirmacoes", {
+        await portal.post(`/portal/processos/${processo._id}/confirmacoes`, {
           textoConfirmado: "NAO LI NADA E NAO CONCORDO COM COISA NENHUMA"
         }),
         201, "confirmação"
@@ -175,7 +175,7 @@ describe("portal: confirmação de visualização", () => {
       const invisivel = await gerarDocumento(adv, processo._id, cliente._id, { visivel: false });
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r = esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      const r = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
       assert.equal(r.instantaneo.quantidadeDocumentos, 2);
       assert.deepEqual(
@@ -195,7 +195,7 @@ describe("portal: confirmação de visualização", () => {
       const primeiro = await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r1 = esperado(await portal.post("/portal/confirmacoes"), 201, "1ª confirmação");
+      const r1 = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "1ª confirmação");
       assert.equal(r1.instantaneo.quantidadeDocumentos, 1);
 
       const segundo = await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
@@ -213,7 +213,7 @@ describe("portal: confirmação de visualização", () => {
       const { adv, processo, codigoAcesso } = await montarCenarioPortal("conf-status");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      const r1 = esperado(await portal.post("/portal/confirmacoes"), 201, "com processo ativo");
+      const r1 = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "com processo ativo");
       assert.equal(r1.instantaneo.statusProcesso, "ativo");
 
       esperado(
@@ -221,7 +221,7 @@ describe("portal: confirmação de visualização", () => {
         200, "suspende o processo"
       );
 
-      const r2 = esperado(await portal.post("/portal/confirmacoes"), 201, "com processo suspenso");
+      const r2 = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "com processo suspenso");
       assert.equal(r2.instantaneo.statusProcesso, "suspenso");
       assert.equal(
         r1.instantaneo.statusProcesso, "ativo",
@@ -240,11 +240,11 @@ describe("portal: confirmação de visualização", () => {
       await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const p = esperado(await portal.post("/portal/confirmacoes"), 201, "1ª");
+      const p = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "1ª");
 
       await new Promise((r) => setTimeout(r, 1100));
       await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
-      const s = esperado(await portal.post("/portal/confirmacoes"), 201, "2ª");
+      const s = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "2ª");
 
       assert.notEqual(p.id, s.id, "a segunda sobrescreveu a primeira");
       assert.equal(await contarEm(COLECAO_CONFIRMACOES), 2);
@@ -256,16 +256,16 @@ describe("portal: confirmação de visualização", () => {
     });
 
     test("não existe rota que altere ou apague uma confirmação", async () => {
-      const { codigoAcesso } = await montarCenarioPortal("conf-imutavel");
+      const { processo, codigoAcesso } = await montarCenarioPortal("conf-imutavel");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const c = esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      const c = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
       // Nenhum verbo de escrita responde sobre uma confirmação individual.
       for (const [metodo, rota] of [
         ["PATCH", `/portal/confirmacoes/${c.id}`],
         ["PUT", `/portal/confirmacoes/${c.id}`],
         ["DELETE", `/portal/confirmacoes/${c.id}`],
-        ["DELETE", "/portal/confirmacoes"]
+        ["DELETE", `/portal/processos/${processo._id}/confirmacoes`]
       ]) {
         const r = await portal.requisitar(metodo, rota, metodo === "DELETE" ? undefined : {});
         assert.ok(
@@ -295,9 +295,11 @@ describe("portal: confirmação de visualização", () => {
         { clienteId: cliente._id, papel: "litisconsorte", principal: false }
       ]);
 
+      await liberarNoPortal(adv, processo._id, cliente._id);
+
       const codigo = await codigoAcessoDe(adv, processo._id, cliente._id);
       const portal = await entrarNoPortalComSenhaPropria(codigo);
-      esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
       const antes = esperado(
         await adv.get(`/processes/${processo._id}/confirmacoes`), 200, "antes"
@@ -335,7 +337,7 @@ describe("portal: confirmação de visualização", () => {
     test("lista as confirmações do processo com o participante", async () => {
       const { adv, cliente, processo, codigoAcesso } = await montarCenarioPortal("conf-adv-lista");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
       const r = esperado(
         await adv.get(`/processes/${processo._id}/confirmacoes`), 200, "confirmações"
@@ -358,11 +360,11 @@ describe("portal: confirmação de visualização", () => {
 
       assert.equal(await contador(), 0, "começa zerado");
 
-      esperado(await portal.post("/portal/confirmacoes"), 201, "1ª");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "1ª");
       assert.equal(await contador(), 1);
 
       await new Promise((r) => setTimeout(r, 1100));
-      esperado(await portal.post("/portal/confirmacoes"), 201, "2ª");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "2ª");
       assert.equal(await contador(), 2);
 
       const marcadas = esperado(
@@ -373,14 +375,14 @@ describe("portal: confirmação de visualização", () => {
       assert.equal(await contador(), 0, "marcar deveria zerar");
 
       await new Promise((r) => setTimeout(r, 1100));
-      esperado(await portal.post("/portal/confirmacoes"), 201, "3ª");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "3ª");
       assert.equal(await contador(), 1, "confirmação nova volta a contar");
     });
 
     test("marcar como vistas não altera mais nada da confirmação", async () => {
       const { adv, processo, codigoAcesso } = await montarCenarioPortal("conf-marcar");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
       const [antes] = await acharEm(COLECAO_CONFIRMACOES, {});
       esperado(
@@ -404,9 +406,9 @@ describe("portal: confirmação de visualização", () => {
       const { adv, cliente, processo, codigoAcesso } = await montarCenarioPortal("conf-desnorm");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      esperado(await portal.post("/portal/confirmacoes"), 201, "1ª");
+      esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "1ª");
       await new Promise((r) => setTimeout(r, 1100));
-      const ultima = esperado(await portal.post("/portal/confirmacoes"), 201, "2ª");
+      const ultima = esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "2ª");
 
       const participantes = esperado(
         await adv.get(`/processes/${processo._id}/clientes`), 200, "participantes"
@@ -442,14 +444,17 @@ describe("portal: confirmação de visualização", () => {
         { clienteId: nuncaEntrou._id, papel: "litisconsorte", principal: false }
       ]);
 
+      await liberarNoPortal(adv, processo._id, confirmou._id);
+
       const cod1 = await codigoAcessoDe(adv, processo._id, confirmou._id);
+      await liberarNoPortal(adv, processo._id, soAcessou._id);
       const cod2 = await codigoAcessoDe(adv, processo._id, soAcessou._id);
 
       const p1 = await entrarNoPortalComSenhaPropria(cod1, { rotulo: "p1" });
-      esperado(await p1.post("/portal/confirmacoes"), 201, "confirma");
+      esperado(await p1.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirma");
 
       const p2 = await entrarNoPortalComSenhaPropria(cod2, { rotulo: "p2" });
-      esperado(await p2.get("/portal/processo"), 200, "só acessa");
+      esperado(await p2.get(`/portal/processos/${processo._id}`), 200, "só acessa");
 
       const participantes = esperado(
         await adv.get(`/processes/${processo._id}/clientes`), 200, "participantes"
@@ -475,7 +480,7 @@ describe("portal: confirmação de visualização", () => {
       const b = await montarCenarioPortal("conf-iso-b");
 
       const portalA = await entrarNoPortalComSenhaPropria(a.codigoAcesso, { rotulo: "iso-a" });
-      esperado(await portalA.post("/portal/confirmacoes"), 201, "confirmação de A");
+      esperado(await portalA.post(`/portal/processos/${a.processo._id}/confirmacoes`), 201, "confirmação de A");
 
       // B pede as confirmações do processo de A: 404, como todo recurso alheio.
       assert.equal(
@@ -529,7 +534,7 @@ describe("portal: confirmação de visualização", () => {
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
       assert.equal(
-        esperado(await portal.get("/portal/documentos"), 200, "antes").total, 1
+        esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "antes").total, 1
       );
 
       // Regeração sem confirmar: 409 que agora avisa sobre o portal.
@@ -551,7 +556,7 @@ describe("portal: confirmação de visualização", () => {
       );
 
       assert.equal(
-        esperado(await portal.get("/portal/documentos"), 200, "depois").total,
+        esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "depois").total,
         0,
         "o comportamento mudou — o documento novo não devia nascer visível"
       );

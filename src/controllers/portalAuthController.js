@@ -6,6 +6,7 @@ import {
   validateLoginPortal,
   validateTrocaSenhaPortal
 } from "../validations/portalAuthValidation.js";
+import { projetarClienteDaSessao } from "../services/portalProjection.js";
 
 // Mesmas opções do cookie da advogada (`authController`), com maxAge próprio:
 // httpOnly para JavaScript de página não conseguir ler, `sameSite` estrito em
@@ -38,9 +39,10 @@ const login = async (req, res, next) => {
 
     // O token NÃO vai no corpo: ele vive só no cookie httpOnly. Devolvê-lo
     // também no JSON o tornaria legível por JavaScript e anularia o httpOnly.
+    // Fase 2.5: a sessão é da pessoa — não há mais `processoId` aqui. Os
+    // processos liberados vêm de `GET /portal/processos`.
     return res.status(200).json({
       senhaPortalProvisoria: data.senhaPortalProvisoria,
-      processoId: data.processoId,
       clienteId: data.clienteId
     });
   } catch (error) {
@@ -66,10 +68,7 @@ const trocarSenha = async (req, res, next) => {
     // Sessão reemitida: o token anterior foi assinado com o carimbo da senha
     // antiga e deixa de casar na requisição seguinte. Sem isto, a janela em que
     // a advogada conhecia a senha continuaria aberta pelo resto das 2 horas.
-    const token = await portalAuthService.reemitirSessao(
-      req.portal.processoClienteId,
-      cliente
-    );
+    const token = portalAuthService.reemitirSessao(cliente);
     res.cookie(NOME_COOKIE_PORTAL, token, COOKIE_PORTAL);
 
     return res.status(200).json({
@@ -94,11 +93,13 @@ const logout = (req, res) => {
 
 // Estado da sessão, para o portal saber o que desenhar sem precisar adivinhar.
 // Responde mesmo com senha provisória — é justamente quem precisa saber disso.
+// Fase 2.5: a sessão diz QUEM entrou (nome, para o "Olá") e se a senha é
+// provisória. `papel` e `processoId` saíram: eram do vínculo da sessão antiga,
+// e agora o papel vem com cada processo.
 const sessao = (req, res) =>
   res.status(200).json({
     senhaPortalProvisoria: req.portal.senhaPortalProvisoria,
-    papel: req.portal.papel,
-    processoId: req.portal.processoId
+    cliente: projetarClienteDaSessao(req.portal.cliente)
   });
 
 export default { login, trocarSenha, logout, sessao };

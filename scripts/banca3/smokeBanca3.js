@@ -215,20 +215,24 @@ const main = async () => {
 
   // 8 ─────────────────────────────────────────────────────────────────────
   await passo("8. o cliente vê processo, fase, trânsito e só os documentos liberados", async () => {
-    const { dados: pr } = await portal.get("/portal/processo");
+    // Fase 2.5: a lista da pessoa, e P1 por id. P3 tem a Mariana como
+    // participante e NÃO está liberado — não pode aparecer.
+    const { dados: lista } = await portal.get("/portal/processos");
+    exigir(lista.total === 1 && lista.data[0].id === String(p1._id), `processos liberados: ${lista.total}`);
+    const { dados: pr } = await portal.get(`/portal/processos/${p1._id}`);
     exigir(pr.processo.numeroProcesso === PROCESSOS.p1.numeroProcesso, "processo errado");
     exigir(pr.processo.fase === PROCESSOS.p1.fase, `fase: ${pr.processo.fase}`);
     exigir(pr.processo.transitoEmJulgadoEm?.startsWith(PROCESSOS.p1.transitoEmJulgadoEm), `trânsito: ${pr.processo.transitoEmJulgadoEm}`);
 
-    const { dados: docs } = await portal.get("/portal/documentos");
+    const { dados: docs } = await portal.get(`/portal/processos/${p1._id}/documentos`);
     const nomes = docs.data.map((d) => d.nome).sort();
     exigir(docs.total === 2, `documentos visíveis: ${docs.total}`);
     exigir(nomes.some((n) => n.startsWith("Procuração")) && nomes.some((n) => n.startsWith("Contrato")),
       `documentos: ${nomes.join(", ")}`);
     exigir(oculto, "documento oculto do processo do portal não encontrado");
     exigir(!docs.data.some((d) => d.id === String(oculto._id)), "o documento oculto aparece no portal");
-    await portal.get(`/portal/documentos/${oculto._id}/download?formato=pdf`, { esperado: 404 });
-    const pdf = await portal.get(`/portal/documentos/${docs.data[0].id}/download?formato=pdf`, { binario: true });
+    await portal.get(`/portal/processos/${p1._id}/documentos/${oculto._id}/download?formato=pdf`, { esperado: 404 });
+    const pdf = await portal.get(`/portal/processos/${p1._id}/documentos/${docs.data[0].id}/download?formato=pdf`, { binario: true });
     exigir(pdf.dados.subarray(0, 4).toString() === "%PDF", "PDF do portal inválido");
     if (salvar) fs.writeFileSync(path.join(salvar, "portal-documento.pdf"), pdf.dados);
     await portal.post("/portal/logout");

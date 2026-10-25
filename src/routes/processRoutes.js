@@ -18,6 +18,7 @@ router.patch("/:id/confirmacoes/vistas", processController.marcarConfirmacoesVis
 router.get("/:id/clientes", processController.listClientes);
 router.post("/:id/clientes", processController.addCliente);
 router.get("/:id/clientes/:clienteId/codigo-acesso", processController.getCodigoAcesso);
+router.patch("/:id/clientes/:clienteId/liberacao", processController.setLiberacao);
 router.patch("/:id/clientes/:clienteId/principal", processController.setClientePrincipal);
 router.patch("/:id/clientes/:clienteId", processController.updateClientePapel);
 router.delete("/:id/clientes/:clienteId", processController.removeCliente);

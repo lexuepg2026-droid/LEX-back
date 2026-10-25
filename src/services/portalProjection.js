@@ -93,6 +93,23 @@ export const projetarClienteDaSessao = (cliente) => ({
 // `geradoDeModeloId`, `honorarioId`, `substituidoPorId` e `editadoManualmente`
 // ficam fora: são rastreabilidade interna. Que a advogada tenha editado a peça
 // à mão não é assunto do cliente.
+// "Seus processos" (Fase 2.5): o cartão de cada processo liberado. Escrita
+// campo a campo, como todo o resto deste arquivo — os indicadores vêm
+// prontos de `portalService.listarProcessos`.
+export const projetarResumoDoProcesso = (processo, vinculo, { documentosVisiveis, documentosNovos }) => ({
+  id: String(processo._id),
+  titulo: texto(processo.titulo),
+  numeroProcesso: texto(processo.numeroProcesso),
+  status: texto(processo.status),
+  fase: texto(processo.fase),
+  transitoEmJulgadoEm: data(processo.transitoEmJulgadoEm),
+  meuPapel: texto(vinculo.papel),
+  documentosVisiveis: Number(documentosVisiveis ?? 0),
+  documentosNovos: Number(documentosNovos ?? 0),
+  confirmacaoPendente: Number(documentosNovos ?? 0) > 0,
+  ultimaConfirmacao: data(vinculo.ultimaConfirmacaoEm)
+});
+
 export const projetarDocumento = (documento) => ({
   id: String(documento._id),
   nome: texto(documento.nome),
@@ -105,8 +122,18 @@ export const projetarDocumento = (documento) => ({
 export const projetarDocumentos = (documentos) => documentos.map(projetarDocumento);
 
 // ── Confirmação de visualização ────────────────────────────────────────────
-export const projetarConfirmacao = (confirmacao) => ({
+// O recibo diz de QUAL processo (Fase 2.5): com uma sessão para vários
+// processos, "você confirmou em 12/09" sem o processo não diz o que foi lido.
+// `processo` é o da rota, que o middleware já carregou.
+export const projetarConfirmacao = (confirmacao, processo = null) => ({
   id: String(confirmacao._id),
+  processo: processo
+    ? {
+        id: String(processo._id),
+        titulo: texto(processo.titulo),
+        numeroProcesso: texto(processo.numeroProcesso)
+      }
+    : null,
   dataHora: data(confirmacao.dataHora),
   textoConfirmado: texto(confirmacao.textoConfirmado),
   instantaneo: {
@@ -116,7 +143,8 @@ export const projetarConfirmacao = (confirmacao) => ({
   }
 });
 
-export const projetarConfirmacoes = (confirmacoes) => confirmacoes.map(projetarConfirmacao);
+export const projetarConfirmacoes = (confirmacoes, processo = null) =>
+  confirmacoes.map((c) => projetarConfirmacao(c, processo));
 
 // ── Rastro de acesso, para o portal mostrar ao próprio cliente ─────────────
 export const projetarAcesso = (vinculo) => ({
@@ -126,6 +154,7 @@ export const projetarAcesso = (vinculo) => ({
 });
 
 export default {
+  projetarResumoDoProcesso,
   projetarProcesso,
   projetarClienteDaSessao,
   projetarDocumento,

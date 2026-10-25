@@ -13,6 +13,7 @@ import {
   desvincularCliente,
   listarParticipantes,
   obterCodigoAcesso,
+  alterarLiberacao,
   promoverAPrincipal,
   vincularCliente
 } from "../services/processoClienteService.js";
@@ -209,6 +210,21 @@ export const getCodigoAcesso = async (req, res, next) => {
       req.user._id,
       req.params.id,
       req.params.clienteId
+    );
+    return res.status(200).json(resultado);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Fase 2.5 (DEC-091): liberar ou desligar um processo no portal do cliente.
+export const setLiberacao = async (req, res, next) => {
+  try {
+    const resultado = await alterarLiberacao(
+      req.user._id,
+      req.params.id,
+      req.params.clienteId,
+      req.body
     );
     return res.status(200).json(resultado);
   } catch (error) {
