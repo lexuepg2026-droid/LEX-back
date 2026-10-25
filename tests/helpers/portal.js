@@ -23,6 +23,9 @@ export const SENHA_DO_CLIENTE = "MinhaSenha456";
 // vínculos e entre os dois domínios.
 export const novoClientePortal = (rotulo = "portal") => new ClienteApi(rotulo);
 
+// Desde a Fase 2.5 (DEC-093) a rota devolve o código PESSOAL do cliente — o
+// único que autentica. O nome do helper ficou: é a pergunta da advogada
+// ("qual código eu entrego?"), e a resposta mudou junto com o modelo.
 export const codigoAcessoDe = async (api, processoId, clienteId) => {
   const r = esperado(
     await api.get(`/processes/${processoId}/clientes/${clienteId}/codigo-acesso`),
@@ -31,6 +34,22 @@ export const codigoAcessoDe = async (api, processoId, clienteId) => {
   );
   return r.codigoAcesso;
 };
+
+// O código de VÍNCULO, que não autentica mais e continua reservado (DEC-090).
+// Nenhuma rota o devolve; a suíte lê do banco para provar que ele é recusado.
+export const codigoDeVinculoDe = async (processoId, clienteId) => {
+  const { default: ProcessoCliente } = await import("../../src/models/ProcessoCliente.js");
+  const v = await ProcessoCliente.findOne({ processoId, clienteId, ativo: true }).select("codigoAcesso");
+  return v?.codigoAcesso ?? null;
+};
+
+// Vínculo novo nasce NÃO liberado (DEC-091): o cenário de portal libera.
+export const liberarNoPortal = async (api, processoId, clienteId, liberadoNoPortal = true) =>
+  esperado(
+    await api.patch(`/processes/${processoId}/clientes/${clienteId}/liberacao`, { liberadoNoPortal }),
+    200,
+    "liberação no portal"
+  );
 
 // Cenário base: advogada + cliente com senha provisória + processo + código.
 export const montarCenarioPortal = async (rotulo = "adv-portal", extraCliente = {}) => {
@@ -49,6 +68,7 @@ export const montarCenarioPortal = async (rotulo = "adv-portal", extraCliente = 
     { clienteId: cliente._id, papel: "autor", principal: true }
   ]);
 
+  await liberarNoPortal(adv, processo._id, cliente._id);
   const codigoAcesso = await codigoAcessoDe(adv, processo._id, cliente._id);
 
   return { adv, cliente, processo, codigoAcesso, senha: SENHA_PROVISORIA };
@@ -88,6 +108,8 @@ export const montarPortalPronto = async (rotulo = "adv-portal") => {
 };
 
 export default {
+  liberarNoPortal,
+  codigoDeVinculoDe,
   montarCenarioPortal,
   montarPortalPronto,
   entrarNoPortal,

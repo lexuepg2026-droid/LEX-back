@@ -22,9 +22,10 @@ import mongoose from "mongoose";
 
 import Document from "../models/Document.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
+import Process from "../models/Process.js";
 import {
   projetarProcesso, projetarClienteDaSessao, projetarDocumentos,
-  projetarDocumento, projetarAcesso
+  projetarDocumento, projetarAcesso, projetarResumoDoProcesso
 } from "./portalProjection.js";
 
 // Filtro único dos documentos visíveis ao portal. Fica em função para que as
@@ -41,6 +42,55 @@ export const filtroDocumentosVisiveis = ({ processoId, clienteId }) => ({
 
 export const listarDocumentosVisiveis = ({ processoId, clienteId }) =>
   Document.find(filtroDocumentosVisiveis({ processoId, clienteId })).sort({ dataGeracao: -1 });
+
+// ── "Seus processos" (Fase 2.5, DEC-092) ─────────────────────────────────
+// Os vínculos ATIVOS e LIBERADOS da pessoa, de processos ATIVOS da mesma
+// advogada — o mesmo filtro que `exigirVinculoLiberado` aplica a cada
+// requisição, para a lista nunca mostrar um processo que abrir recusaria.
+//
+// Os indicadores saem de UMA consulta aos documentos visíveis de todos os
+// processos da lista, e não de uma por processo:
+//   `documentosVisiveis`   quantos documentos ela pode ver;
+//   `documentosNovos`      quantos chegaram DEPOIS da última confirmação dela
+//                          naquele processo (todos, se nunca confirmou);
+//   `confirmacaoPendente`  há documento novo — o mesmo critério do selo
+//                          "acessou, não confirmou" do lado da advogada.
+export const listarProcessos = async (portal) => {
+  const vinculos = await ProcessoCliente.find({
+    clienteId: portal.clienteId,
+    usuarioId: portal.usuarioId,
+    ativo: true,
+    liberadoNoPortal: true
+  });
+
+  const processos = await Process.find({
+    _id: { $in: vinculos.map((v) => v.processoId) },
+    usuarioId: portal.usuarioId,
+    ativo: true
+  }).sort({ createdAt: -1, _id: -1 });
+
+  const documentos = await Document.find({
+    ...filtroDocumentosVisiveis({ processoId: null, clienteId: portal.clienteId }),
+    processoId: { $in: processos.map((p) => p._id) }
+  }).select("processoId dataGeracao");
+
+  const vinculoDe = new Map(vinculos.map((v) => [String(v.processoId), v]));
+
+  const data = processos.map((processo) => {
+    const vinculo = vinculoDe.get(String(processo._id));
+    const confirmadoEm = vinculo.ultimaConfirmacaoEm ? new Date(vinculo.ultimaConfirmacaoEm) : null;
+    const doProcesso = documentos.filter((d) => String(d.processoId) === String(processo._id));
+    const novos = doProcesso.filter(
+      (d) => !confirmadoEm || (d.dataGeracao && new Date(d.dataGeracao) > confirmadoEm)
+    ).length;
+    return projetarResumoDoProcesso(processo, vinculo, {
+      documentosVisiveis: doProcesso.length,
+      documentosNovos: novos
+    });
+  });
+
+  return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
+};
 
 export const obterProcesso = (portal) => ({
   processo: projetarProcesso(portal.processo, portal.vinculo),
@@ -148,6 +198,7 @@ export const registrarAcesso = async (processoClienteId) => {
 };
 
 export default {
+  listarProcessos,
   obterProcesso,
   obterDocumentos,
   obterDocumento,

@@ -25,11 +25,12 @@ import {
   registrarUsuario, criarProcesso, criarSecao, criarModelo, vincularSecao,
   criarHonorario, criarParcela, criarPagamento, esperado
 } from "../helpers/setup.js";
-import { dadosClientePF } from "../helpers/factories.js";
+import { dadosClientePF, dadosClientePJ } from "../helpers/factories.js";
 import { ClienteApi } from "../helpers/client.js";
 import {
   montarCenarioPortal, entrarNoPortalComSenhaPropria, codigoAcessoDe,
-  novoClientePortal, SENHA_PROVISORIA, SENHA_DO_CLIENTE
+  novoClientePortal, SENHA_PROVISORIA, SENHA_DO_CLIENTE, liberarNoPortal,
+  entrarNoPortal, codigoDeVinculoDe
 } from "../helpers/portal.js";
 import { NOME_COOKIE_PORTAL } from "../../src/services/portalAuthService.js";
 
@@ -82,9 +83,11 @@ describe("portal: isolamento — a terceira dimensão", () => {
       200, "libera"
     );
 
+    await liberarNoPortal(adv, processo._id, cliente._id);
+
     const codigoAcesso = await codigoAcessoDe(adv, processo._id, cliente._id);
     const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "iso-portal" });
-    esperado(await portal.post("/portal/confirmacoes"), 201, "confirmação");
+    esperado(await portal.post(`/portal/processos/${processo._id}/confirmacoes`), 201, "confirmação");
 
     cenario = {
       adv, cliente, processo, honorario, parcela, pagamento,
@@ -113,6 +116,7 @@ describe("portal: isolamento — a terceira dimensão", () => {
       ["PATCH", `/clients/${c.cliente._id}`], ["PUT", `/clients/${c.cliente._id}`],
       ["DELETE", `/clients/${c.cliente._id}`],
       ["DELETE", `/clients/${c.cliente._id}/senha-portal`],
+      ["GET", `/clients/${c.cliente._id}/acesso-portal`],
 
       ["POST", "/processes"], ["GET", "/processes"], ["GET", `/processes/${c.processo._id}`],
       ["PATCH", `/processes/${c.processo._id}`], ["PUT", `/processes/${c.processo._id}`],
@@ -120,6 +124,7 @@ describe("portal: isolamento — a terceira dimensão", () => {
       ["GET", `/processes/${c.processo._id}/clientes`],
       ["POST", `/processes/${c.processo._id}/clientes`],
       ["GET", `/processes/${c.processo._id}/clientes/${c.cliente._id}/codigo-acesso`],
+      ["PATCH", `/processes/${c.processo._id}/clientes/${c.cliente._id}/liberacao`],
       ["PATCH", `/processes/${c.processo._id}/clientes/${c.cliente._id}/principal`],
       ["PATCH", `/processes/${c.processo._id}/clientes/${c.cliente._id}`],
       ["DELETE", `/processes/${c.processo._id}/clientes/${c.cliente._id}`],
@@ -215,12 +220,14 @@ describe("portal: isolamento — a terceira dimensão", () => {
     const rotas = [
       ["GET", "/portal/sessao"],
       ["PATCH", "/portal/senha"],
-      ["GET", "/portal/processo"],
-      ["GET", "/portal/documentos"],
-      ["GET", `/portal/documentos/${c.documento._id}/download`],
-      ["GET", "/portal/confirmacoes"],
+      // Fase 2.5: a lista da pessoa e as rotas por processo.
+      ["GET", "/portal/processos"],
+      ["GET", `/portal/processos/${c.processo._id}`],
+      ["GET", `/portal/processos/${c.processo._id}/documentos`],
+      ["GET", `/portal/processos/${c.processo._id}/documentos/${c.documento._id}/download`],
+      ["GET", `/portal/processos/${c.processo._id}/confirmacoes`],
       ["GET", "/portal/confirmacoes/texto"],
-      ["POST", "/portal/confirmacoes"]
+      ["POST", `/portal/processos/${c.processo._id}/confirmacoes`]
     ];
 
     const tokenDaAdvogada = c.adv.cookies.get("lex-token");
@@ -274,22 +281,37 @@ describe("portal: isolamento — a terceira dimensão", () => {
         return d;
       })();
 
+      await liberarNoPortal(adv, p1._id, c1._id);
+
       const cod1 = await codigoAcessoDe(adv, p1._id, c1._id);
       const sessao1 = await entrarNoPortalComSenhaPropria(cod1, { rotulo: "vinculo-1" });
 
       // A sessão de 1 enxerga o processo de 1, e só.
-      const visto = esperado(await sessao1.get("/portal/processo"), 200, "processo");
+      const visto = esperado(await sessao1.get(`/portal/processos/${p1._id}`), 200, "processo");
       assert.equal(visto.processo.id, String(p1._id));
       assert.notEqual(visto.processo.id, String(p2._id));
 
-      // E não alcança o documento do outro processo.
+      // O processo de 2, pela URL direta: o mesmo 404 de "não existe".
+      for (const rota of [
+        `/portal/processos/${p2._id}`,
+        `/portal/processos/${p2._id}/documentos`,
+        `/portal/processos/${p2._id}/confirmacoes`,
+        `/portal/processos/${p2._id}/documentos/${doc2._id}/download`
+      ]) {
+        placar.tentativasCruzadas += 1;
+        const cruzada = await sessao1.get(rota);
+        registrar(cruzada.status === 404, `${rota} pela sessão de 1 devolveu ${cruzada.status}`);
+        assert.equal(cruzada.status, 404, `VAZAMENTO — ${rota}`);
+      }
+
+      // E não alcança o documento do outro processo pelo caminho do próprio.
       placar.tentativasCruzadas += 1;
-      const r = await sessao1.get(`/portal/documentos/${doc2._id}/download`);
+      const r = await sessao1.get(`/portal/processos/${p1._id}/documentos/${doc2._id}/download`);
       registrar(r.status === 404, `download cruzado entre vínculos devolveu ${r.status}`);
       assert.equal(r.status, 404, "VAZAMENTO — sessão alcançou documento de outro processo");
 
       // A listagem de 1 não cita nada de 2.
-      const docs = esperado(await sessao1.get("/portal/documentos"), 200, "documentos");
+      const docs = esperado(await sessao1.get(`/portal/processos/${p1._id}/documentos`), 200, "documentos");
       assert.ok(
         !JSON.stringify(docs).includes(String(doc2._id)),
         "VAZAMENTO — documento de outro processo apareceu na listagem"
@@ -309,10 +331,12 @@ describe("portal: isolamento — a terceira dimensão", () => {
       const pa = await criarProcesso(adv, [{ clienteId: a._id, papel: "autor", principal: true }]);
       const pb = await criarProcesso(adv, [{ clienteId: b._id, papel: "autor", principal: true }]);
 
+      await liberarNoPortal(adv, pa._id, a._id);
+
       const codA = await codigoAcessoDe(adv, pa._id, a._id);
       const sessao = await entrarNoPortalComSenhaPropria(codA, { rotulo: "codigo-a" });
 
-      const r = esperado(await sessao.get("/portal/processo"), 200, "processo");
+      const r = esperado(await sessao.get(`/portal/processos/${pa._id}`), 200, "processo");
       placar.tentativasCruzadas += 1;
       registrar(r.processo.id === String(pa._id), "o código de A devolveu processo errado");
       assert.equal(r.processo.id, String(pa._id));
@@ -336,7 +360,10 @@ describe("portal: isolamento — a terceira dimensão", () => {
       const pa = await criarProcesso(adv, [{ clienteId: a._id, papel: "autor", principal: true }]);
       const pb = await criarProcesso(adv, [{ clienteId: b._id, papel: "autor", principal: true }]);
 
+      await liberarNoPortal(adv, pa._id, a._id);
+
       const codA = await codigoAcessoDe(adv, pa._id, a._id);
+      await liberarNoPortal(adv, pb._id, b._id);
       const codB = await codigoAcessoDe(adv, pb._id, b._id);
 
       for (const [codigo, senha, rotulo] of [
@@ -366,10 +393,11 @@ describe("portal: isolamento — a terceira dimensão", () => {
     const processoA = await criarProcesso(advA, [
       { clienteId: clienteA._id, papel: "autor", principal: true }
     ]);
+    await liberarNoPortal(advA, processoA._id, clienteA._id);
     const codigoA = await codigoAcessoDe(advA, processoA._id, clienteA._id);
 
     const portalA = await entrarNoPortalComSenhaPropria(codigoA, { rotulo: "portal-de-a" });
-    esperado(await portalA.post("/portal/confirmacoes"), 201, "confirmação no portal de A");
+    esperado(await portalA.post(`/portal/processos/${processoA._id}/confirmacoes`), 201, "confirmação no portal de A");
 
     // A advogada B não enxerga nada disso.
     placar.tentativasCruzadas += 1;
@@ -392,7 +420,7 @@ describe("portal: isolamento — a terceira dimensão", () => {
     assert.equal(dash.confirmacoesNaoVistas, 0, "VAZAMENTO — contador de B contou confirmação de A");
 
     // A sessão de portal de A continua funcionando: a contraprova.
-    esperado(await portalA.get("/portal/processo"), 200, "portal de A ainda vivo");
+    esperado(await portalA.get(`/portal/processos/${processoA._id}`), 200, "portal de A ainda vivo");
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -414,9 +442,10 @@ describe("portal: isolamento — a terceira dimensão", () => {
     // Respostas do PORTAL: nada disso pode sair.
     const doPortal = [
       ["GET /portal/sessao", await c.portal.get("/portal/sessao")],
-      ["GET /portal/processo", await c.portal.get("/portal/processo")],
-      ["GET /portal/documentos", await c.portal.get("/portal/documentos")],
-      ["GET /portal/confirmacoes", await c.portal.get("/portal/confirmacoes")],
+      ["GET /portal/processos", await c.portal.get("/portal/processos")],
+      ["GET /portal/processos/:id", await c.portal.get(`/portal/processos/${c.processo._id}`)],
+      ["GET /portal/processos/:id/documentos", await c.portal.get(`/portal/processos/${c.processo._id}/documentos`)],
+      ["GET /portal/processos/:id/confirmacoes", await c.portal.get(`/portal/processos/${c.processo._id}/confirmacoes`)],
       ["GET /portal/confirmacoes/texto", await c.portal.get("/portal/confirmacoes/texto")]
     ];
 
@@ -447,7 +476,8 @@ describe("portal: isolamento — a terceira dimensão", () => {
       ["GET /processes/:id/confirmacoes", await c.adv.get(`/processes/${c.processo._id}/confirmacoes`)],
       ["GET /documents", await c.adv.get("/documents")],
       ["GET /dashboard", await c.adv.get("/dashboard")],
-      ["PATCH /clients/:id", await c.adv.patch(`/clients/${c.cliente._id}`, { telefone: "(42) 90000-0000" })]
+      ["PATCH /clients/:id", await c.adv.patch(`/clients/${c.cliente._id}`, { telefone: "(42) 90000-0000" })],
+      ["GET /clients/:id/acesso-portal", await c.adv.get(`/clients/${c.cliente._id}/acesso-portal`)]
     ];
 
     for (const [rotulo, resposta] of daAdvogada) {
@@ -457,6 +487,14 @@ describe("portal: isolamento — a terceira dimensão", () => {
         if (bruto.includes(proibido)) placar.vazamentos.push(`${rotulo} vazou "${proibido}"`);
         assert.ok(!bruto.includes(proibido), `VAZAMENTO — ${rotulo} vazou "${proibido}"`);
       }
+    }
+
+    // Fase 2.5: o código PESSOAL também não sai em leitura ampla — nem na
+    // listagem, nem no detalhe, nem no participante populado.
+    for (const [rotulo, resposta] of daAdvogada.filter(([r]) => !r.includes("acesso-portal"))) {
+      const bruto = JSON.stringify(resposta.body ?? {});
+      assert.ok(!bruto.includes("codigoAcessoPessoal"), `VAZAMENTO — ${rotulo} trouxe o código pessoal`);
+      assert.ok(!bruto.includes(c.codigoAcesso), `VAZAMENTO — ${rotulo} trouxe o valor do código pessoal`);
     }
 
     // `codigoAcesso` continua saindo SÓ na rota dedicada — e ali é para sair.
@@ -500,6 +538,353 @@ describe("portal: isolamento — a terceira dimensão", () => {
         assert.equal(r.body.senhaPortalProvisoria, true);
       }
     }
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Fase 2.5 — login por PESSOA, liberação por PROCESSO (DEC-089 a DEC-092)
+  //
+  // A sessão deixou de ser de um vínculo. O que impede um cliente de ver o que
+  // não é dele passou a ser o filtro de `exigirVinculoLiberado` (a cada
+  // requisição) e o de `listarProcessos`. Cada teste abaixo tenta atravessar
+  // esse filtro por um lado diferente, e registra no placar.
+  // ═════════════════════════════════════════════════════════════════════════
+  describe("Fase 2.5 — portal por pessoa", () => {
+    // Um cliente com portal e N processos, cada um liberado ou não.
+    const montarPessoa = async (rotulo, liberacoes, extraCliente = {}, fabrica = dadosClientePF) => {
+      const adv = await registrarUsuario(rotulo);
+      const cliente = esperado(
+        await adv.post("/clients", { ...fabrica(extraCliente), senhaPortal: SENHA_PROVISORIA }),
+        201, "cliente com portal"
+      );
+      const processos = [];
+      for (const liberado of liberacoes) {
+        const processo = await criarProcesso(adv, [
+          { clienteId: cliente._id, papel: "autor", principal: true }
+        ]);
+        if (liberado) await liberarNoPortal(adv, processo._id, cliente._id);
+        processos.push(processo);
+      }
+      const { codigoAcesso } = esperado(
+        await adv.get(`/clients/${cliente._id}/acesso-portal`).then((r) => ({
+          status: r.status, body: { codigoAcesso: r.body.codigoAcessoPessoal }
+        })),
+        200, "código pessoal"
+      );
+      return { adv, cliente, processos, codigoAcesso };
+    };
+
+    const NAO_ENCONTRADO = JSON.stringify({ message: "Processo não encontrado" });
+
+    test("vínculo NÃO liberado não aparece na lista e responde como inexistente", async () => {
+      const { processos, codigoAcesso } = await montarPessoa("p25-nao-liberado", [true, false]);
+      const [liberado, naoLiberado] = processos;
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-nl" });
+
+      const lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.deepEqual(lista.data.map((p) => p.id), [String(liberado._id)]);
+
+      // Mesmo corpo para "não liberado" e para um id que não existe.
+      for (const rota of [
+        `/portal/processos/${naoLiberado._id}`,
+        `/portal/processos/${naoLiberado._id}/documentos`,
+        `/portal/processos/${naoLiberado._id}/confirmacoes`
+      ]) {
+        placar.tentativasCruzadas += 1;
+        const r = await portal.get(rota);
+        registrar(r.status === 404, `${rota} (não liberado) devolveu ${r.status}`);
+        assert.equal(r.status, 404);
+        assert.equal(JSON.stringify(r.body), NAO_ENCONTRADO);
+      }
+      const inexistente = await portal.get("/portal/processos/000000000000000000000000");
+      assert.equal(inexistente.status, 404);
+      assert.equal(JSON.stringify(inexistente.body), NAO_ENCONTRADO, "'não é seu' e 'não existe' iguais");
+      const malformado = await portal.get("/portal/processos/nao-e-um-id");
+      assert.equal(JSON.stringify(malformado.body), NAO_ENCONTRADO, "id malformado também");
+
+      // E confirmar no não liberado também não passa.
+      placar.tentativasCruzadas += 1;
+      const conf = await portal.post(`/portal/processos/${naoLiberado._id}/confirmacoes`);
+      registrar(conf.status === 404, `confirmação em processo não liberado devolveu ${conf.status}`);
+      assert.equal(conf.status, 404);
+    });
+
+    test("processo de OUTRA advogada não aparece, nem pela URL direta", async () => {
+      const a = await montarPessoa("p25-adv-a", [true]);
+      const b = await montarPessoa("p25-adv-b", [true]);
+      const portalA = await entrarNoPortalComSenhaPropria(a.codigoAcesso, { rotulo: "p25-a" });
+
+      const lista = esperado(await portalA.get("/portal/processos"), 200, "lista de A");
+      assert.ok(!JSON.stringify(lista).includes(String(b.processos[0]._id)));
+
+      placar.tentativasCruzadas += 1;
+      const r = await portalA.get(`/portal/processos/${b.processos[0]._id}`);
+      registrar(r.status === 404, `processo de outra advogada devolveu ${r.status}`);
+      assert.equal(JSON.stringify(r.body), NAO_ENCONTRADO);
+    });
+
+    test("processo de OUTRO cliente da mesma advogada não aparece", async () => {
+      const { adv, codigoAcesso } = await montarPessoa("p25-outro-cliente", [true]);
+      const outro = esperado(
+        await adv.post("/clients", { ...dadosClientePF(), senhaPortal: SENHA_PROVISORIA }),
+        201, "outro cliente"
+      );
+      const doOutro = await criarProcesso(adv, [{ clienteId: outro._id, papel: "autor", principal: true }]);
+      await liberarNoPortal(adv, doOutro._id, outro._id);
+
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-oc" });
+      const lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.ok(!JSON.stringify(lista).includes(String(doOutro._id)));
+
+      placar.tentativasCruzadas += 1;
+      const r = await portal.get(`/portal/processos/${doOutro._id}`);
+      registrar(r.status === 404, `processo de outro cliente devolveu ${r.status}`);
+      assert.equal(JSON.stringify(r.body), NAO_ENCONTRADO);
+    });
+
+    test("desliberado no meio da sessão: a requisição SEGUINTE já é recusada", async () => {
+      const { adv, cliente, processos, codigoAcesso } = await montarPessoa("p25-desliberar", [true]);
+      const [processo] = processos;
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-dl" });
+
+      esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "visível");
+      await liberarNoPortal(adv, processo._id, cliente._id, false);
+
+      placar.tentativasCruzadas += 1;
+      const r = await portal.get(`/portal/processos/${processo._id}`);
+      registrar(r.status === 404, `desliberado ainda respondeu ${r.status}`);
+      assert.equal(r.status, 404, "VAZAMENTO — a liberação ficou no token");
+      assert.equal(esperado(await portal.get("/portal/processos"), 200, "lista").total, 0);
+      esperado(await portal.get("/portal/sessao"), 200, "a sessão continua");
+
+      // Liberar de novo devolve, sem novo login.
+      await liberarNoPortal(adv, processo._id, cliente._id, true);
+      esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "de volta");
+    });
+
+    test("o código de vínculo antigo não autentica, nem com a senha certa", async () => {
+      const { processos, cliente, codigoAcesso } = await montarPessoa("p25-antigo", [true]);
+      const antigo = await codigoDeVinculoDe(processos[0]._id, cliente._id);
+      assert.ok(antigo && antigo !== codigoAcesso, "o vínculo tem código próprio, diferente do pessoal");
+
+      placar.tentativasCruzadas += 1;
+      const api = novoClientePortal("p25-antigo-login");
+      const r = await api.post("/portal/login", { codigoAcesso: antigo, senha: SENHA_PROVISORIA });
+      registrar(r.status === 401, `código de vínculo autenticou (${r.status})`);
+      assert.equal(r.status, 401);
+      assert.equal(r.body.codigo, "credenciaisInvalidas");
+    });
+
+    test("senha provisória bloqueia tudo menos a troca (e a sessão)", async () => {
+      const { processos, codigoAcesso } = await montarPessoa("p25-provisoria", [true]);
+      const [processo] = processos;
+      const portal = await entrarNoPortal(codigoAcesso, SENHA_PROVISORIA, "p25-prov");
+
+      for (const rota of [
+        "/portal/processos",
+        `/portal/processos/${processo._id}`,
+        `/portal/processos/${processo._id}/documentos`,
+        `/portal/processos/${processo._id}/confirmacoes`
+      ]) {
+        const r = await portal.get(rota);
+        assert.equal(r.status, 403, `${rota} com senha provisória`);
+        assert.equal(r.body.codigo, "senhaPortalProvisoria");
+      }
+      const conf = await portal.post(`/portal/processos/${processo._id}/confirmacoes`);
+      assert.equal(conf.status, 403);
+      assert.equal(conf.body.codigo, "confirmacaoExigeSenhaPropria", "o 403 próprio da confirmação");
+
+      esperado(await portal.get("/portal/sessao"), 200, "sessão responde");
+      esperado(
+        await portal.patch("/portal/senha", { senhaAtual: SENHA_PROVISORIA, novaSenha: SENHA_DO_CLIENTE }),
+        200, "troca"
+      );
+      esperado(await portal.get("/portal/processos"), 200, "depois da troca, a lista");
+    });
+
+    test("PJ entra com o código DELA e vê os processos liberados dela", async () => {
+      const { cliente, processos, codigoAcesso } = await montarPessoa(
+        "p25-pj", [true, true, false], {}, dadosClientePJ
+      );
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-pj" });
+      const sessao = esperado(await portal.get("/portal/sessao"), 200, "sessão");
+      assert.equal(sessao.cliente.tipoPessoa, "juridica");
+      assert.equal(sessao.cliente.nome, cliente.razaoSocial);
+
+      const lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.deepEqual(
+        lista.data.map((p) => p.id).sort(),
+        [String(processos[0]._id), String(processos[1]._id)].sort()
+      );
+    });
+
+    test("cliente sem NENHUM processo liberado entra e vê a lista vazia", async () => {
+      const { codigoAcesso } = await montarPessoa("p25-vazio", [false]);
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-vazio" });
+      const lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.deepEqual(lista, { data: [], total: 0, page: 1, limit: 0, totalPages: 1 });
+    });
+
+    test("a lista traz N processos com fase, trânsito e os indicadores", async () => {
+      const { adv, cliente, processos, codigoAcesso } = await montarPessoa("p25-lista", [true, true]);
+      const [comDoc] = processos;
+      const secao = await criarSecao(adv, { texto: "Texto sem variável." });
+      const modelo = await criarModelo(adv);
+      await vincularSecao(adv, modelo._id, secao._id);
+      const doc = esperado(
+        await adv.post(`/documents/modelos/${modelo._id}/gerar`, { processoId: comDoc._id, clienteId: cliente._id }),
+        201, "doc"
+      );
+      esperado(await adv.patch(`/documents/${doc._id}/visibilidade-portal`, { visivelPortal: true }), 200, "visível");
+
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-lista" });
+      let lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.equal(lista.total, 2);
+      const item = lista.data.find((p) => p.id === String(comDoc._id));
+      assert.deepEqual(Object.keys(item).sort(), [
+        "confirmacaoPendente", "documentosNovos", "documentosVisiveis", "fase", "id", "meuPapel",
+        "numeroProcesso", "status", "titulo", "transitoEmJulgadoEm", "ultimaConfirmacao"
+      ], "a projeção é allowlist");
+      assert.equal(item.fase, "conhecimento");
+      assert.equal(item.documentosVisiveis, 1);
+      assert.equal(item.documentosNovos, 1);
+      assert.equal(item.confirmacaoPendente, true);
+
+      esperado(await portal.post(`/portal/processos/${comDoc._id}/confirmacoes`), 201, "confirma");
+      lista = esperado(await portal.get("/portal/processos"), 200, "lista depois");
+      const depois = lista.data.find((p) => p.id === String(comDoc._id));
+      assert.equal(depois.documentosNovos, 0);
+      assert.equal(depois.confirmacaoPendente, false);
+      assert.ok(depois.ultimaConfirmacao);
+
+      // O recibo diz de QUAL processo.
+      const recibos = esperado(await portal.get(`/portal/processos/${comDoc._id}/confirmacoes`), 200, "recibos");
+      assert.equal(recibos.data[0].processo.id, String(comDoc._id));
+    });
+
+    test("reativar o processo NÃO libera sozinho um vínculo que estava não liberado", async () => {
+      const { adv, processos, codigoAcesso } = await montarPessoa("p25-reativa", [false]);
+      const [processo] = processos;
+      esperado(await adv.delete(`/processes/${processo._id}`), 200, "desativa");
+      esperado(await adv.patch(`/processes/${processo._id}/reactivate`, {}), 200, "reativa");
+
+      const portal = await entrarNoPortalComSenhaPropria(codigoAcesso, { rotulo: "p25-reat" });
+      assert.equal(esperado(await portal.get("/portal/processos"), 200, "lista").total, 0);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}`)).status, 404);
+    });
+
+    test("a liberação só aceita boolean, e só no vínculo da própria advogada", async () => {
+      const a = await montarPessoa("p25-lib-a", [false]);
+      const b = await registrarUsuario("p25-lib-b");
+      const [processo] = a.processos;
+      const base = `/processes/${processo._id}/clientes/${a.cliente._id}/liberacao`;
+
+      const semValor = await a.adv.patch(base, {});
+      assert.equal(semValor.status, 400);
+      assert.equal(semValor.body.campo, "liberadoNoPortal");
+      const texto = await a.adv.patch(base, { liberadoNoPortal: "sim" });
+      assert.equal(texto.status, 400);
+      const intruso = await a.adv.patch(base, { liberadoNoPortal: true, ativo: false });
+      assert.equal(intruso.status, 400);
+      assert.equal(intruso.body.campo, "ativo");
+
+      placar.tentativasCruzadas += 1;
+      const deB = await b.patch(base, { liberadoNoPortal: true });
+      registrar(deB.status === 404, `outra advogada liberou um vínculo (${deB.status})`);
+      assert.equal(deB.status, 404);
+      placar.tentativasCruzadas += 1;
+      const acessoDeB = await b.get(`/clients/${a.cliente._id}/acesso-portal`);
+      registrar(acessoDeB.status === 404, `outra advogada leu o acesso ao portal (${acessoDeB.status})`);
+      assert.equal(acessoDeB.status, 404);
+    });
+
+    test("o acesso ao portal do cliente: código, senha e N de M liberados", async () => {
+      const { adv, cliente, codigoAcesso } = await montarPessoa("p25-acesso", [true, false, true]);
+      const r = esperado(await adv.get(`/clients/${cliente._id}/acesso-portal`), 200, "acesso");
+      assert.equal(r.codigoAcessoPessoal, codigoAcesso);
+      assert.equal(r.temSenhaPortal, true);
+      assert.equal(r.senhaPortalProvisoria, true);
+      assert.equal(r.processosLiberados, 2);
+      assert.equal(r.processosAtivos, 3);
+      assert.equal(r.processos.length, 3);
+      assert.ok(!JSON.stringify(r).includes("senhaPortalHash"));
+      assert.ok(!JSON.stringify(r).includes("$2"), "nenhum hash");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // A unicidade entre os dois espaços de código (DEC-089/090)
+  //
+  // Índice não atravessa coleção. O que garante que um código pessoal nunca
+  // coincide com um de vínculo (e o contrário) é o gerador, que consulta os
+  // dois. Para provar sem depender de sorte, o sorteio é FORÇADO: a primeira
+  // tentativa devolve exatamente um código já usado no outro espaço.
+  // ═════════════════════════════════════════════════════════════════════════
+  describe("Fase 2.5 — código pessoal único contra os códigos de vínculo", () => {
+    const bytesDoCodigo = (codigo) => {
+      const alfabeto = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+      const sorteado = codigo.replace(/^LEX-/, "").replace("-", "");
+      return Buffer.from([...sorteado].map((c) => alfabeto.indexOf(c)));
+    };
+
+    test("o gerador PESSOAL pula um código que já é de vínculo", async () => {
+      const { default: crypto } = await import("crypto");
+      const { gerarCodigoPessoal } = await import("../../src/services/codigoPessoal.js");
+      const { processos, cliente } = await (async () => {
+        const adv = await registrarUsuario("p25-uni-1");
+        const c = esperado(await adv.post("/clients", dadosClientePF()), 201, "c");
+        const p = await criarProcesso(adv, [{ clienteId: c._id, papel: "autor", principal: true }]);
+        return { processos: [p], cliente: c };
+      })();
+      const deVinculo = await codigoDeVinculoDe(processos[0]._id, cliente._id);
+
+      const original = crypto.randomBytes;
+      let chamadas = 0;
+      crypto.randomBytes = (n) => {
+        chamadas += 1;
+        return chamadas === 1 ? bytesDoCodigo(deVinculo) : original(n);
+      };
+      try {
+        const gerado = await gerarCodigoPessoal();
+        assert.equal(chamadas, 2, "a primeira tentativa (colidindo) foi descartada");
+        assert.notEqual(gerado, deVinculo);
+      } finally {
+        crypto.randomBytes = original;
+      }
+    });
+
+    test("o gerador de VÍNCULO pula um código que já é pessoal", async () => {
+      const { default: crypto } = await import("crypto");
+      const { gerarCodigoParaVinculo } = await import("../../src/services/processoClienteService.js");
+      const { codigoAcesso: pessoal } = await montarCenarioPortal("p25-uni-2");
+
+      const original = crypto.randomBytes;
+      let chamadas = 0;
+      crypto.randomBytes = (n) => {
+        chamadas += 1;
+        return chamadas === 1 ? bytesDoCodigo(pessoal) : original(n);
+      };
+      try {
+        const gerado = await gerarCodigoParaVinculo();
+        assert.equal(chamadas, 2, "a primeira tentativa (colidindo) foi descartada");
+        assert.notEqual(gerado, pessoal);
+      } finally {
+        crypto.randomBytes = original;
+      }
+    });
+
+    test("redefinir a senha mantém o código pessoal; revogar não o apaga", async () => {
+      const { adv, cliente, processo, codigoAcesso } = await montarCenarioPortal("p25-mantem");
+      esperado(await adv.patch(`/clients/${cliente._id}`, { senhaPortal: "OutraProvisoria1" }), 200, "redefine");
+      assert.equal(await codigoAcessoDe(adv, processo._id, cliente._id), codigoAcesso, "mesmo código");
+
+      esperado(await adv.delete(`/clients/${cliente._id}/senha-portal`), 200, "revoga");
+      const { acharEm, COLECOES } = await import("../helpers/db.js");
+      const { default: mongoose } = await import("mongoose");
+      const [gravado] = await acharEm(COLECOES.CLIENTS, { _id: new mongoose.Types.ObjectId(String(cliente._id)) });
+      assert.equal(gravado.codigoAcessoPessoal, codigoAcesso, "o código continua reservado");
+      // Sem senha, a rota não entrega código nenhum.
+      assert.equal(await codigoAcessoDe(adv, processo._id, cliente._id), null);
+    });
   });
 
   test("placar do isolamento do portal: zero vazamentos", () => {

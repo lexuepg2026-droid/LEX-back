@@ -802,12 +802,19 @@ describe("isolamento por usuarioId", () => {
     });
 
     test("o código de acesso do vínculo de A continua sendo o mesmo", async () => {
+      // Fase 2.5: a rota responde para A e diz, sem inventar, que este
+      // cliente ainda não tem portal (sem senha, sem código pessoal). O
+      // código do VÍNCULO continua gravado e no formato — ele não sai por
+      // rota nenhuma desde a DEC-093, e é lido do banco.
       const r = esperado(
         await A.get(`/processes/${a.processo._id}/clientes/${a.pf._id}/codigo-acesso`),
         200,
         "código de acesso de A"
       );
-      assert.match(r.codigoAcesso, /^LEX-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+      assert.equal(r.temSenhaPortal, false);
+      assert.equal(r.codigoAcesso, null);
+      const { codigoDeVinculoDe } = await import("../helpers/portal.js");
+      assert.match(await codigoDeVinculoDe(a.processo._id, a.pf._id), /^LEX-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
     });
 
     test("placar do bloco de isolamento: zero vazamentos", () => {

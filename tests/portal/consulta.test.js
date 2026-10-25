@@ -20,7 +20,7 @@ import { dadosClientePF } from "../helpers/factories.js";
 import { extrairTextoDoPdf } from "../helpers/pdfText.js";
 import {
   montarCenarioPortal, entrarNoPortalComSenhaPropria, entrarNoPortal,
-  codigoAcessoDe, SENHA_PROVISORIA
+  codigoAcessoDe, SENHA_PROVISORIA, liberarNoPortal
 } from "../helpers/portal.js";
 import { ERRO_PORTAL } from "../../src/config/portalErrors.js";
 
@@ -87,7 +87,7 @@ describe("portal: consulta", () => {
       );
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r = esperado(await portal.get("/portal/processo"), 200, "processo");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo");
 
       assert.equal(r.processo.numeroProcesso, processo.numeroProcesso);
       assert.equal(r.processo.meuPapel, "autor");
@@ -111,7 +111,7 @@ describe("portal: consulta", () => {
       );
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r = esperado(await portal.get("/portal/processo"), 200, "processo");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo");
 
       // Conjunto FECHADO de chaves. Um campo novo no schema não pode aparecer
       // aqui sem alguém escrever a linha na projeção — e sem este teste cair.
@@ -173,7 +173,7 @@ describe("portal: consulta", () => {
 
       // Processo recém-criado: fase padrão, sem trânsito em julgado. `null`,
       // nunca `undefined` — o portal distingue "não tem" de "esqueci de projetar".
-      let r = esperado(await portal.get("/portal/processo"), 200, "processo novo");
+      let r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo novo");
       assert.equal(r.processo.fase, "conhecimento");
       assert.equal(r.processo.transitoEmJulgadoEm, null);
       assert.ok(
@@ -187,7 +187,7 @@ describe("portal: consulta", () => {
           await adv.patch(`/processes/${processo._id}/fase`, { fase }),
           200, `fase ${fase}`
         );
-        r = esperado(await portal.get("/portal/processo"), 200, `processo em ${fase}`);
+        r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, `processo em ${fase}`);
         assert.equal(r.processo.fase, fase);
       }
     });
@@ -203,7 +203,7 @@ describe("portal: consulta", () => {
         200, "registrar trânsito em julgado"
       );
 
-      let r = esperado(await portal.get("/portal/processo"), 200, "processo transitado");
+      let r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo transitado");
       assert.equal(new Date(r.processo.transitoEmJulgadoEm).toISOString().slice(0, 10), "2026-03-15");
       // Eixos independentes: o trânsito não altera a fase mostrada.
       assert.equal(r.processo.fase, "conhecimento");
@@ -212,7 +212,7 @@ describe("portal: consulta", () => {
         await adv.patch(`/processes/${processo._id}`, { transitoEmJulgadoEm: null }),
         200, "desfazer trânsito em julgado"
       );
-      r = esperado(await portal.get("/portal/processo"), 200, "processo reaberto");
+      r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo reaberto");
       assert.equal(r.processo.transitoEmJulgadoEm, null);
     });
 
@@ -239,7 +239,7 @@ describe("portal: consulta", () => {
       );
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r = esperado(await portal.get("/portal/processo"), 200, "processo");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo");
 
       assert.equal(r.processo.fase, "execucao", "a fase em si SAI");
 
@@ -279,9 +279,11 @@ describe("portal: consulta", () => {
         { clienteId: b._id, papel: "litisconsorte", principal: false }
       ]);
 
+      await liberarNoPortal(adv, processo._id, a._id);
+
       const codigo = await codigoAcessoDe(adv, processo._id, a._id);
       const portal = await entrarNoPortalComSenhaPropria(codigo);
-      const r = esperado(await portal.get("/portal/processo"), 200, "processo");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo");
 
       const bruto = JSON.stringify(r);
       assert.ok(!bruto.includes("LITISCONSORTE SECRETO"), "o outro participante vazou");
@@ -323,9 +325,9 @@ describe("portal: consulta", () => {
       // Todas as rotas de dado do portal, não só a do processo: um campo novo
       // entra por qualquer uma delas.
       const respostas = [
-        ["GET /portal/processo", await portal.get("/portal/processo")],
-        ["GET /portal/documentos", await portal.get("/portal/documentos")],
-        ["GET /portal/confirmacoes", await portal.get("/portal/confirmacoes")],
+        ["GET /portal/processo", await portal.get(`/portal/processos/${processo._id}`)],
+        ["GET /portal/documentos", await portal.get(`/portal/processos/${processo._id}/documentos`)],
+        ["GET /portal/confirmacoes", await portal.get(`/portal/processos/${processo._id}/confirmacoes`)],
         ["GET /portal/sessao", await portal.get("/portal/sessao")]
       ];
 
@@ -369,7 +371,7 @@ describe("portal: consulta", () => {
       const invisivel = await gerarDocumento(adv, processo._id, cliente._id, { visivel: false });
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const r = esperado(await portal.get("/portal/documentos"), 200, "documentos");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "documentos");
 
       const ids = r.data.map((d) => d.id);
       assert.deepEqual(ids, [String(visivel._id)], "a listagem não bate com o esperado");
@@ -408,16 +410,18 @@ describe("portal: consulta", () => {
       const doA = await gerarDocumento(adv, processo._id, a._id, { visivel: true });
       const doB = await gerarDocumento(adv, processo._id, b._id, { visivel: true });
 
+      await liberarNoPortal(adv, processo._id, a._id);
+
       const codigo = await codigoAcessoDe(adv, processo._id, a._id);
       const portal = await entrarNoPortalComSenhaPropria(codigo);
-      const r = esperado(await portal.get("/portal/documentos"), 200, "documentos");
+      const r = esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "documentos");
 
       const ids = r.data.map((d) => d.id);
       assert.ok(ids.includes(String(doA._id)), "o documento do próprio cliente sumiu");
       assert.ok(!ids.includes(String(doB._id)), "VAZAMENTO — documento do litisconsorte apareceu");
 
       // E o download direto também é negado, com 404.
-      assert.equal((await portal.get(`/portal/documentos/${doB._id}/download`)).status, 404);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos/${doB._id}/download`)).status, 404);
     });
 
     test("modelo e documento de upload nunca aparecem", async () => {
@@ -439,7 +443,7 @@ describe("portal: consulta", () => {
       await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
-      const ids = esperado(await portal.get("/portal/documentos"), 200, "docs").data.map((d) => d.id);
+      const ids = esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "docs").data.map((d) => d.id);
 
       assert.ok(!ids.includes(String(modelo._id)), "modelo apareceu no portal");
       assert.ok(!ids.includes(String(upload._id)), "documento de upload apareceu no portal");
@@ -458,7 +462,7 @@ describe("portal: consulta", () => {
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      const doPortal = await portal.get(`/portal/documentos/${doc._id}/download?formato=pdf`);
+      const doPortal = await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download?formato=pdf`);
       const daAdvogada = await adv.get(`/documents/${doc._id}/download?formato=pdf`);
 
       assert.equal(doPortal.status, 200, `download do portal falhou: ${doPortal.status}`);
@@ -480,7 +484,7 @@ describe("portal: consulta", () => {
       const doc = await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      const r = await portal.get(`/portal/documentos/${doc._id}/download?formato=docx`);
+      const r = await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download?formato=docx`);
       assert.equal(r.status, 200);
       assert.equal(r.bytes.subarray(0, 2).toString("latin1"), "PK");
     });
@@ -491,7 +495,7 @@ describe("portal: consulta", () => {
       const invisivel = await gerarDocumento(adv, processo._id, cliente._id, { visivel: false });
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      const r = await portal.get(`/portal/documentos/${invisivel._id}/download`);
+      const r = await portal.get(`/portal/processos/${processo._id}/documentos/${invisivel._id}/download`);
       assert.equal(r.status, 404, `esperado 404, veio ${r.status}`);
     });
 
@@ -500,22 +504,22 @@ describe("portal: consulta", () => {
       const doc = await gerarDocumento(adv, processo._id, cliente._id, { visivel: true });
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      esperado(await portal.get(`/portal/documentos/${doc._id}/download`), 200, "antes");
+      esperado(await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download`), 200, "antes");
       esperado(await adv.delete(`/documents/${doc._id}`), 200, "desativa o documento");
 
-      assert.equal((await portal.get(`/portal/documentos/${doc._id}/download`)).status, 404);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download`)).status, 404);
       assert.equal(
-        esperado(await portal.get("/portal/documentos"), 200, "docs").total,
+        esperado(await portal.get(`/portal/processos/${processo._id}/documentos`), 200, "docs").total,
         0
       );
     });
 
     test("id inexistente e id malformado → 404", async () => {
-      const { codigoAcesso } = await montarCenarioPortal("docs-id");
+      const { processo, codigoAcesso } = await montarCenarioPortal("docs-id");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      assert.equal((await portal.get("/portal/documentos/000000000000000000000000/download")).status, 404);
-      assert.equal((await portal.get("/portal/documentos/nao-e-um-id/download")).status, 404);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos/000000000000000000000000/download`)).status, 404);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos/nao-e-um-id/download`)).status, 404);
     });
 
     test("formato inválido → 400", async () => {
@@ -524,7 +528,7 @@ describe("portal: consulta", () => {
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
       assert.equal(
-        (await portal.get(`/portal/documentos/${doc._id}/download?formato=txt`)).status,
+        (await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download?formato=txt`)).status,
         400
       );
     });
@@ -542,9 +546,9 @@ describe("portal: consulta", () => {
       const portal = await entrarNoPortal(codigoAcesso); // sem trocar a senha
 
       const rotas = [
-        ["GET", "/portal/processo"],
-        ["GET", "/portal/documentos"],
-        ["GET", `/portal/documentos/${doc._id}/download`]
+        ["GET", `/portal/processos/${processo._id}`],
+        ["GET", `/portal/processos/${processo._id}/documentos`],
+        ["GET", `/portal/processos/${processo._id}/documentos/${doc._id}/download`]
       ];
 
       for (const [metodo, rota] of rotas) {
@@ -564,9 +568,9 @@ describe("portal: consulta", () => {
 
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
-      assert.equal((await portal.get("/portal/processo")).status, 200);
-      assert.equal((await portal.get("/portal/documentos")).status, 200);
-      assert.equal((await portal.get(`/portal/documentos/${doc._id}/download`)).status, 200);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}`)).status, 200);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos`)).status, 200);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}/documentos/${doc._id}/download`)).status, 200);
     });
   });
 
@@ -576,13 +580,13 @@ describe("portal: consulta", () => {
 
   describe("registro de acesso", () => {
     test("primeiro acesso é gravado uma vez; o último se atualiza", async () => {
-      const { codigoAcesso } = await montarCenarioPortal("acesso");
+      const { processo, codigoAcesso } = await montarCenarioPortal("acesso");
       const portal = await entrarNoPortalComSenhaPropria(codigoAcesso);
 
       // A primeira leitura ainda devolve o estado ANTES da escrita, porque o
       // registro não bloqueia a requisição. A segunda já enxerga.
-      esperado(await portal.get("/portal/processo"), 200, "1º acesso");
-      const segunda = esperado(await portal.get("/portal/processo"), 200, "2º acesso");
+      esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "1º acesso");
+      const segunda = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "2º acesso");
 
       assert.ok(segunda.acesso.primeiroAcesso, "primeiroAcesso não foi gravado");
       assert.ok(segunda.acesso.ultimoAcesso, "ultimoAcesso não foi gravado");
@@ -590,8 +594,8 @@ describe("portal: consulta", () => {
       const primeiroRegistrado = segunda.acesso.primeiroAcesso;
 
       await new Promise((r) => setTimeout(r, 1100));
-      esperado(await portal.get("/portal/processo"), 200, "3º acesso");
-      const quarta = esperado(await portal.get("/portal/processo"), 200, "4º acesso");
+      esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "3º acesso");
+      const quarta = esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "4º acesso");
 
       assert.equal(
         quarta.acesso.primeiroAcesso,
@@ -612,8 +616,8 @@ describe("portal: consulta", () => {
       const { adv, cliente, processo, codigoAcesso } = await montarCenarioPortal("acesso-provisoria");
 
       const portal = await entrarNoPortal(codigoAcesso);
-      await portal.get("/portal/processo"); // 403
-      await portal.get("/portal/documentos"); // 403
+      await portal.get(`/portal/processos/${processo._id}`); // 403
+      await portal.get(`/portal/processos/${processo._id}/documentos`); // 403
 
       const participantes = esperado(
         await adv.get(`/processes/${processo._id}/clientes`),

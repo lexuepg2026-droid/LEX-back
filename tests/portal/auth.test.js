@@ -23,7 +23,8 @@ import { dadosClientePF } from "../helpers/factories.js";
 import { ClienteApi } from "../helpers/client.js";
 import {
   montarCenarioPortal, entrarNoPortal, entrarNoPortalComSenhaPropria,
-  codigoAcessoDe, novoClientePortal, SENHA_PROVISORIA, SENHA_DO_CLIENTE
+  codigoAcessoDe, novoClientePortal, SENHA_PROVISORIA, SENHA_DO_CLIENTE,
+  codigoDeVinculoDe, liberarNoPortal
 } from "../helpers/portal.js";
 import { ERRO_PORTAL } from "../../src/config/portalErrors.js";
 import { NOME_COOKIE_PORTAL, EXPIRACAO_SESSAO_PORTAL } from "../../src/services/portalAuthService.js";
@@ -53,8 +54,11 @@ describe("portal: autenticação", () => {
 
       assert.equal(r.status, 200, `esperado 200 — ${JSON.stringify(r.body)}`);
       assert.equal(r.body.senhaPortalProvisoria, true, "a senha da advogada nasce provisória");
-      assert.equal(String(r.body.processoId), String(processo._id));
       assert.equal(String(r.body.clienteId), String(cliente._id));
+      // Fase 2.5 (DEC-089): a sessão é da PESSOA. O login não escolhe processo
+      // nenhum — eles vêm de `GET /portal/processos`.
+      assert.equal(r.body.processoId, undefined, "o login não devolve mais processo");
+      assert.ok(processo._id, "o cenário tem processo — e mesmo assim ele não vem no login");
 
       assert.ok(api.cookies.has(NOME_COOKIE_PORTAL), "o cookie lex-portal-token não foi emitido");
       assert.ok(!api.cookies.has("lex-token"), "o portal não pode emitir o cookie da advogada");
@@ -103,6 +107,11 @@ describe("portal: autenticação", () => {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("401 unificado: os seis casos são indistinguíveis", () => {
+    // Fase 2.5 (DEC-089/090): o login é pelo código PESSOAL, e não olha
+    // processo nenhum. "Vínculo inativo" e "processo inativo" deixaram de ser
+    // casos de login — quem entra sem processo liberado vê a lista vazia. No
+    // lugar deles entraram os dois casos que a 2.5 cria: o código de VÍNCULO
+    // antigo (ativo e inativo), que não autentica mais.
     test("corpo e status byte-idênticos nos 6 casos", async () => {
       const respostas = {};
       const registrar = async (rotulo, corpo) => {
@@ -117,7 +126,14 @@ describe("portal: autenticação", () => {
         senha: SENHA_PROVISORIA
       });
 
-      // 2. vínculo inativo
+      // 2. o código de VÍNCULO antigo, com a senha CERTA — sem transição
+      {
+        const { processo, cliente } = await montarCenarioPortal("adv-vinculo-antigo");
+        const deVinculo = await codigoDeVinculoDe(processo._id, cliente._id);
+        await registrar("codigo de vinculo", { codigoAcesso: deVinculo, senha: SENHA_PROVISORIA });
+      }
+
+      // 3. o código de um vínculo INATIVO, com a senha certa
       {
         const adv = await registrarUsuario("adv-vinculo-inativo");
         const c1 = esperado(
@@ -129,57 +145,34 @@ describe("portal: autenticação", () => {
           { clienteId: c2._id, papel: "autor", principal: true },
           { clienteId: c1._id, papel: "litisconsorte", principal: false }
         ]);
-        const codigo = await codigoAcessoDe(adv, processo._id, c1._id);
+        const deVinculo = await codigoDeVinculoDe(processo._id, c1._id);
         esperado(
           await adv.delete(`/processes/${processo._id}/clientes/${c1._id}`),
           200, "desativa o vínculo"
         );
-        await registrar("vinculo inativo", { codigoAcesso: codigo, senha: SENHA_PROVISORIA });
+        await registrar("vinculo inativo", { codigoAcesso: deVinculo, senha: SENHA_PROVISORIA });
       }
 
-      // 3. cliente sem senha de portal
+      // 4. cliente SEM senha: o acesso foi revogado e o código pessoal ficou
       {
-        const adv = await registrarUsuario("adv-sem-senha");
-        const cliente = esperado(await adv.post("/clients", dadosClientePF()), 201, "cliente");
-        const processo = await criarProcesso(adv, [
-          { clienteId: cliente._id, papel: "autor", principal: true }
-        ]);
-        const codigo = await codigoAcessoDe(adv, processo._id, cliente._id);
-        await registrar("sem senha", { codigoAcesso: codigo, senha: SENHA_PROVISORIA });
+        const { adv, cliente, codigoAcesso } = await montarCenarioPortal("adv-sem-senha");
+        esperado(await adv.delete(`/clients/${cliente._id}/senha-portal`), 200, "revoga");
+        await registrar("sem senha", { codigoAcesso, senha: SENHA_PROVISORIA });
       }
 
-      // 4. senha errada
+      // 5. senha errada
       {
         const { codigoAcesso } = await montarCenarioPortal("adv-senha-errada");
         await registrar("senha errada", { codigoAcesso, senha: "SenhaErrada999" });
       }
 
-      // 5. cliente inativo
+      // 6. cliente inativo
       {
-        const adv = await registrarUsuario("adv-cliente-inativo");
-        const cliente = esperado(
-          await adv.post("/clients", { ...dadosClientePF(), senhaPortal: SENHA_PROVISORIA }),
-          201, "cliente"
-        );
-        const outro = esperado(await adv.post("/clients", dadosClientePF()), 201, "outro");
-        const processo = await criarProcesso(adv, [
-          { clienteId: outro._id, papel: "autor", principal: true },
-          { clienteId: cliente._id, papel: "litisconsorte", principal: false }
-        ]);
-        const codigo = await codigoAcessoDe(adv, processo._id, cliente._id);
-        esperado(
-          await adv.delete(`/processes/${processo._id}/clientes/${cliente._id}`),
-          200, "desvincula para poder excluir"
-        );
-        esperado(await adv.delete(`/clients/${cliente._id}`), 200, "desativa o cliente");
-        await registrar("cliente inativo", { codigoAcesso: codigo, senha: SENHA_PROVISORIA });
-      }
-
-      // 6. processo inativo
-      {
-        const { adv, processo, codigoAcesso } = await montarCenarioPortal("adv-processo-inativo");
+        const { adv, cliente, processo, codigoAcesso } = await montarCenarioPortal("adv-cliente-inativo");
+        // Desativar o cliente exige que ele não esteja em processo ativo.
         esperado(await adv.delete(`/processes/${processo._id}`), 200, "desativa o processo");
-        await registrar("processo inativo", { codigoAcesso, senha: SENHA_PROVISORIA });
+        esperado(await adv.delete(`/clients/${cliente._id}`), 200, "desativa o cliente");
+        await registrar("cliente inativo", { codigoAcesso, senha: SENHA_PROVISORIA });
       }
 
       const rotulos = Object.keys(respostas);
@@ -220,8 +213,9 @@ describe("portal: autenticação", () => {
     });
 
     test("o código de um vínculo desativado continua RESERVADO globalmente", async () => {
-      // Regra da Fase 2B. Se o código voltasse ao sorteio, quem guardou o
-      // antigo entraria no processo de outra pessoa.
+      // Regra da Fase 2B, mantida pela DEC-090: o código de vínculo não
+      // autentica mais, e continua reservado — se voltasse ao sorteio como
+      // código PESSOAL de outra pessoa, o papel antigo abriria a conta errada.
       const adv = await registrarUsuario("adv-reserva");
       const c1 = esperado(await adv.post("/clients", dadosClientePF()), 201, "c1");
       const c2 = esperado(await adv.post("/clients", dadosClientePF()), 201, "c2");
@@ -229,7 +223,8 @@ describe("portal: autenticação", () => {
         { clienteId: c1._id, papel: "autor", principal: true },
         { clienteId: c2._id, papel: "litisconsorte", principal: false }
       ]);
-      const codigo = await codigoAcessoDe(adv, processo._id, c2._id);
+      const codigo = await codigoDeVinculoDe(processo._id, c2._id);
+      assert.ok(codigo, "o vínculo continua nascendo com código");
 
       esperado(
         await adv.delete(`/processes/${processo._id}/clientes/${c2._id}`),
@@ -250,12 +245,17 @@ describe("portal: autenticação", () => {
 
   describe("troca obrigatória de senha", () => {
     test("com senha provisória, /sessao responde e sinaliza o estado", async () => {
-      const { codigoAcesso } = await montarCenarioPortal("troca-sessao");
+      const { codigoAcesso, cliente } = await montarCenarioPortal("troca-sessao");
       const portal = await entrarNoPortal(codigoAcesso);
 
       const r = esperado(await portal.get("/portal/sessao"), 200, "sessão");
       assert.equal(r.senhaPortalProvisoria, true);
-      assert.equal(r.papel, "autor");
+      // Fase 2.5: a sessão diz QUEM entrou, e não mais o papel num processo —
+      // o papel vem com cada processo da lista.
+      assert.equal(r.cliente.id, String(cliente._id));
+      assert.equal(r.cliente.nome, cliente.nomeCompleto);
+      assert.equal(r.papel, undefined);
+      assert.deepEqual(Object.keys(r.cliente).sort(), ["id", "nome", "senhaPortalProvisoria", "tipoPessoa"]);
     });
 
     test("a troca marca definitiva, preenche a data e reemite a sessão", async () => {
@@ -430,7 +430,10 @@ describe("portal: autenticação", () => {
       );
     });
 
-    test("desativar o vínculo derruba a sessão na requisição seguinte", async () => {
+    test("desativar o vínculo tira AQUELE processo na requisição seguinte", async () => {
+      // Fase 2.5: a sessão é da pessoa e sobrevive — o que cai é o acesso ao
+      // processo cujo vínculo saiu, e cai na requisição seguinte, porque o
+      // middleware confere o vínculo a cada uma (`exigirVinculoLiberado`).
       const adv = await registrarUsuario("adv-desativa-vinculo");
       const c1 = esperado(
         await adv.post("/clients", { ...dadosClientePF(), senhaPortal: SENHA_PROVISORIA }),
@@ -441,13 +444,17 @@ describe("portal: autenticação", () => {
         { clienteId: c2._id, papel: "autor", principal: true },
         { clienteId: c1._id, papel: "litisconsorte", principal: false }
       ]);
+      await liberarNoPortal(adv, processo._id, c1._id);
       const codigo = await codigoAcessoDe(adv, processo._id, c1._id);
       const portal = await entrarNoPortalComSenhaPropria(codigo);
 
-      esperado(await portal.get("/portal/sessao"), 200, "sessão viva");
+      esperado(await portal.get(`/portal/processos/${processo._id}`), 200, "processo visível");
       esperado(await adv.delete(`/processes/${processo._id}/clientes/${c1._id}`), 200, "desvincula");
 
-      assert.equal((await portal.get("/portal/sessao")).status, 401);
+      assert.equal((await portal.get(`/portal/processos/${processo._id}`)).status, 404);
+      const lista = esperado(await portal.get("/portal/processos"), 200, "lista");
+      assert.equal(lista.total, 0, "o processo saiu da lista");
+      esperado(await portal.get("/portal/sessao"), 200, "a sessão da pessoa continua");
     });
   });
 
@@ -463,9 +470,8 @@ describe("portal: autenticação", () => {
       const forjado = jwt.sign(
         {
           tipo: "portal",
-          processoClienteId: String(processo._id),
+          escopo: "pessoa",
           clienteId: String(cliente._id),
-          processoId: String(processo._id),
           usuarioId: String(cliente.usuarioId ?? processo.usuarioId)
         },
         process.env.JWT_SECRET,
