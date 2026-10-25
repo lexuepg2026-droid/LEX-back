@@ -171,7 +171,7 @@ export const getStatusCounts = async (usuarioId) => {
 //    As duas fecham com as fichas; só a segunda descreve a dívida real.
 // 3. `saldoAdiantado` deixou de entrar em conta nenhuma: sai nomeado.
 // ═══════════════════════════════════════════════════════════════════════════
-export const getFinanceiroResumo = async (usuarioId) => {
+export const getFinanceiroResumo = async (usuarioId, { mes: mesPedido } = {}) => {
   const uid = new mongoose.Types.ObjectId(usuarioId);
 
   // ── As fronteiras do mês são em UTC, e isso é deliberado ──────────────────
@@ -184,20 +184,36 @@ export const getFinanceiroResumo = async (usuarioId) => {
   // dentro de agosto num servidor a oeste de Greenwich — e a advogada leria,
   // no cartão "A receber em agosto", uma linha datada de setembro. O recorte
   // segue o mesmo fuso em que o dado foi gravado e é exibido.
+  //
+  // ── O mês ESCOLHIDO e o HOJE são duas coisas (Fase 3.1, DEC-098) ──────────
+  // `?mes=AAAA-MM` (já validado por `filtroMesReferencia`) muda SÓ o recorte
+  // do mês: `aReceberNoMes`, `recebidoNoMes` e o `mesReferencia` que os
+  // rotula. Ausente, o mês é o corrente do servidor, como sempre foi.
+  //
+  // O que NÃO muda com `mes`, e por quê — está tudo abaixo de `hoje`, e não
+  // de `inicioDoMes`:
+  //   - `valorContratado`, `recebido`, `pendente`, `saldoAdiantado`: são
+  //     ACUMULADOS do escritório até agora;
+  //   - `vencidas` e `valorVencido`: "vencido" é o status de HOJE (o que a
+  //     advogada precisa cobrar agora), e não o de um mês passado — o sistema
+  //     nem guarda o status que uma parcela tinha em julho;
+  //   - `proximosVencimentos`: "próximos" é sempre a partir de hoje; próximos
+  //     de um mês passado não fazem sentido.
   const agora = new Date();
-  const ano = agora.getUTCFullYear();
-  const mes = agora.getUTCMonth();
+  const ano = mesPedido ? mesPedido.ano : agora.getUTCFullYear();
+  const mes = mesPedido ? mesPedido.mes : agora.getUTCMonth();
 
   const inicioDoMes = new Date(Date.UTC(ano, mes, 1));
   const fimDoMes = new Date(Date.UTC(ano, mes + 1, 0, 23, 59, 59, 999));
   // Meia-noite de hoje: uma parcela que vence HOJE ainda é próximo
   // vencimento, e comparar com o instante atual a jogaria para o passado ao
-  // meio-dia.
-  const hoje = new Date(Date.UTC(ano, mes, agora.getUTCDate()));
+  // meio-dia. Sempre do relógio, nunca do mês escolhido.
+  const hoje = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate()));
 
   // `"2026-07"`. Vai na resposta para a tela rotular os cartões sem adivinhar
   // o mês: sem ele o frontend teria de recalcular o recorte por conta própria,
   // e "A receber em julho" com o número de agosto é pior do que rótulo nenhum.
+  // Com `?mes=`, é o mês EFETIVAMENTE usado — o pedido, já validado.
   const mesReferencia = `${ano}-${String(mes + 1).padStart(2, "0")}`;
 
   // ── 1. Processos ativos ───────────────────────────────────────────────────
@@ -412,9 +428,21 @@ export const getFinanceiroResumo = async (usuarioId) => {
 // A regra é a mesma da DEC-028 e da ficha da 4.1: a cobrança foi desfeita, e
 // somá-la faria ela ler como contratado um valor que ela mesma cancelou.
 // ═══════════════════════════════════════════════════════════════════════════
-export const getFeesByMonth = async (usuarioId) => {
-  const now = new Date();
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+//
+// ── A janela TERMINA no mês escolhido (Fase 3.1, DEC-098) ─────────────────
+// Seis meses, o último sendo o de `?mes=` (ou o corrente). É uma série
+// mensal: "seguir o mês" significa olhar os seis meses que levam até ele.
+// As bordas são em UTC, como o resto do financeiro — eram em fuso local, e o
+// `$month` do agrupamento sempre foi UTC: num servidor a oeste de Greenwich o
+// primeiro dia da janela caía no mês errado.
+export const MESES_DO_GRAFICO = 6;
+
+export const getFeesByMonth = async (usuarioId, { mes: mesPedido } = {}) => {
+  const agora = new Date();
+  const ano = mesPedido ? mesPedido.ano : agora.getUTCFullYear();
+  const mes = mesPedido ? mesPedido.mes : agora.getUTCMonth();
+  const inicioDaJanela = new Date(Date.UTC(ano, mes - (MESES_DO_GRAFICO - 1), 1));
+  const fimDaJanela = new Date(Date.UTC(ano, mes + 1, 0, 23, 59, 59, 999));
 
   const results = await Fee.aggregate([
     {
@@ -422,7 +450,7 @@ export const getFeesByMonth = async (usuarioId) => {
         usuarioId,
         ativo: true,
         status: { $ne: STATUS_CANCELADO },
-        createdAt: { $gte: sixMonthsAgo }
+        createdAt: { $gte: inicioDaJanela, $lte: fimDaJanela }
       }
     },
     {

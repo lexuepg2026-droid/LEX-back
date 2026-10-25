@@ -6564,6 +6564,44 @@ demonstração.
 
 ---
 
+## DEC-098 — `?mes=AAAA-MM` no resumo financeiro e no gráfico mensal (Fase 3.1)
+
+Apontamento 6 da banca: o Início passa a ter filtro de mês. Nenhuma rota nova:
+as duas que o Início já chamava ganham um parâmetro opcional.
+
+| Rota | Com `?mes=` | Sem `?mes=` |
+|---|---|---|
+| `GET /financeiro/resumo` | `aReceberNoMes`, `recebidoNoMes` e `mesReferencia` do mês pedido | o mês corrente, em UTC (como antes) |
+| `GET /dashboard/honorarios-por-mes` | janela de 6 meses que **termina** no mês pedido | termina no mês corrente (como antes) |
+
+**O que NÃO muda com `mes`, e por quê.** `valorContratado`, `recebido`,
+`pendente`, `saldoAdiantado`, `vencidas`, `valorVencido` e
+`proximosVencimentos` são retrato de HOJE: "quanto está vencido" e "o que vence
+daqui para a frente" não têm versão de março. Calcular "o vencido em março"
+exigiria o status que cada parcela tinha em março, que o sistema não guarda —
+e um número reconstruído por suposição, ao lado de números reais, é pior que a
+ausência. `hoje` continua saindo do relógio; só o recorte do mês segue o pedido.
+
+**Validação à mão** (`filtroMesReferencia`, em `utils/filtrosDeConsulta.js`):
+`AAAA-MM`, mês de 01 a 12, ano de **2000 a 2100**; ausente ou vazio é "sem
+mês"; qualquer outra coisa — inclusive o parâmetro repetido, que o Express
+entrega como array — é **400 com `campo: "mes"`**. As bordas do mês são em UTC,
+pela mesma razão do contrato da 4.3.
+
+**A DEC-068 vale com `mes`:** a parcela cancelada fica fora de
+`aReceberNoMes` em qualquer mês pedido, não só no corrente.
+
+**Testes** (`tests/financial/resumo.test.js`): ausente = corrente explícito;
+mês passado e mês futuro com valores conferidos; os campos fixos idênticos com e
+sem `mes`; oito formatos inválidos e o mês repetido em 400 com `campo`; o
+gráfico com a janela deslocada e com `2026-13` em 400; a cancelada fora com
+`?mes=`. **Commit:** `a92ef0b`.
+
+O lado da tela (o seletor, a URL, o espelho por mês, o que cada bloco segue) é a
+DEC-098 do `CLAUDE.md` do frontend.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

@@ -413,6 +413,95 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
   // advogada substituiu, e o Início a listava como próximo vencimento.
   //
   // Usuário próprio: este cenário não pode mexer nos números dos testes acima.
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Fase 3.1 (DEC-098) — `?mes=AAAA-MM`
+  //
+  // O arranjo acima tem dinheiro conhecido em três meses: no PASSADO a parcela
+  // 1 (2.000, quitada no próprio mês) e a 2 (3.000, em aberto); no CORRENTE a
+  // 3 (4.000, com 1.000 pagos); no SEGUINTE a 4 (1.000, intocada).
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("`?mes=` escolhe o mês dos campos do mês (DEC-098)", () => {
+    const chaveDoMes = (deslocamento) => {
+      const d = new Date(Date.UTC(ANO, MES + deslocamento, 1));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    };
+    const resumoDo = async (mes) =>
+      esperado(await api.get(`/financeiro/resumo?mes=${mes}`), 200, `resumo de ${mes}`);
+
+    // O que NÃO pode mudar com `mes`: acumulados, vencidos (são de HOJE) e
+    // os próximos vencimentos (sempre a partir de hoje).
+    const FIXOS = [
+      "valorContratado", "recebido", "pendente", "saldoAdiantado",
+      "vencidas", "valorVencido", "proximosVencimentos"
+    ];
+
+    test("sem `?mes=`, é o mesmo resumo do mês corrente pedido por extenso", async () => {
+      const sem = await resumo();
+      const com = await resumoDo(MES_REFERENCIA);
+      assert.deepEqual(com, sem);
+    });
+
+    test("um mês PASSADO com parcelas e pagamentos conhecidos", async () => {
+      const r = await resumoDo(chaveDoMes(-1));
+      assert.equal(r.mesReferencia, chaveDoMes(-1), "mesReferencia é o mês usado");
+      // Parcela 1 quitada (em aberto 0) + parcela 2 em aberto (3.000).
+      assert.equal(r.aReceberNoMes, 3000);
+      // O pagamento de 2.000 entrou no mês passado.
+      assert.equal(r.recebidoNoMes, 2000);
+    });
+
+    test("um mês FUTURO", async () => {
+      const r = await resumoDo(chaveDoMes(1));
+      assert.equal(r.mesReferencia, chaveDoMes(1));
+      assert.equal(r.aReceberNoMes, 1000, "só a parcela 4");
+      assert.equal(r.recebidoNoMes, 0, "não entrou dinheiro no futuro");
+    });
+
+    test("os campos que não seguem o mês saem IGUAIS em qualquer mês", async () => {
+      const base = await resumo();
+      for (const mes of [chaveDoMes(-1), chaveDoMes(1), "2001-01"]) {
+        const r = await resumoDo(mes);
+        for (const campo of FIXOS) {
+          assert.deepEqual(r[campo], base[campo], `${campo} mudou com mes=${mes}`);
+        }
+      }
+    });
+
+    for (const invalido of ["2026-13", "2026-00", "2026-1", "26-10", "outubro", "1999-12", "2101-01", "2026-10-01"]) {
+      test(`mes=${invalido} → 400 com campo "mes"`, async () => {
+        const r = await api.get(`/financeiro/resumo?mes=${encodeURIComponent(invalido)}`);
+        assert.equal(r.status, 400);
+        assert.equal(r.body.campo, "mes");
+        assert.match(r.body.message, /AAAA-MM/);
+      });
+    }
+
+    test("mês repetido na query (array) também é 400, não injeção", async () => {
+      const r = await api.get("/financeiro/resumo?mes=2026-10&mes=2026-09");
+      assert.equal(r.status, 400);
+      assert.equal(r.body.campo, "mes");
+    });
+
+    test("`honorarios-por-mes` com `?mes=`: a janela de 6 meses TERMINA nele", async () => {
+      // Os honorários do arranjo foram cadastrados HOJE.
+      const atual = esperado(await api.get("/dashboard/honorarios-por-mes"), 200, "gráfico");
+      assert.ok(atual.some((m) => m.mes === MES_REFERENCIA), "o mês corrente tem barra");
+
+      const adiante = esperado(await api.get(`/dashboard/honorarios-por-mes?mes=${chaveDoMes(3)}`), 200, "+3");
+      assert.deepEqual(adiante, atual, "três meses adiante, hoje ainda está na janela");
+
+      const longe = esperado(await api.get(`/dashboard/honorarios-por-mes?mes=${chaveDoMes(6)}`), 200, "+6");
+      assert.deepEqual(longe, [], "seis meses adiante, hoje saiu da janela");
+
+      const antes = esperado(await api.get(`/dashboard/honorarios-por-mes?mes=${chaveDoMes(-1)}`), 200, "-1");
+      assert.deepEqual(antes, [], "a janela que termina no mês passado não enxerga o que foi cadastrado hoje");
+
+      const errado = await api.get("/dashboard/honorarios-por-mes?mes=2026-13");
+      assert.equal(errado.status, 400);
+      assert.equal(errado.body.campo, "mes");
+    });
+  });
+
   describe("parcela cancelada por reparcelamento (DEC-068)", () => {
     let api2, original, plano;
 
@@ -454,6 +543,11 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
       assert.equal(lida.status, "cancelado", "o reparcelamento cancela a parcela original");
 
       plano = esperado(await api2.get("/financeiro/resumo"), 200, "resumo do usuário 2");
+    });
+
+    test("a cancelada também fica fora de `aReceberNoMes` com `?mes=` (DEC-068 + DEC-098)", async () => {
+      const r = esperado(await api2.get(`/financeiro/resumo?mes=${MES_REFERENCIA}`), 200, "resumo com mes");
+      assert.equal(r.aReceberNoMes, 0);
     });
 
     test("a cancelada não aparece em `proximosVencimentos`", () => {
