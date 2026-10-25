@@ -4,6 +4,7 @@ import { erroDePaiInativo, nomeDoCliente } from "./activationHierarchy.js";
 import Process from "../models/Process.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import { gerarCodigoAcessoUnico } from "../utils/accessCode.js";
+import { codigoEmUso } from "./codigoPessoal.js";
 import { estadoDoParticipante } from "../config/portalEstados.js";
 import {
   validateClienteId,
@@ -40,12 +41,12 @@ export const ehParticipanteDuplicado = (error) =>
   Boolean(error?.keyPattern?.processoId) &&
   Boolean(error?.keyPattern?.clienteId);
 
+// Fase 2.5 (DEC-090): o código de vínculo não autentica mais, mas continua
+// sendo gerado e reservado — e não pode coincidir com nenhum código PESSOAL.
+// `codigoEmUso` consulta os dois espaços; ver `services/codigoPessoal.js`.
 export const gerarCodigoParaVinculo = (session) =>
   gerarCodigoAcessoUnico(
-    async (candidato) =>
-      Boolean(
-        await ProcessoCliente.exists({ codigoAcesso: candidato }).session(session ?? null)
-      ),
+    (candidato) => codigoEmUso(candidato, session ?? null),
     TENTATIVAS_CODIGO
   );
 

@@ -53,6 +53,15 @@ const processoClienteSchema = new mongoose.Schema(
     },
     // Gerado pelo serviço (src/utils/accessCode.js). Nunca aceito do cliente
     // HTTP e nunca derivado de _id, número do processo ou CPF.
+    //
+    // ⚠️ DESDE A FASE 2.5 (DEC-090) ESTE CÓDIGO NÃO É MAIS CREDENCIAL. O login
+    // do portal procura só `Client.codigoAcessoPessoal`, e um código de vínculo
+    // digitado recebe o mesmo 401 de credencial inválida. Ele continua no
+    // schema, continua sendo gerado e continua no índice único global por um
+    // motivo só: RESERVA. Quem guardou o papel antigo tem um código no formato
+    // válido; se ele fosse sorteado de novo como código pessoal de outra
+    // pessoa, o papel velho abriria a conta errada. O gerador do código
+    // pessoal consulta este campo também (`services/codigoPessoal.js`).
     codigoAcesso: {
       type: String,
       required: true,
@@ -81,6 +90,23 @@ const processoClienteSchema = new mongoose.Schema(
     ultimaConfirmacaoEm: {
       type: Date,
       default: null
+    },
+
+    // ── Liberação no portal (Fase 2.5, DEC-091) ─────────────────────────────
+    // Login é por pessoa; o que ela VÊ é decidido processo a processo, aqui.
+    // Vínculo novo nasce NÃO liberado: um processo cadastrado hoje não pode
+    // aparecer sozinho para um cliente que já tem senha — a advogada decide
+    // quando, e o padrão seguro é não mostrar. Os vínculos que existiam antes
+    // da 2.5 foram migrados como liberados (`scripts/migrarPortalPessoal.js`),
+    // porque era o que a pessoa já via com o código daquele processo.
+    //
+    // Independe de `ativo`: a cascata de desativação (DEC-052) e a reativação
+    // não tocam neste campo. Desativar tira o acesso pelo `ativo`; reativar
+    // devolve o vínculo como ele estava — liberado ou não.
+    liberadoNoPortal: {
+      type: Boolean,
+      required: true,
+      default: false
     },
 
     ativo: {

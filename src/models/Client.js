@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import historicoAtivacaoSchema from "./shared/historicoAtivacaoSchema.js";
 import enderecoSchema from "./shared/enderecoSchema.js";
 import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
+import { TAMANHO_CODIGO } from "../utils/accessCode.js";
 
 const representanteLegalSchema = new mongoose.Schema(
   {
@@ -116,10 +117,31 @@ const clientSchema = new mongoose.Schema(
       trim: true
     },
 
-    // ── Portal do cliente (DEC-029) ─────────────────────────────────────────
-    // A senha é do CLIENTE, não do vínculo: um cliente com três processos tem
-    // três códigos de acesso e uma senha só. Códigos identificam qual processo
-    // a sessão enxerga; a senha identifica a pessoa.
+    // ── Portal do cliente (DEC-029; login por pessoa desde a Fase 2.5) ─────
+    // A senha é do CLIENTE, não do vínculo, desde a DEC-029. Até a Fase 2.5 o
+    // CÓDIGO era do vínculo — três processos, três códigos e uma senha —, e a
+    // 3ª banca apontou o que isso custava (itens 14 e 15): um login por
+    // processo. Agora código e senha são os dois da pessoa (DEC-089), e quais
+    // processos ela vê é `ProcessoCliente.liberadoNoPortal`, um por um.
+    //
+    // `codigoAcessoPessoal` é a credencial de login. Mesmo formato e mesmo
+    // gerador do código de vínculo (`utils/accessCode.js`), sorteado pelo
+    // serviço quando o cliente passa a ter senha de portal — nunca aceito do
+    // cliente HTTP, nunca derivado de CPF ou de `_id`.
+    //
+    // Único GLOBAL (não por `usuarioId`): o login não sabe de qual escritório
+    // a pessoa é — o código é o que diz. `sparse` porque cliente sem portal
+    // não tem código, e dois "sem código" não podem colidir no índice.
+    //
+    // Revogar o acesso (`DELETE /clients/:id/senha-portal`) NÃO apaga o
+    // código: ele continua reservado e volta a valer se a advogada der uma
+    // senha nova. Sem senha não há login, então o código sozinho não abre nada.
+    codigoAcessoPessoal: {
+      type: String,
+      trim: true,
+      minlength: TAMANHO_CODIGO,
+      maxlength: TAMANHO_CODIGO
+    },
     //
     // `select: false` é a defesa de base. Toda leitura do projeto usa
     // `Client.find`/`findOne` sem projeção explícita, então sem isto o hash
@@ -188,6 +210,12 @@ const clientSchema = new mongoose.Schema(
     timestamps: true
   }
 );
+
+// Fase 2.5 (DEC-089): o código pessoal é único no sistema inteiro. A
+// unicidade CONTRA os códigos de vínculo (`processo_clientes.codigoAcesso`)
+// não cabe num índice — são duas coleções — e é garantida pelo gerador, que
+// consulta os dois espaços (`services/codigoPessoal.js`).
+clientSchema.index({ codigoAcessoPessoal: 1 }, { unique: true, sparse: true });
 
 clientSchema.index(
   { usuarioId: 1, cpf: 1 },
