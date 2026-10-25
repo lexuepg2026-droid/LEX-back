@@ -1,4 +1,5 @@
 import { getSummary, getStatusCounts, getFeesByMonth, getFinanceiroResumo } from "../services/dashboardService.js";
+import { filtroMesReferencia } from "../utils/filtrosDeConsulta.js";
 import {
   montarFichaFinanceira,
   listarPagamentosDoProcesso
@@ -24,7 +25,8 @@ export const getDashboardStatus = async (req, res, next) => {
 
 export const getDashboardFeesByMonth = async (req, res, next) => {
   try {
-    const data = await getFeesByMonth(req.user._id);
+    // Fase 3.1: `?mes=AAAA-MM` faz a janela de 6 meses terminar nele.
+    const data = await getFeesByMonth(req.user._id, { mes: filtroMesReferencia(req.query.mes) });
     res.json(data);
   } catch (error) {
     next(error);
@@ -58,7 +60,9 @@ export const getPagamentosDoProcesso = async (req, res, next) => {
 
 export const getFinanceiro = async (req, res, next) => {
   try {
-    const resumo = await getFinanceiroResumo(req.user._id);
+    // Fase 3.1 (DEC-098): `?mes=AAAA-MM` escolhe o mês dos campos do mês.
+    // Validado aqui, antes do service: mês inválido é 400 com `campo: "mes"`.
+    const resumo = await getFinanceiroResumo(req.user._id, { mes: filtroMesReferencia(req.query.mes) });
     res.json(resumo);
   } catch (error) {
     next(error);

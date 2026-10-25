@@ -269,7 +269,49 @@ export const filtroPeriodo = (de, ate, { campoDe = "de", campoAte = "ate" } = {}
   return intervalo;
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// O MÊS DE REFERÊNCIA — `?mes=AAAA-MM` (Fase 3.1, DEC-098)
+//
+// O Início escolhe o mês dos blocos financeiros e dos gráficos. Ausente ⇒
+// `undefined`, e quem chama usa o mês corrente do servidor (o comportamento de
+// sempre). Presente e inválido ⇒ 400 com `campo`, no padrão de
+// `filtroDataExigida`: mês torto é URL montada errada, e adivinhar um mês
+// devolveria números de outro período com cara de certos.
+//
+// O ano vai de 2000 a 2100. Não é regra de negócio: é o teto do que faz
+// sentido num escritório de hoje, e o que impede `?mes=9999-01` de virar uma
+// consulta a um intervalo absurdo.
+//
+// Devolve `{ ano, mes }` com `mes` de 0 a 11, pronto para `Date.UTC`.
+// ═══════════════════════════════════════════════════════════════════════════
+const AAAA_MM = /^(\d{4})-(\d{2})$/;
+export const ANO_MINIMO = 2000;
+export const ANO_MAXIMO = 2100;
+
+export const filtroMesReferencia = (valor, campo = "mes") => {
+  if (valor === undefined || valor === null) return undefined;
+
+  const mensagem = `O filtro "${campo}" precisa ser um mês no formato AAAA-MM, de ${ANO_MINIMO} a ${ANO_MAXIMO}.`;
+
+  if (typeof valor !== "string") throw erroDeFiltro(campo, mensagem);
+
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+
+  const partes = AAAA_MM.exec(limpo);
+  if (!partes) throw erroDeFiltro(campo, mensagem);
+
+  const ano = Number(partes[1]);
+  const mes = Number(partes[2]);
+  if (mes < 1 || mes > 12 || ano < ANO_MINIMO || ano > ANO_MAXIMO) {
+    throw erroDeFiltro(campo, mensagem);
+  }
+
+  return { ano, mes: mes - 1 };
+};
+
 export default {
+  filtroMesReferencia,
   filtroTexto,
   filtroSituacao,
   ordenacaoDeClientes,
