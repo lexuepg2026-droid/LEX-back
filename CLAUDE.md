@@ -6328,6 +6328,61 @@ explícito) e confere os quatro antes de contar. Contagem esperada: 2.
 
 ---
 
+## DEC-071 — `{{numeroParcelas}}` e `{{valorParcela}}` falam do plano VIGENTE (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** `montarOrigemHonorario`
+(`documentGenerationService.js`) contava **todas** as parcelas ativas do
+honorário. Depois de um reparcelamento, as canceladas entravam: um plano de 3
+que substituiu outro de 3 virava **"6 parcelas"** no contrato. E as canceladas,
+de valor diferente, tornavam o plano "desigual" — `valorParcela` virava
+pendência 422 sem motivo real.
+
+### Por que o plano vigente, e não só "tirar as canceladas"
+
+As duas regras dão o mesmo número no caso comum (3 canceladas + 3 vigentes).
+Elas divergem num caso real, e é ele que decide:
+
+> Plano de 3 com a 1ª **paga**. O reparcelamento cancela só a 2ª e a 3ª; a paga
+> fica de pé **no plano velho** (DEC-037). O plano novo tem 2 parcelas.
+
+| Regra | `numeroParcelas` | O que o contrato diria |
+|---|---|---|
+| tirar só as canceladas | **3** (a paga + 2 novas), desiguais → pendência | mistura um plano encerrado com o de hoje |
+| **plano vigente** (escolhida) | **2** | o plano que o cliente vai pagar daqui em diante |
+
+`planoId` existe desde a DEC-048 justamente para separar gerações. Contar a paga
+do plano velho como "parcela" do plano novo é a mistura de gerações que a
+DEC-051 tirou da tela do honorário.
+
+### A regra é a MESMA da tela
+
+Um plano foi **substituído** quando alguma parcela dele carrega
+`reparcelamentoId`; o vigente é o que sobra. É o critério de
+`components/financeiro/installmentGrouping.js` no frontend — duas regras para
+"qual é o plano de hoje" fariam o contrato e a página do honorário discordarem
+sobre o mesmo honorário. O **grupo** é o critério, não a parcela: a paga do
+plano velho não torna o plano velho vigente.
+
+A regra mora em `parcelasDoPlanoVigente`, **exportada e pura**, testada sem
+banco. Ela também tira `status: "cancelado"` por precaução, embora o plano
+vigente, por definição, não tenha parcela cancelada.
+
+**Sem parcela vigente nenhuma, vale a regra de sempre:** pagamento único, uma
+parcela do valor cheio (Fase 2C).
+
+⚠️ **Decisão para a Laís:** no caso da parcela paga no plano velho, o contrato
+gerado depois do reparcelamento diz "em 2 parcelas de R$ X", e o valor total do
+honorário continua sendo o contratado (que inclui o que já foi pago). Se ela
+quiser que o texto mencione o que já foi pago, isso é variável nova, não ajuste
+desta regra.
+
+**Testes:** `tests/documents/generation.test.js`, bloco DEC-071 — um honorário
+com 3 parcelas desiguais reparcelado em 3 iguais gera "Em 3 parcela(s) de
+R$ 1.000,00" sem pendência; mais a função pura no caso da parcela paga e no caso
+sem reparcelamento.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

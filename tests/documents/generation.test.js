@@ -24,10 +24,11 @@ import { limparColecoes, TODAS_AS_COLECOES, desconectar, acharEm, COLECOES } fro
 const { ObjectId } = Types;
 import {
   registrarUsuario, criarClientePF, criarProcesso, criarHonorario,
-  criarParcela, criarSecao, criarModelo, vincularSecao, esperado
+  criarParcela, criarSecao, criarModelo, vincularSecao, esperado, criarReparcelamento
 } from "../helpers/setup.js";
 import { extrairTextoDoPdf } from "../helpers/pdfText.js";
 import { CATALOGO_VARIAVEIS } from "../../src/config/templateVariables.js";
+import { parcelasDoPlanoVigente } from "../../src/services/documentGenerationService.js";
 
 const TEXTO_QUALIFICACAO =
   "{{nomeCliente}}, {{profissaoCliente}}, portador(a) do CPF {{cpfCliente}}, " +
@@ -669,6 +670,79 @@ describe("geração de documento", () => {
         `\n  ── GRUPO HONORÁRIO (${honorario.total} de ${r.total}) ──\n` +
         honorario.variaveis.map((v) => `     ${v.chave} — ${v.rotulo}: ${v.descricao}`).join("\n") + "\n"
       );
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Fase 0 (DEC-071) — `{{numeroParcelas}}` conta o plano VIGENTE
+  // ═════════════════════════════════════════════════════════════════════════
+  describe("honorário reparcelado: as variáveis de parcela falam do plano de hoje (DEC-071)", () => {
+    let r;
+
+    before(async () => {
+      const { modelo } = await montarModelo(
+        "Em {{numeroParcelas}} parcela(s) de {{valorParcela}}."
+      );
+      const { cliente, processo } = await montarProcesso();
+      const fee = await criarHonorario(api, processo._id, { valor: 3000, descricao: "Reparcelado" });
+
+      // Plano original: três parcelas DESIGUAIS. Se elas entrassem na conta, o
+      // plano ficaria "desigual" e `valorParcela` viraria pendência sem motivo.
+      await criarParcela(api, fee._id, 1, { valor: 1200, dataVencimento: "2027-01-10" });
+      await criarParcela(api, fee._id, 2, { valor: 900, dataVencimento: "2027-02-10" });
+      await criarParcela(api, fee._id, 3, { valor: 900, dataVencimento: "2027-03-10" });
+
+      // Plano novo: três parcelas IGUAIS. As três antigas ficam canceladas.
+      await criarReparcelamento(api, fee._id, [
+        { valor: 1000, dataVencimento: "2027-04-10" },
+        { valor: 1000, dataVencimento: "2027-05-10" },
+        { valor: 1000, dataVencimento: "2027-06-10" }
+      ]);
+
+      // Guarda do próprio teste: o cenário precisa ter mesmo 3 + 3.
+      const ficha = esperado(await api.get(`/fees/${fee._id}`), 200, "honorário reparcelado");
+      const canceladas = ficha.parcelas.filter((p) => p.status === "cancelado").length;
+      assert.equal(canceladas, 3, "o reparcelamento cancelou as três originais");
+      assert.equal(ficha.parcelas.length, 6, "seis parcelas ativas: três de cada plano");
+
+      r = await gerar(modelo._id, { processoId: processo._id, clienteId: cliente._id });
+    });
+
+    test("gera, sem pendência de parcelas desiguais", () => {
+      assert.equal(r.status, 201, `esperado 201, veio ${r.status} — ${JSON.stringify(r.body)}`);
+    });
+
+    test("`numeroParcelas` é 3, e não 6", () => {
+      assert.match(r.body.textoResolvido, /Em 3 parcela\(s\)/);
+      assert.doesNotMatch(r.body.textoResolvido, /Em 6 parcela/);
+    });
+
+    test("a parcela PAGA que fica no plano velho não conta no plano novo", () => {
+      // Plano de 3 com a 1ª paga: o reparcelamento cancela só a 2ª e a 3ª, e a
+      // paga continua de pé NO PLANO VELHO — que é substituído mesmo assim.
+      const R = "reparcelamento-1";
+      const vigentes = parcelasDoPlanoVigente([
+        { planoId: null, status: "pago", reparcelamentoId: null, valor: 1000 },
+        { planoId: null, status: "cancelado", reparcelamentoId: R, valor: 1000 },
+        { planoId: null, status: "cancelado", reparcelamentoId: R, valor: 1000 },
+        { planoId: R, status: "pendente", reparcelamentoId: null, valor: 1000 },
+        { planoId: R, status: "pendente", reparcelamentoId: null, valor: 1000 }
+      ]);
+      assert.equal(vigentes.length, 2);
+      assert.ok(vigentes.every((p) => p.planoId === R));
+    });
+
+    test("sem reparcelamento, o plano original é o vigente", () => {
+      const vigentes = parcelasDoPlanoVigente([
+        { planoId: null, status: "pago", valor: 500 },
+        { planoId: null, status: "pendente", valor: 500 }
+      ]);
+      assert.equal(vigentes.length, 2);
+    });
+
+    test("`valorParcela` sai preenchido com o valor do plano novo", () => {
+      assert.match(r.body.textoResolvido, /1\.000,00/);
+      assert.ok(!r.body.textoResolvido.includes("{{"), "sobrou marcador por resolver");
     });
   });
 });
