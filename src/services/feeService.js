@@ -12,6 +12,7 @@ import {
   validateFeeId
 } from "../validations/feeValidation.js";
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { recalcularStatusFee } from "./paymentService.js";
 import { registrarStatus, registrarCriacao, ORIGEM_STATUS } from "./statusHistory.js";
@@ -236,7 +237,19 @@ const listFees = async (
   const statusFiltro = filtroTexto(status);
   if (statusFiltro) filter.status = statusFiltro;
   const [data, total] = await Promise.all([
-    Fee.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).populate("processoId", "titulo numeroProcesso"),
+    Fee.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      // Fase 2.5 (pendência da 2b): o cliente principal vem DENTRO do
+      // processo, com os campos de sempre (`CAMPOS_CLIENTE_POPULADO`). O
+      // form de parcela mostra o cliente sem mais uma ida ao servidor. O
+      // resto do retorno não mudou.
+      .populate({
+        path: "processoId",
+        select: "titulo numeroProcesso clientePrincipalId",
+        populate: { path: "clientePrincipalId", select: CAMPOS_CLIENTE_POPULADO }
+      }),
     Fee.countDocuments(filter)
   ]);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };

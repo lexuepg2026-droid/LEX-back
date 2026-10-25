@@ -31,7 +31,11 @@ const moldura = ({ titulo, paragrafos, textoDoBotao, link, rodape }) => {
     `<h2 style="margin:0 0 18px;font-size:20px;">${escaparHtml(titulo)}</h2>` +
     corpo +
     `<p style="margin:22px 0;">` +
-    `<a href="${escaparHtml(link)}" style="background:#b89d4b;color:#111;text-decoration:none;` +
+    // Fase 2.5: o botão na identidade nova (DEC-074 do front) — verde da
+    // marca com o bege dela, 10,4:1. Era o dourado `#b89d4b` com texto
+    // `#111`, da paleta antiga. As outras cores do e-mail (#222 do texto,
+    // #555 das notas) são neutras sobre fundo branco e não são da marca.
+    `<a href="${escaparHtml(link)}" style="background:#174034;color:#EDE3CF;text-decoration:none;` +
     `padding:12px 22px;border-radius:6px;font-weight:bold;display:inline-block;">${escaparHtml(textoDoBotao)}</a>` +
     `</p>` +
     `<p style="margin:0 0 14px;font-size:13px;color:#555;">Se o botão não funcionar, copie e cole este endereço no navegador:<br>` +

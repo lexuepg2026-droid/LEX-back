@@ -1,4 +1,5 @@
 import clientService from "../services/clientService.js";
+import { obterAcessoPortal } from "../services/processoClienteService.js";
 
 const createClient = async (req, res, next) => {
   try {
@@ -131,7 +132,18 @@ const revokePortalAccess = async (req, res, next) => {
   }
 };
 
+// Fase 2.5: o acesso de um cliente ao portal — código pessoal, situação da
+// senha e a liberação processo a processo. Ver `obterAcessoPortal`.
+const getPortalAccess = async (req, res, next) => {
+  try {
+    return res.status(200).json(await obterAcessoPortal(req.user._id, req.params.id));
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export default {
+  getPortalAccess,
   revokePortalAccess,
   createClient,
   getAllClients,

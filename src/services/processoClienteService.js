@@ -255,9 +255,21 @@ export const listarParticipantes = async (usuarioId, processoId) => {
   // Sai de `ultimaConfirmacaoEm` e `primeiroAcessoPortal`, ambos desnormalizados
   // no próprio vínculo: a listagem não faz consulta por participante, e portanto
   // não tem N+1.
+  // Fase 2.5: quem TEM portal (senha definida) ganha o controle de liberação
+  // na tela. Uma consulta para todos os participantes, e não uma por linha.
+  // O hash não sai daqui — só o booleano.
+  const comSenha = await Client.find({
+    _id: { $in: vinculos.map((v) => v.clienteId?._id ?? v.clienteId) },
+    usuarioId
+  }).select("+senhaPortalHash");
+  const temPortal = new Set(
+    comSenha.filter((c) => Boolean(c.senhaPortalHash)).map((c) => String(c._id))
+  );
+
   const data = vinculos.map((vinculo) => ({
     ...vinculo.toJSON(),
-    estadoPortal: estadoDoParticipante(vinculo)
+    estadoPortal: estadoDoParticipante(vinculo),
+    temAcessoPortal: temPortal.has(String(vinculo.clienteId?._id ?? vinculo.clienteId))
   }));
 
   // Mesmo envelope de toda listagem. O conjunto é limitado aos participantes de
@@ -267,6 +279,18 @@ export const listarParticipantes = async (usuarioId, processoId) => {
   return { data, total: data.length, page: 1, limit: data.length, totalPages: 1 };
 };
 
+// ── O código para a advogada entregar (DEC-093, Fase 2.5) ─────────────────
+// A rota continua a mesma — `GET /processes/:id/clientes/:clienteId/
+// codigo-acesso` — e a chave `codigoAcesso` também, porque a tela de entrega
+// (`AccessDelivery`) e a suíte a leem. O que mudou é QUAL código sai: o
+// PESSOAL do cliente, que é a credencial desde a DEC-089. O código do vínculo
+// não sai mais por rota nenhuma — não abre nada, e mostrá-lo à advogada seria
+// convidá-la a entregar um papel que não funciona.
+//
+// Junto vêm as duas perguntas que a entrega precisa responder: este processo
+// está LIBERADO para este cliente? e ele tem senha (provisória ou dele)?
+// `codigoAcesso` é `null` enquanto o cliente não tem senha de portal: sem
+// senha não há código, e a tela diz para definir a senha primeiro.
 export const obterCodigoAcesso = async (usuarioId, processoId, clienteId) => {
   await assertProcessoDoUsuario(usuarioId, processoId);
 
@@ -279,17 +303,120 @@ export const obterCodigoAcesso = async (usuarioId, processoId, clienteId) => {
     clienteId,
     ativo: true
   })
-    .select("codigoAcesso clienteId processoId papel principal")
+    .select("clienteId processoId papel principal liberadoNoPortal")
     .populate("clienteId", CAMPOS_CLIENTE_POPULADO);
 
   if (!vinculo) throw erro("Cliente não vinculado a este processo", 404);
+
+  const cliente = await Client.findOne({ _id: clienteId, usuarioId }).select(
+    "+senhaPortalHash codigoAcessoPessoal senhaPortalProvisoria"
+  );
+  const temSenhaPortal = Boolean(cliente?.senhaPortalHash);
 
   return {
     processoId: vinculo.processoId,
     cliente: vinculo.clienteId,
     papel: vinculo.papel,
     principal: vinculo.principal,
-    codigoAcesso: vinculo.codigoAcesso
+    codigoAcesso: temSenhaPortal ? cliente.codigoAcessoPessoal ?? null : null,
+    liberadoNoPortal: vinculo.liberadoNoPortal === true,
+    temSenhaPortal,
+    senhaPortalProvisoria: temSenhaPortal && cliente.senhaPortalProvisoria === true
+  };
+};
+
+// ── Liberar ou desligar um processo no portal (DEC-091) ────────────────────
+// `PATCH /processes/:id/clientes/:clienteId/liberacao { liberadoNoPortal }`.
+// Só o vínculo ATIVO, só da advogada. O corpo aceita UMA chave, booleana: o
+// resto é 400 com `campo`, no padrão da allowlist da Fase 4.5. Desligar vale
+// na próxima requisição do cliente — o middleware do portal confere a cada
+// uma (`exigirVinculoLiberado`).
+export const alterarLiberacao = async (usuarioId, processoId, clienteId, data) => {
+  await assertProcessoDoUsuario(usuarioId, processoId);
+
+  const erros = validateClienteId(clienteId);
+  if (erros.length > 0) throw erro(erros.join(", "), 400);
+
+  const corpo = data && typeof data === "object" ? data : {};
+  const desconhecido = Object.keys(corpo).find((k) => k !== "liberadoNoPortal");
+  if (desconhecido) {
+    throw erro(`Campo não permitido: ${desconhecido}`, 400, { campo: desconhecido });
+  }
+  if (typeof corpo.liberadoNoPortal !== "boolean") {
+    throw erro("Informe liberadoNoPortal como true ou false.", 400, { campo: "liberadoNoPortal" });
+  }
+
+  const vinculo = await ProcessoCliente.findOne({ usuarioId, processoId, clienteId, ativo: true });
+  if (!vinculo) throw erro("Cliente não vinculado a este processo", 404);
+
+  vinculo.liberadoNoPortal = corpo.liberadoNoPortal;
+  await vinculo.save();
+
+  return {
+    processoId: vinculo.processoId,
+    clienteId: vinculo.clienteId,
+    liberadoNoPortal: vinculo.liberadoNoPortal
+  };
+};
+
+// ── O acesso de UM cliente ao portal, para a advogada (Fase 2.5) ───────────
+// `GET /clients/:id/acesso-portal`. O código pessoal, a situação da senha e
+// TODOS os processos do cliente — inclusive os de vínculo ou processo
+// desativado, marcados como tal: a advogada precisa ver por que um processo
+// não aparece para a pessoa, e "não está na lista" não diz por quê.
+//
+// Não é listagem paginada: é UM cliente, com a árvore dele embaixo — o mesmo
+// formato da ficha financeira (objeto, sem envelope).
+export const obterAcessoPortal = async (usuarioId, clienteId) => {
+  const erros = validateClienteId(clienteId);
+  if (erros.length > 0) throw erro(erros.join(", "), 400);
+
+  const cliente = await Client.findOne({ _id: clienteId, usuarioId }).select(
+    "+senhaPortalHash codigoAcessoPessoal senhaPortalProvisoria senhaPortalDefinidaEm ativo"
+  );
+  if (!cliente) throw erro("Cliente não encontrado", 404);
+
+  const vinculos = await ProcessoCliente.find({ usuarioId, clienteId })
+    .select(PROJECAO_SEM_CODIGO)
+    .populate("processoId", "titulo numeroProcesso ativo")
+    .sort({ ativo: -1, createdAt: 1 });
+
+  const temSenhaPortal = Boolean(cliente.senhaPortalHash);
+
+  const processos = vinculos.map((v) => {
+    const processo = v.processoId && typeof v.processoId === "object" ? v.processoId : null;
+    const situacao = !v.ativo
+      ? "vinculoDesativado"
+      : processo && processo.ativo === false
+        ? "processoDesativado"
+        : "ativo";
+    return {
+      processoId: processo ? processo._id : v.processoId,
+      titulo: processo?.titulo ?? null,
+      numeroProcesso: processo?.numeroProcesso ?? null,
+      papel: v.papel,
+      principal: v.principal === true,
+      liberadoNoPortal: v.liberadoNoPortal === true,
+      situacao,
+      primeiroAcessoPortal: v.primeiroAcessoPortal,
+      ultimoAcessoPortal: v.ultimoAcessoPortal,
+      ultimaConfirmacaoEm: v.ultimaConfirmacaoEm
+    };
+  });
+
+  const ativos = processos.filter((p) => p.situacao === "ativo");
+
+  return {
+    clienteId: cliente._id,
+    codigoAcessoPessoal: temSenhaPortal ? cliente.codigoAcessoPessoal ?? null : null,
+    temSenhaPortal,
+    senhaPortalProvisoria: temSenhaPortal && cliente.senhaPortalProvisoria === true,
+    senhaPortalDefinidaEm: cliente.senhaPortalDefinidaEm ?? null,
+    // "N de M processos liberados": M são os vínculos e processos ATIVOS — os
+    // únicos que a liberação alcança.
+    processosLiberados: ativos.filter((p) => p.liberadoNoPortal).length,
+    processosAtivos: ativos.length,
+    processos
   };
 };
 
@@ -464,6 +591,8 @@ export const desvincularCliente = async (usuarioId, processoId, clienteId) => {
 };
 
 export default {
+  alterarLiberacao,
+  obterAcessoPortal,
   listarParticipantes,
   listarVinculosDeProcessos,
   obterCodigoAcesso,
