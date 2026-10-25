@@ -9,6 +9,9 @@ import {
   Paragraph,
   TextRun
 } from "docx";
+// Fase 0 (DEC-072): telefone e CEP do timbrado saem formatados pelos MESMOS
+// formatadores das variáveis de documento — uma regra só para o mesmo dado.
+import { cep as formatarCep, telefone as formatarTelefone } from "../utils/templateFormatters.js";
 
 // pdfmake 0.3 é CommonJS e exporta uma instância única; `createRequire` é o que
 // permite carregá-la de um módulo ESM sem transpilar nada.
@@ -114,7 +117,8 @@ const formatarEnderecoLinha = (endereco) => {
   const bairro = textoOuVazio(endereco.bairro);
   const cidade = textoOuVazio(endereco.cidade);
   const estado = textoOuVazio(endereco.estado);
-  const cep = textoOuVazio(endereco.cep);
+  // Gravado só com dígitos (é como a tela envia); formatado na impressão.
+  const cep = formatarCep(endereco.cep);
 
   const partes = [];
   if (logradouro) partes.push(numero ? `${logradouro}, ${numero}` : logradouro);
@@ -135,7 +139,7 @@ export const montarTimbrado = (usuario) => {
   const advocacia = usuario?.advocacia ?? {};
   const oab = usuario?.oab ?? {};
 
-  const contato = [textoOuVazio(usuario?.telefone), textoOuVazio(usuario?.email)]
+  const contato = [formatarTelefone(usuario?.telefone), textoOuVazio(usuario?.email)]
     .filter(Boolean)
     .join(" · ");
 

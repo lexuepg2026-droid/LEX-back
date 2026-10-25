@@ -6383,6 +6383,39 @@ sem reparcelamento.
 
 ---
 
+## DEC-072 — telefone e CEP formatados no timbrado (Fase 0)
+
+**O defeito.** A tela grava telefone e CEP **só com dígitos** (é o contrato
+desde a Fase 1, e o seed da DEC-065 faz o mesmo). `letterheadService.montarTimbrado`
+os imprimia como estavam: o cabeçalho de todo documento e de todo recibo saía com
+"42999991234" e "CEP 84010000".
+
+**A correção reutiliza o que já existia.** `utils/templateFormatters.js` tem
+`telefone` e `cep` desde a Fase 2C — são os formatadores das variáveis
+`{{telefoneCliente}}`, `{{cepCliente}}` e companhia. O timbrado passou a usá-los,
+em vez de ganhar uma segunda regra para o mesmo dado:
+
+| Entrada | Saída |
+|---|---|
+| telefone com 11 dígitos | `(DD) NNNNN-NNNN` |
+| telefone com 10 dígitos | `(DD) NNNN-NNNN` |
+| CEP com 8 dígitos | `NNNNN-NNN` |
+| já formatado | igual (os formatadores extraem os dígitos antes) |
+| vazio | some da linha, sem separador solto |
+| qualquer outro tamanho | **sai como está** — formato inventado é pior que nenhum |
+
+**O que muda no papel:** o cabeçalho do documento **e** o do recibo, porque o
+timbrado é compartilhado (Fase 4.1). Nada muda no banco: a formatação é na
+impressão. `letterheadService.js` está entre os arquivos que só se alteram com
+fase que o tenha no escopo (Limites permanentes); esta fase o tinha, por pedido
+explícito.
+
+**Teste:** `tests/documents/timbrado.test.js`, sobre `montarTimbrado` direto
+(função pura, sem banco nem PDF): 10 e 11 dígitos, já formatado, vazio e tamanho
+inválido, para telefone e para CEP.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
