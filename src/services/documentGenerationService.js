@@ -94,14 +94,43 @@ export const resolverClienteDoProcesso = async (processo, usuarioId, clienteId) 
 // em `resolver`.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// `numeroParcelas` e `valorParcela` são derivados das parcelas ativas, não
-// campos do Fee.
+// ── O PLANO VIGENTE (Fase 0, DEC-071) ────────────────────────────────────
+//
+// `numeroParcelas` e `valorParcela` falam do plano que o contrato descreve
+// HOJE. Contavam todas as parcelas ativas, e depois de um reparcelamento as
+// canceladas entravam: um plano de 3 que substituiu outro de 3 virava "6
+// parcelas", e as 3 canceladas — de valor diferente — tornavam o plano
+// "desigual", e `valorParcela` virava pendência sem motivo.
+//
+// Vigente é o plano (`planoId`, DEC-048) que NENHUM reparcelamento substituiu:
+// um plano foi substituído quando alguma parcela dele carrega
+// `reparcelamentoId`. É a MESMA regra de `installmentGrouping.js` na página do
+// honorário — duas regras para "qual é o plano de hoje" fariam o contrato e a
+// tela discordarem sobre o mesmo honorário.
+//
+// O grupo é o critério, e não a parcela: num plano de 3 com a 1ª paga e as
+// outras duas reparceladas, a paga fica de pé NO PLANO VELHO, e o plano velho
+// continua substituído. Ela não entra na contagem do plano novo.
+export const parcelasDoPlanoVigente = (parcelas = []) => {
+  const chave = (p) => String(p.planoId ?? "original");
+  const substituidos = new Set(
+    parcelas.filter((p) => p.reparcelamentoId).map(chave)
+  );
+  return parcelas.filter(
+    (p) => p.status !== "cancelado" && !substituidos.has(chave(p))
+  );
+};
+
+// `numeroParcelas` e `valorParcela` são derivados das parcelas do plano
+// vigente, não campos do Fee.
 const montarOrigemHonorario = async (fee, usuarioId) => {
-  const parcelas = await Installment.find({
+  const todas = await Installment.find({
     feeId: fee._id,
     usuarioId,
     ativo: true
-  }).select("valor").sort({ numeroParcela: 1 });
+  }).select("valor status planoId reparcelamentoId").sort({ numeroParcela: 1 });
+
+  const parcelas = parcelasDoPlanoVigente(todas);
 
   // Sem parcela cadastrada o honorário é pagamento único: uma parcela do valor
   // cheio. É assim que o contrato deve descrevê-lo, e não como "0 parcelas".

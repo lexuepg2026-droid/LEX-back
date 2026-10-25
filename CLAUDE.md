@@ -374,10 +374,10 @@ não cumprida e exibiu com rótulos honestos.
 | `pendente` | number | `valorContratado − recebido` |
 | `vencidas` | number | **contagem** de parcelas com status `vencido` |
 | `mesReferencia` | string | `"2026-08"` — mês do **servidor**, em UTC |
-| `aReceberNoMes` | number | Σ `emAberto` das parcelas que vencem no mês corrente |
+| `aReceberNoMes` | number | Σ `emAberto` das parcelas **não canceladas** que vencem no mês corrente (DEC-068) |
 | `recebidoNoMes` | number | Σ `Payment.valorPago` com `dataPagamento` no mês |
 | `valorVencido` | number | Σ `emAberto` das parcelas com status `vencido` |
-| `proximosVencimentos` | array | ≤ 5 parcelas não quitadas, `dataVencimento` ≥ hoje |
+| `proximosVencimentos` | array | ≤ 5 parcelas não quitadas e **não canceladas**, `dataVencimento` ≥ hoje (DEC-068) |
 
 Cada item de `proximosVencimentos`: `{ _id, descricaoHonorario, numeroParcela,
 valor, valorPago, emAberto, dataVencimento, status, processoId,
@@ -6247,6 +6247,172 @@ O pedido falava em "cliente do portal: e-mail + senha". O portal (DEC-029 ponto
 cadastro da cliente. O `+` é aceito pela validação (DEC-063, de propósito) e não
 há regra de unicidade de e-mail ENTRE advogada e cliente: `users.email` é único
 global, `clients.email` é único por advogada — coleções diferentes.
+
+---
+
+## DEC-068 — parcela cancelada não é vencimento (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** Uma parcela cancelada por
+**reparcelamento** aparecia em "Próximos vencimentos" no Início, e o cartão
+"A receber em {mês}" a somava com o valor cheio.
+
+**Por que o filtro existente não a pegava.** O resumo já excluía honorário
+`cancelado` (Fase 4.3) — mas a parcela cancelada pelo reparcelamento (DEC-037)
+pertence a um honorário **vigente**. `proximosVencimentos` só exigia
+`emAberto > 0` e vencimento futuro, e uma parcela cancelada antes de receber tem
+`emAberto` igual ao valor inteiro.
+
+### O recorte é nos derivados de VENCIMENTO, e NÃO na consulta
+
+O pedido da fase era excluir a cancelada **da consulta** de parcelas. A primeira
+versão fez isso, e o teste escrito em seguida mostrou o preço:
+
+| Caso: parcela de 4.000, pagamento parcial de 1.000, reparcelada | Filtro na consulta | Filtro nos derivados |
+|---|---|---|
+| `recebido` | **0** | 1.000 |
+| `pendente` | **4.000** | 3.000 |
+| resumo = ficha? | **não** | sim |
+
+A parcela parcial reparcelada **guarda** o dinheiro recebido — ele não volta, e
+o saldo renegociado já o descontou (DEC-037). A ficha o conta (emenda de 17/08
+à DEC-028), e `recebido` e o pago-por-honorário que sustenta `pendente` saem do
+`valorPago` das parcelas carregadas por aquela consulta. Tirá-la da consulta
+apagava dinheiro do resumo e quebrava a igualdade com as fichas, que é o que a
+Fase 4.3 existiu para garantir.
+
+Por isso a consulta continua trazendo **todas** as parcelas, e um único array
+`aVencer = linhas.filter(status !== "cancelado")` alimenta os dois derivados de
+vencimento:
+
+| Campo | Efeito da DEC-068 |
+|---|---|
+| `proximosVencimentos`, `aReceberNoMes` | a cancelada **sai** |
+| `vencidas`, `valorVencido` | nenhum — já filtram `status === "vencido"` |
+| `recebido`, `pendente` | nenhum — continuam somando o `valorPago` das canceladas |
+
+**Testes:** `tests/financial/resumo.test.js`, dois blocos com usuário próprio,
+os dois produzindo a cancelada pelo reparcelamento real (e conferindo que ela
+está mesmo `cancelado` antes de afirmar qualquer coisa):
+
+- *parcela cancelada por reparcelamento* — sem pagamento; ela não aparece em
+  nenhum dos dois derivados;
+- *parcela PARCIAL reparcelada* — `recebido` 1.000, `pendente` 3.000, e o resumo
+  fechando com a ficha. É o bloco que falha se alguém "simplificar" o recorte de
+  volta para a consulta.
+
+---
+
+## DEC-069 — "Honorários em aberto" conta o parcialmente pago (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** O cartão do Início contava
+`Fee.countDocuments({ status: "pendente" })` (`dashboardService.getSummary`):
+só os honorários **sem nenhum pagamento**. O `parcialmente_pago` — o que ainda
+tem o que receber, e o estado normal de um contrato em andamento — ficava fora.
+Com o seed, a maior parte dos honorários vivos não entrava na conta.
+
+**A regra:** em aberto é `status ∈ { pendente, parcialmente_pago }`, com
+`ativo: true`. `pago` e `cancelado` ficam de fora.
+
+**O campo da resposta NÃO foi renomeado** — continua `honorariosAReceber`. É
+contrato de `GET /api/dashboard`, e renomeá-lo quebraria qualquer cliente que o
+leia. O que mudou de nome é o **rótulo da tela**: "Honorários em aberto"
+(`DashboardHomePage.jsx`).
+
+**É contagem, e continua sendo.** O VALOR em aberto existe em
+`GET /financeiro/resumo` como `pendente`. Trocar o cartão por valor é decisão
+que segue aberta (inventário de 24/10/2026, decisão 7.7).
+
+**Teste:** `tests/financial/honorariosEmAberto.test.js` produz os quatro
+estados pelo caminho real (parcela, pagamento parcial, quitação e cancelamento
+explícito) e confere os quatro antes de contar. Contagem esperada: 2.
+
+---
+
+## DEC-071 — `{{numeroParcelas}}` e `{{valorParcela}}` falam do plano VIGENTE (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** `montarOrigemHonorario`
+(`documentGenerationService.js`) contava **todas** as parcelas ativas do
+honorário. Depois de um reparcelamento, as canceladas entravam: um plano de 3
+que substituiu outro de 3 virava **"6 parcelas"** no contrato. E as canceladas,
+de valor diferente, tornavam o plano "desigual" — `valorParcela` virava
+pendência 422 sem motivo real.
+
+### Por que o plano vigente, e não só "tirar as canceladas"
+
+As duas regras dão o mesmo número no caso comum (3 canceladas + 3 vigentes).
+Elas divergem num caso real, e é ele que decide:
+
+> Plano de 3 com a 1ª **paga**. O reparcelamento cancela só a 2ª e a 3ª; a paga
+> fica de pé **no plano velho** (DEC-037). O plano novo tem 2 parcelas.
+
+| Regra | `numeroParcelas` | O que o contrato diria |
+|---|---|---|
+| tirar só as canceladas | **3** (a paga + 2 novas), desiguais → pendência | mistura um plano encerrado com o de hoje |
+| **plano vigente** (escolhida) | **2** | o plano que o cliente vai pagar daqui em diante |
+
+`planoId` existe desde a DEC-048 justamente para separar gerações. Contar a paga
+do plano velho como "parcela" do plano novo é a mistura de gerações que a
+DEC-051 tirou da tela do honorário.
+
+### A regra é a MESMA da tela
+
+Um plano foi **substituído** quando alguma parcela dele carrega
+`reparcelamentoId`; o vigente é o que sobra. É o critério de
+`components/financeiro/installmentGrouping.js` no frontend — duas regras para
+"qual é o plano de hoje" fariam o contrato e a página do honorário discordarem
+sobre o mesmo honorário. O **grupo** é o critério, não a parcela: a paga do
+plano velho não torna o plano velho vigente.
+
+A regra mora em `parcelasDoPlanoVigente`, **exportada e pura**, testada sem
+banco. Ela também tira `status: "cancelado"` por precaução, embora o plano
+vigente, por definição, não tenha parcela cancelada.
+
+**Sem parcela vigente nenhuma, vale a regra de sempre:** pagamento único, uma
+parcela do valor cheio (Fase 2C).
+
+⚠️ **Decisão para a Laís:** no caso da parcela paga no plano velho, o contrato
+gerado depois do reparcelamento diz "em 2 parcelas de R$ X", e o valor total do
+honorário continua sendo o contratado (que inclui o que já foi pago). Se ela
+quiser que o texto mencione o que já foi pago, isso é variável nova, não ajuste
+desta regra.
+
+**Testes:** `tests/documents/generation.test.js`, bloco DEC-071 — um honorário
+com 3 parcelas desiguais reparcelado em 3 iguais gera "Em 3 parcela(s) de
+R$ 1.000,00" sem pendência; mais a função pura no caso da parcela paga e no caso
+sem reparcelamento.
+
+---
+
+## DEC-072 — telefone e CEP formatados no timbrado (Fase 0)
+
+**O defeito.** A tela grava telefone e CEP **só com dígitos** (é o contrato
+desde a Fase 1, e o seed da DEC-065 faz o mesmo). `letterheadService.montarTimbrado`
+os imprimia como estavam: o cabeçalho de todo documento e de todo recibo saía com
+"42999991234" e "CEP 84010000".
+
+**A correção reutiliza o que já existia.** `utils/templateFormatters.js` tem
+`telefone` e `cep` desde a Fase 2C — são os formatadores das variáveis
+`{{telefoneCliente}}`, `{{cepCliente}}` e companhia. O timbrado passou a usá-los,
+em vez de ganhar uma segunda regra para o mesmo dado:
+
+| Entrada | Saída |
+|---|---|
+| telefone com 11 dígitos | `(DD) NNNNN-NNNN` |
+| telefone com 10 dígitos | `(DD) NNNN-NNNN` |
+| CEP com 8 dígitos | `NNNNN-NNN` |
+| já formatado | igual (os formatadores extraem os dígitos antes) |
+| vazio | some da linha, sem separador solto |
+| qualquer outro tamanho | **sai como está** — formato inventado é pior que nenhum |
+
+**O que muda no papel:** o cabeçalho do documento **e** o do recibo, porque o
+timbrado é compartilhado (Fase 4.1). Nada muda no banco: a formatação é na
+impressão. `letterheadService.js` está entre os arquivos que só se alteram com
+fase que o tenha no escopo (Limites permanentes); esta fase o tinha, por pedido
+explícito.
+
+**Teste:** `tests/documents/timbrado.test.js`, sobre `montarTimbrado` direto
+(função pura, sem banco nem PDF): 10 e 11 dígitos, já formatado, vazio e tamanho
+inválido, para telefone e para CEP.
 
 ---
 

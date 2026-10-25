@@ -401,4 +401,134 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     assert.equal(r.recebido, centavos(soma.pago), "recebido divergiu das fichas");
     assert.equal(r.pendente, centavos(soma.emAberto), "em aberto divergiu das fichas");
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Fase 0 (DEC-068) — a parcela CANCELADA de um honorário VIGENTE
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // O honorário cancelado já ficava fora (bloco acima). O buraco era outro: a
+  // parcela cancelada por REPARCELAMENTO pertence a um honorário que continua
+  // vigente, e entrava em `proximosVencimentos` e em `aReceberNoMes` com o
+  // valor cheio — o cartão "A receber em {mês}" somava uma cobrança que a
+  // advogada substituiu, e o Início a listava como próximo vencimento.
+  //
+  // Usuário próprio: este cenário não pode mexer nos números dos testes acima.
+  describe("parcela cancelada por reparcelamento (DEC-068)", () => {
+    let api2, original, plano;
+
+    // Último dia do mês corrente: no mês E de hoje em diante, em qualquer dia
+    // em que a suíte rodar — é o caso exato que o defeito pegava.
+    const ultimoDiaDoMes = new Date(Date.UTC(ANO, MES + 1, 0)).toISOString().slice(0, 10);
+
+    before(async () => {
+      api2 = await registrarUsuario("resumo-cancelada");
+      const cli = await criarClientePF(api2);
+      const proc = await criarProcesso(api2, [
+        { clienteId: cli._id, papel: "autor", principal: true }
+      ]);
+      const fee = await criarHonorario(api2, proc._id, {
+        tipo: "fixo", valor: 3000, descricao: "Honorário reparcelado"
+      });
+      original = await criarParcela(api2, fee._id, 1, {
+        valor: 3000, dataVencimento: ultimoDiaDoMes
+      });
+
+      // O plano novo vence a partir do mês que vem: assim `aReceberNoMes`
+      // deste usuário tem de ser ZERO, e qualquer valor ali é a cancelada.
+      esperado(
+        await api2.post(`/fees/${fee._id}/renegotiations`, {
+          parcelas: [
+            { valor: 1500, dataVencimento: dataUTC(1, 10) },
+            { valor: 1500, dataVencimento: dataUTC(2, 10) }
+          ],
+          motivo: "cliente pediu para dividir"
+        }),
+        201, "reparcelamento"
+      );
+
+      const lida = esperado(
+        await api2.get(`/installments/${original._id}`), 200, "parcela original"
+      );
+      // Guarda do próprio teste: sem isto, uma mudança no reparcelamento
+      // deixaria a parcela viva e o teste passaria sem provar nada.
+      assert.equal(lida.status, "cancelado", "o reparcelamento cancela a parcela original");
+
+      plano = esperado(await api2.get("/financeiro/resumo"), 200, "resumo do usuário 2");
+    });
+
+    test("a cancelada não aparece em `proximosVencimentos`", () => {
+      const ids = plano.proximosVencimentos.map((p) => String(p._id));
+      assert.ok(!ids.includes(String(original._id)), "a parcela cancelada voltou ao Início");
+      // E as do plano novo, essas sim, aparecem — senão o filtro teria
+      // apagado tudo e o teste acima passaria por vazio.
+      assert.equal(plano.proximosVencimentos.length, 2);
+      assert.ok(plano.proximosVencimentos.every((p) => p.status !== "cancelado"));
+    });
+
+    test("a cancelada não soma em `aReceberNoMes`", () => {
+      assert.equal(plano.aReceberNoMes, 0);
+    });
+
+    test("o em aberto do honorário continua sendo o do plano novo", () => {
+      // `pendente` é por honorário (DEC-040) e não lia parcela; não pode mudar.
+      assert.equal(plano.pendente, 3000);
+    });
+  });
+
+  // A outra metade da DEC-068: a parcela PARCIAL reparcelada guarda o dinheiro
+  // que recebeu (DEC-037), e a ficha o conta (emenda de 17/08 à DEC-028). Tirar
+  // a cancelada dos vencimentos não pode tirar esse dinheiro do `recebido` nem
+  // inflar o `pendente` — senão o resumo para de fechar com as fichas.
+  describe("parcela PARCIAL reparcelada: o dinheiro dela continua no resumo (DEC-068)", () => {
+    let api3, r, ficha;
+
+    before(async () => {
+      api3 = await registrarUsuario("resumo-parcial-reparcelada");
+      const cli = await criarClientePF(api3);
+      const proc = await criarProcesso(api3, [
+        { clienteId: cli._id, papel: "autor", principal: true }
+      ]);
+      const fee = await criarHonorario(api3, proc._id, {
+        tipo: "fixo", valor: 4000, descricao: "Honorário parcial reparcelado"
+      });
+      const parcela = await criarParcela(api3, fee._id, 1, {
+        valor: 4000, dataVencimento: dataUTC(1, 5)
+      });
+      await criarPagamento(api3, fee._id, { valor: 1000, data: dataUTC(0, AGORA.getUTCDate()) });
+
+      esperado(
+        await api3.post(`/fees/${fee._id}/renegotiations`, {
+          parcelas: [
+            { valor: 1500, dataVencimento: dataUTC(2, 10) },
+            { valor: 1500, dataVencimento: dataUTC(3, 10) }
+          ]
+        }),
+        201, "reparcelamento da parcela parcial"
+      );
+      const lida = esperado(await api3.get(`/installments/${parcela._id}`), 200, "parcela original");
+      assert.equal(lida.status, "cancelado", "a parcial foi cancelada pelo reparcelamento");
+      assert.equal(lida.valorPago, 1000, "e guardou o que tinha recebido");
+
+      r = esperado(await api3.get("/financeiro/resumo"), 200, "resumo do usuário 3");
+      ficha = esperado(await api3.get(`/financeiro/processos/${proc._id}`), 200, "ficha");
+    });
+
+    test("`recebido` continua contando os 1.000 da parcela cancelada", () => {
+      assert.equal(r.recebido, 1000);
+    });
+
+    test("`pendente` é 3.000, e não 4.000", () => {
+      assert.equal(r.pendente, 3000);
+    });
+
+    test("o resumo continua fechando com a ficha", () => {
+      assert.equal(r.recebido, ficha.totais.pago);
+      assert.equal(r.pendente, ficha.totais.emAberto);
+    });
+
+    test("e a cancelada continua fora dos vencimentos", () => {
+      assert.ok(r.proximosVencimentos.every((p) => p.status !== "cancelado"));
+      assert.equal(r.proximosVencimentos.length, 2);
+    });
+  });
 });
