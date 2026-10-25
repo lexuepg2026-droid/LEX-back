@@ -25,7 +25,7 @@ import crypto from "node:crypto";
 import mongoose from "mongoose";
 
 import { conectar, contarColecoes, lerArgumento, temFlag, COLECOES } from "./ambiente.js";
-import { ADVOGADA_EMAIL, ADVOGADA_SENHA, PORTAL_CODIGO, PORTAL_SENHA } from "./dados.js";
+import { ADVOGADA_EMAIL, ADVOGADA_SENHA, PORTAL_CODIGO, PORTAL_EMAIL, PORTAL_SENHA } from "./dados.js";
 
 // Campos que mudam a cada semeadura sem mudar o cenário.
 const VOLATEIS = new Set([
@@ -51,7 +51,8 @@ const normalizar = (valor, chave) => {
     const saida = {};
     for (const k of Object.keys(valor).sort()) {
       if (VOLATEIS.has(k)) continue;
-      if (k === "codigoAcesso" && valor[k] !== PORTAL_CODIGO) continue;
+      // Os códigos sorteados mudam a cada semeadura; o fixo do portal não.
+      if ((k === "codigoAcesso" || k === "codigoAcessoPessoal") && valor[k] !== PORTAL_CODIGO) continue;
       saida[k] = normalizar(valor[k], k);
     }
     return saida;
@@ -106,15 +107,34 @@ const main = async () => {
     }
 
     if (temFlag("--portal")) {
-      const p = await chamar(base, "POST", "/portal/login", { codigoAcesso: PORTAL_CODIGO, senha: PORTAL_SENHA });
-      console.log(`  login no portal (1 tentativa): ${p.status}`);
-      if (p.status === 200) {
-        const proc = await chamar(base, "GET", "/portal/processo", null, p.cookie);
-        const docs = await chamar(base, "GET", "/portal/documentos", null, p.cookie);
-        const pr = proc.dados?.processo;
-        console.log(`  portal: ${pr?.numeroProcesso} — fase ${pr?.fase}, trânsito ${pr?.transitoEmJulgadoEm?.slice(0, 10)}, ` +
-          `${docs.dados?.total} documentos: ${(docs.dados?.data ?? []).map((d) => d.nome).join(" + ")}`);
-        await chamar(base, "POST", "/portal/logout", null, p.cookie);
+      // Fase 2.5: o código é o PESSOAL da Mariana. Num banco semeado pela
+      // banca3 é o `PORTAL_CODIGO`; num banco MIGRADO (o `lex_prod` de antes
+      // da 2.5) é o que a migração sorteou. Por isso ele é LIDO pela API da
+      // advogada, e não suposto — e não é impresso, porque é metade da
+      // credencial.
+      const adv = await chamar(base, "POST", "/auth/login", { email: ADVOGADA_EMAIL, senha: ADVOGADA_SENHA });
+      const busca = await chamar(base, "GET", `/clients?busca=${encodeURIComponent("Mariana")}&limit=5`, null, adv.cookie);
+      const mariana = (busca.dados?.data ?? []).find((c) => c.email === PORTAL_EMAIL);
+      const acesso = mariana
+        ? await chamar(base, "GET", `/clients/${mariana._id}/acesso-portal`, null, adv.cookie)
+        : { dados: null };
+      await chamar(base, "POST", "/auth/logout", null, adv.cookie);
+      const codigo = acesso.dados?.codigoAcessoPessoal ?? null;
+      console.log(`  código pessoal da Mariana: ${codigo ? (codigo === PORTAL_CODIGO ? "o do README" : "sorteado pela migração (ver a tela da advogada)") : "AUSENTE"}` +
+        ` — ${acesso.dados?.processosLiberados ?? "?"} de ${acesso.dados?.processosAtivos ?? "?"} processos liberados`);
+
+      if (codigo) {
+        const p = await chamar(base, "POST", "/portal/login", { codigoAcesso: codigo, senha: PORTAL_SENHA });
+        console.log(`  login no portal (1 tentativa): ${p.status}`);
+        if (p.status === 200) {
+          const lista = await chamar(base, "GET", "/portal/processos", null, p.cookie);
+          for (const item of lista.dados?.data ?? []) {
+            const docs = await chamar(base, "GET", `/portal/processos/${item.id}/documentos`, null, p.cookie);
+            console.log(`  portal: ${item.numeroProcesso} — fase ${item.fase}, trânsito ${item.transitoEmJulgadoEm?.slice(0, 10)}, ` +
+              `${docs.dados?.total} documentos: ${(docs.dados?.data ?? []).map((d) => d.nome).join(" + ")}`);
+          }
+          await chamar(base, "POST", "/portal/logout", null, p.cookie);
+        }
       }
     }
   }

@@ -15,10 +15,10 @@
 //    service, o mesmo caminho do clique na tela. Nada de `Model.create`.
 //
 // ── As DUAS escritas diretas, e por que existem ─────────────────────────
-//   • o código de acesso do portal do vínculo Mariana × P1 é fixado em
+//   • o código de acesso PESSOAL da Mariana (Fase 2.5, DEC-089) é fixado em
 //     `PORTAL_CODIGO`. Ele nasce sorteado, e a credencial precisa ser fixa
-//     para ir ao README e ser a mesma nos dois bancos. Nenhuma rota escreve
-//     esse campo — é a mesma situação do `historicoAtivacao`;
+//     para ir ao README. Nenhuma rota escreve esse campo — é a mesma situação
+//     do `historicoAtivacao`;
 //   • o `createdAt` dos honorários é retrodatado para o mês do contrato, para
 //     o gráfico "Honorários por mês" mostrar seis meses e não uma barra só. O
 //     seed antigo fazia o mesmo, pelo mesmo motivo.
@@ -255,29 +255,38 @@ const main = async () => {
   }
   log(`Eventos: ${EVENTOS.length}`);
 
-  // ── 8. O portal: código fixo, troca de senha, acesso e confirmação ─────
-  // Escrita direta nº 1 — o código (ver o cabeçalho).
-  const fixou = await db.collection("processo_clientes").updateOne(
-    {
-      processoId: new mongoose.Types.ObjectId(ids.processos.p1),
-      clienteId: new mongoose.Types.ObjectId(ids.clientes.mariana),
-      ativo: true
-    },
-    { $set: { codigoAcesso: PORTAL_CODIGO } }
+  // ── 8. O portal: código fixo, liberação, troca de senha e confirmação ──
+  // Escrita direta nº 1 — o código pessoal (ver o cabeçalho). Antes de fixar,
+  // a conferência de que nenhum vínculo sorteou este valor: os dois espaços
+  // de código são únicos ENTRE SI (DEC-089), e o seed não pode quebrar isso.
+  if (await db.collection("processo_clientes").countDocuments({ codigoAcesso: PORTAL_CODIGO }) > 0) {
+    throw new Error("um vínculo sorteou o código fixo do portal — rode o seed de novo");
+  }
+  const fixou = await db.collection("clients").updateOne(
+    { _id: new mongoose.Types.ObjectId(ids.clientes.mariana) },
+    { $set: { codigoAcessoPessoal: PORTAL_CODIGO } }
   );
   if (fixou.modifiedCount !== 1) throw new Error("não foi possível fixar o código de acesso do portal");
+
+  // Vínculo novo nasce NÃO liberado (DEC-091). P1 é liberado pela rota, como
+  // a advogada faria; P3 fica de fora de propósito (ver `dados.js`).
+  await adv.patch(`/processes/${ids.processos.p1}/clientes/${ids.clientes.mariana}/liberacao`, { liberadoNoPortal: true });
 
   const portal = new Sessao(api.base, "portal");
   await portal.post("/portal/login", { codigoAcesso: PORTAL_CODIGO, senha: PORTAL_SENHA_PROVISORIA });
   await portal.patch("/portal/senha", { senhaAtual: PORTAL_SENHA_PROVISORIA, novaSenha: PORTAL_SENHA });
-  await portal.get("/portal/processo");
-  const { dados: docsPortal } = await portal.get("/portal/documentos");
+  const { dados: listaPortal } = await portal.get("/portal/processos");
+  if (listaPortal.total !== 1 || listaPortal.data[0].id !== String(ids.processos.p1)) {
+    throw new Error(`o portal deveria listar só P1 e listou ${listaPortal.total} processo(s)`);
+  }
+  await portal.get(`/portal/processos/${ids.processos.p1}`);
+  const { dados: docsPortal } = await portal.get(`/portal/processos/${ids.processos.p1}/documentos`);
   if (docsPortal.total !== visiveis.length) {
     throw new Error(`o portal deveria listar ${visiveis.length} documentos e listou ${docsPortal.total}`);
   }
-  await portal.post("/portal/confirmacoes", {}, { esperado: 201 });
+  await portal.post(`/portal/processos/${ids.processos.p1}/confirmacoes`, {}, { esperado: 201 });
   await portal.post("/portal/logout");
-  log(`Portal: senha própria definida pelo cliente, ${docsPortal.total} documentos vistos, 1 confirmação de leitura`);
+  log(`Portal: senha própria definida pelo cliente, 1 de 2 processos liberado, ${docsPortal.total} documentos vistos, 1 confirmação de leitura`);
 
   // ── 9. O processo desativado (reativável) ───────────────────────────────
   for (const [chave, p] of Object.entries(PROCESSOS)) {
@@ -292,14 +301,17 @@ const main = async () => {
   const conf = {
     advogadaNaoConfirmada: (await db.collection("users").findOne({ email: ADVOGADA_EMAIL })).emailConfirmadoEm === null,
     parcelasVencidas: await db.collection("installments").countDocuments({ status: "vencido", ativo: true }),
-    codigoPortal: (await db.collection("processo_clientes").countDocuments({ codigoAcesso: PORTAL_CODIGO })) === 1,
+    codigoPortal: (await db.collection("clients").countDocuments({ codigoAcessoPessoal: PORTAL_CODIGO })) === 1,
+    processoNaoLiberado: await db.collection("processo_clientes").countDocuments({
+      clienteId: new mongoose.Types.ObjectId(ids.clientes.mariana), ativo: true, liberadoNoPortal: false
+    }),
     senhaPortalPropria: (await db.collection("clients").findOne({ email: PORTAL_EMAIL })).senhaPortalProvisoria === false,
     confirmacoesNaoVistas: await db.collection("confirmacoes_visualizacao").countDocuments({ vistaPelaAdvogada: false }),
     processoDesativado: await db.collection("processes").countDocuments({ ativo: false }),
     reparcelamentos: await db.collection("reparcelamentos").countDocuments({})
   };
   const esperado = {
-    advogadaNaoConfirmada: true, parcelasVencidas: 1, codigoPortal: true, senhaPortalPropria: true,
+    advogadaNaoConfirmada: true, parcelasVencidas: 1, codigoPortal: true, processoNaoLiberado: 1, senhaPortalPropria: true,
     confirmacoesNaoVistas: 1, processoDesativado: 1, reparcelamentos: 1
   };
   const divergencias = Object.keys(esperado).filter((k) => conf[k] !== esperado[k]);

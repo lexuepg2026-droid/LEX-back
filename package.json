@@ -18,6 +18,7 @@
     "seed:banca3": "node scripts/banca3/seedBanca3.js",
     "smoke:banca3": "node scripts/banca3/smokeBanca3.js",
     "conferir:banca3": "node scripts/banca3/conferirBanca3.js",
+    "migrar:portal-pessoal": "node scripts/migrarPortalPessoal.js",
     "reset:dev": "NODE_ENV=development node scripts/resetDev.js",
     "auditar:orfaos": "node scripts/auditarOrfaos.js",
     "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/",

@@ -40,9 +40,16 @@ export const PORTAL_SENHA = "LexBanca2026";
 // senha final como senha PRÓPRIA e libera a confirmação de leitura.
 export const PORTAL_SENHA_PROVISORIA = "Provisoria2026";
 // O login do portal é CÓDIGO DE ACESSO + senha (DEC-029 ponto 1), e não
-// e-mail. O código nasce sorteado; o seed o fixa neste valor para que ele
-// possa ir para o README e seja o mesmo nos dois bancos. Alfabeto Crockford,
-// formato `LEX-XXXX-XXXX` — conferido por `isCodigoAcessoValido`.
+// e-mail. Desde a Fase 2.5 (DEC-089) o código é da PESSOA — o código PESSOAL
+// da Mariana —, e não mais do vínculo dela com P1. Ele nasce sorteado quando a
+// senha é definida; o seed o fixa neste valor para que ele possa ir para o
+// README. Alfabeto Crockford, formato `LEX-XXXX-XXXX` — conferido por
+// `isCodigoAcessoValido`.
+//
+// ⚠️ Num banco MIGRADO (o `lex_prod` de antes da 2.5) o código pessoal da
+// Mariana é o que a migração sorteou, e não este: o antigo era do vínculo, e
+// código de vínculo não vira código pessoal (DEC-090). Lá, o código está na
+// tela da advogada — Clientes → Mariana → "Acesso ao portal".
 export const PORTAL_CODIGO = "LEX-2026-BANC";
 
 // ── A advogada ─────────────────────────────────────────────────────────────
@@ -221,10 +228,16 @@ export const PROCESSOS = {
     observacoes: "Sentença parcialmente procedente. A reclamada interpôs recurso ordinário."
   },
   // P3 — LITISCONSÓRCIO, em CONHECIMENTO, com o REPARCELAMENTO.
+  // Fase 2.5: a Mariana é a terceira herdeira e está no processo, mas a
+  // advogada AINDA NÃO o liberou no portal (`liberado: false` é o padrão de
+  // todo vínculo novo, DEC-091). É o caso que a demonstração precisa: ela
+  // entra, vê só P1 e vai direto para ele; a advogada libera P3 na tela e a
+  // lista dela passa a ter dois processos.
   p3: {
     clientes: [
       { c: "helena", papel: "autor", principal: true },
-      { c: "paulo", papel: "litisconsorte", principal: false }
+      { c: "paulo", papel: "litisconsorte", principal: false },
+      { c: "mariana", papel: "litisconsorte", principal: false }
     ],
     titulo: "Inventário de Ernesto Wosch",
     numeroProcesso: "0006174-73.2025.8.16.0019",
