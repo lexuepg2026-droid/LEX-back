@@ -6302,6 +6302,32 @@ está mesmo `cancelado` antes de afirmar qualquer coisa):
 
 ---
 
+## DEC-069 — "Honorários em aberto" conta o parcialmente pago (Fase 0)
+
+**O defeito, apontado pela 3ª banca.** O cartão do Início contava
+`Fee.countDocuments({ status: "pendente" })` (`dashboardService.getSummary`):
+só os honorários **sem nenhum pagamento**. O `parcialmente_pago` — o que ainda
+tem o que receber, e o estado normal de um contrato em andamento — ficava fora.
+Com o seed, a maior parte dos honorários vivos não entrava na conta.
+
+**A regra:** em aberto é `status ∈ { pendente, parcialmente_pago }`, com
+`ativo: true`. `pago` e `cancelado` ficam de fora.
+
+**O campo da resposta NÃO foi renomeado** — continua `honorariosAReceber`. É
+contrato de `GET /api/dashboard`, e renomeá-lo quebraria qualquer cliente que o
+leia. O que mudou de nome é o **rótulo da tela**: "Honorários em aberto"
+(`DashboardHomePage.jsx`).
+
+**É contagem, e continua sendo.** O VALOR em aberto existe em
+`GET /financeiro/resumo` como `pendente`. Trocar o cartão por valor é decisão
+que segue aberta (inventário de 24/10/2026, decisão 7.7).
+
+**Teste:** `tests/financial/honorariosEmAberto.test.js` produz os quatro
+estados pelo caminho real (parcela, pagamento parcial, quitação e cancelamento
+explícito) e confere os quatro antes de contar. Contagem esperada: 2.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06

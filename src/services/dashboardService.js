@@ -53,7 +53,14 @@ export const getSummary = async (usuarioId) => {
   ] = await Promise.all([
     Process.countDocuments({ usuarioId, status: "ativo", ativo: true }),
     Client.countDocuments({ usuarioId, ativo: true }),
-    Fee.countDocuments({ usuarioId, status: "pendente", ativo: true }),
+    // "Honorários em aberto" (Fase 0, DEC-069). Era só `pendente` — os que
+    // nunca receberam nada —, e o `parcialmente_pago`, que ainda tem o que
+    // receber, ficava de fora. O nome do campo não muda: é contrato da rota.
+    Fee.countDocuments({
+      usuarioId,
+      status: { $in: ["pendente", "parcialmente_pago"] },
+      ativo: true
+    }),
     Installment.countDocuments({ usuarioId, status: "vencido", ativo: true }),
     Document.countDocuments({ usuarioId, ativo: true }),
     Payment.aggregate([
