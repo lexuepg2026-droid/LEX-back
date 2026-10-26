@@ -6733,6 +6733,31 @@ ficavam no futuro com âncora entre os dias 1 e 6 (a padrão é 05/10). Com
 
 ---
 
+## DEC-110 — `GET /clients?busca=` para o seletor de participante (Fase 3.3b)
+
+O formulário do processo escolhia o participante num `<select>` com os 100
+primeiros clientes (`limit: 100`): o 101º não aparecia em lugar nenhum. A tela
+passou a buscar no servidor (DEC-110 do front), e a busca de clientes ALARGOU,
+no padrão da DEC-101:
+
+- **sem acento e sem caixa** (`regexBuscaDaQuery`, o de `/processes` e
+  `/secoes`): "joao" acha "João Conceição", "pao quente" acha "Padaria Pão
+  Quente Ltda";
+- **nome fantasia** entrou como alvo, ao lado de `nomeCompleto`, `razaoSocial`
+  e `email` (que continua);
+- **CPF/CNPJ**, com ou sem máscara (`alvosDoDocumento`, exportada): o banco
+  guarda só dígitos, então o termo vira dígitos — mas só quando o termo É um
+  documento (dígitos e `.-/` e espaço, com **3 dígitos ou mais**). Sem essa
+  guarda, "Rua 1" casaria todo CPF com um "1".
+
+**Só alarga:** todo termo que casava antes continua casando (o regex sem
+acento aceita a grafia digitada); metacaractere continua literal; o filtro
+continua com `usuarioId`. Nenhum campo novo na resposta, nenhuma rota nova.
+`tests/clients/busca.test.js` (17 testes), com mutação conferida: com a busca
+antiga o arquivo não passa.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
