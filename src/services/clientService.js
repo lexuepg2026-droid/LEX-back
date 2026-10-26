@@ -7,7 +7,8 @@ import { garantirCodigoPessoal, salvarClienteComCodigo } from "./codigoPessoal.j
 import { DEPENDENCIA } from "../config/integrityConflicts.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
-import { regexTermoSimples } from "../utils/texto.js";
+import { escaparRegex, regexBuscaDaQuery } from "../utils/texto.js";
+import { somenteDigitos } from "../utils/documentos.js";
 import { filtroSituacao, ordenacaoDeClientes } from "../utils/filtrosDeConsulta.js";
 
 const onlyNumbers = (value) => {
@@ -241,6 +242,24 @@ const createClient = async (usuarioId, data) => {
   }
 };
 
+// ── CPF/CNPJ na busca (Fase 3.3b, DEC-110) ─────────────────────────────────
+// O documento é gravado só com dígitos (`normalizeClientData`), e a advogada
+// o digita com ou sem máscara. Só entra quando o termo É um documento — dígitos
+// e a pontuação da máscara, com pelo menos 3 dígitos —, senão "Rua 1" casaria
+// todo CPF com um "1" no meio.
+const DOCUMENTO_DIGITADO = /^[\d.\-/\s]+$/;
+const MINIMO_DE_DIGITOS = 3;
+
+export const alvosDoDocumento = (busca) => {
+  if (typeof busca !== "string") return [];
+  const termo = busca.slice(0, 80).trim();
+  if (!DOCUMENTO_DIGITADO.test(termo)) return [];
+  const digitos = somenteDigitos(termo);
+  if (digitos.length < MINIMO_DE_DIGITOS) return [];
+  const regex = new RegExp(escaparRegex(digitos));
+  return [{ cpf: regex }, { cnpj: regex }];
+};
+
 const getAllClients = async (
   usuarioId,
   { page = 1, limit = 20, busca, situacao, ordem } = {}
@@ -250,9 +269,20 @@ const getAllClients = async (
   // o padrão do helper é exatamente o filtro de antes.
   const filter = { usuarioId, ...filtroSituacao(situacao) };
   // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
-  const regex = regexTermoSimples(busca);
+  //
+  // Fase 3.3b (DEC-110): o seletor de participante do processo passou a buscar
+  // aqui, e a busca ALARGOU, como a de processos na DEC-101 — sem acento e sem
+  // caixa, também no nome fantasia, e no CPF/CNPJ (ver `alvosDoDocumento`).
+  // Todo termo que casava antes continua casando.
+  const regex = regexBuscaDaQuery(busca);
   if (regex) {
-    filter.$or = [{ nomeCompleto: regex }, { razaoSocial: regex }, { email: regex }];
+    filter.$or = [
+      { nomeCompleto: regex },
+      { razaoSocial: regex },
+      { nomeFantasia: regex },
+      { email: regex },
+      ...alvosDoDocumento(busca)
+    ];
   }
 
   // ── DEC-062: ordem alfabética em português ───────────────────────────────
