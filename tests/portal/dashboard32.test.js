@@ -3,8 +3,11 @@
 //
 //   confirmacoesNovasPorProcesso  [{ processoId, numeroProcesso, titulo, quantidade }]
 //                                 até 10, pela confirmação mais recente
-//   processosNaoLiberados         vínculos ativos, cliente com portal,
-//                                 `liberadoNoPortal: false`
+//   processosNaoLiberados         processos com vínculo ativo de cliente com
+//                                 portal e `liberadoNoPortal: false` (contava
+//                                 vínculos na 3.2; PROCESSOS desde a 3.3,
+//                                 DEC-108 — os casos daqui têm um vínculo por
+//                                 processo e valem nas duas leituras)
 //
 // As chaves antigas continuam (a contagem `confirmacoesNaoVistas` é travada
 // em `confirmacao.test.js` e `isolamento.test.js`, que não mudaram).

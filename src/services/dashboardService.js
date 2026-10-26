@@ -88,9 +88,9 @@ export const getSummary = async (usuarioId) => {
     contarNaoVistas(usuarioId)
   ]);
 
-  const [confirmacoesNovasPorProcesso, processosNaoLiberados] = await Promise.all([
+  const [confirmacoesNovasPorProcesso, naoLiberados] = await Promise.all([
     contarNaoVistasPorProcesso(usuarioId),
-    contarVinculosNaoLiberados(usuarioId)
+    processosComClienteNaoLiberado(usuarioId)
   ]);
 
   return {
@@ -103,7 +103,10 @@ export const getSummary = async (usuarioId) => {
     confirmacoesNaoVistas,
     // Fase 3.2 (DEC-104) — chaves NOVAS; as de cima não mudaram.
     confirmacoesNovasPorProcesso,
-    processosNaoLiberados
+    // Fase 3.3 (DEC-108): conta PROCESSOS distintos (era vínculos), e o id
+    // vem quando há exatamente um, para o Início abrir o processo direto.
+    processosNaoLiberados: naoLiberados.length,
+    processoNaoLiberadoId: naoLiberados.length === 1 ? naoLiberados[0] : null
   };
 };
 
@@ -119,14 +122,19 @@ export const getSummary = async (usuarioId) => {
 // um processo desativado responde 404. Por isso a soma das quantidades pode
 // ser menor que `confirmacoesNaoVistas` (a confirmação não cascateia).
 //
-// ── `processosNaoLiberados` ───────────────────────────────────────────────
-// Vínculos ATIVOS cujo cliente TEM acesso ao portal (senha definida, a mesma
-// regra do `temAcessoPortal` de `processoClienteService`) e cujo processo
-// ainda não foi liberado para ele (`liberadoNoPortal: false`). Conta
-// VÍNCULOS, não processos: um processo com dois clientes de portal não
-// liberados são duas liberações pendentes. Cliente e processo inativos ficam
-// de fora — a cascata da desativação já derruba o vínculo, e a conferência é
+// ── `processosNaoLiberados` e `processoNaoLiberadoId` ─────────────────────
+// PROCESSOS distintos com pelo menos um vínculo ATIVO de cliente que TEM
+// acesso ao portal (senha definida, a mesma regra do `temAcessoPortal` de
+// `processoClienteService`) e `liberadoNoPortal: false`; cliente e processo
+// ativos — a cascata da desativação já derruba o vínculo, e a conferência é
 // rede.
+//
+// **Fase 3.3 (DEC-108):** na 3.2 a contagem era por VÍNCULO, e o cartão do
+// Início dizia "processos" — um processo com dois clientes de portal não
+// liberados contava 2. Mudança de semântica autorizada (o campo nasceu na 3.2
+// e só o Início o lê). `processoNaoLiberadoId` (novo) vem só quando há
+// exatamente um processo, para o cartão abrir a ficha onde mora o
+// interruptor.
 // ═══════════════════════════════════════════════════════════════════════════
 const LIMITE_CONFIRMACOES_POR_PROCESSO = 10;
 
@@ -160,12 +168,13 @@ const contarNaoVistasPorProcesso = async (usuarioId) => {
     });
 };
 
-const contarVinculosNaoLiberados = async (usuarioId) => {
+// Os ids (string) dos processos, ordenados para a resposta ser estável.
+const processosComClienteNaoLiberado = async (usuarioId) => {
   const uid = new mongoose.Types.ObjectId(usuarioId);
   const vinculos = await ProcessoCliente.find({
     usuarioId: uid, ativo: true, liberadoNoPortal: false
   }).select("clienteId processoId");
-  if (vinculos.length === 0) return 0;
+  if (vinculos.length === 0) return [];
 
   const [comPortal, processosAtivos] = await Promise.all([
     Client.find({
@@ -182,9 +191,12 @@ const contarVinculosNaoLiberados = async (usuarioId) => {
   ]);
   const clientes = new Set(comPortal.map((c) => String(c._id)));
   const processos = new Set(processosAtivos.map((p) => String(p._id)));
-  return vinculos.filter(
-    (v) => clientes.has(String(v.clienteId)) && processos.has(String(v.processoId))
-  ).length;
+  const distintos = new Set(
+    vinculos
+      .filter((v) => clientes.has(String(v.clienteId)) && processos.has(String(v.processoId)))
+      .map((v) => String(v.processoId))
+  );
+  return [...distintos].sort();
 };
 
 export const getStatusCounts = async (usuarioId) => {
