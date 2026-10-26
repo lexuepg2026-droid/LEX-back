@@ -31,12 +31,14 @@ describe("DEC-113 — CORS do cabeçalho de versão", () => {
       },
     });
 
-  test("origem permitida: o preflight aceita X-If-Unmodified-Since", async () => {
-    const r = await preflight("content-type,x-if-unmodified-since");
+  test("origem permitida: o preflight aceita os cabeçalhos da fila", async () => {
+    const r = await preflight("content-type,x-if-unmodified-since,idempotency-key");
     assert.ok(r.status === 204 || r.status === 200, `status ${r.status}`);
     assert.equal(r.headers.get("access-control-allow-origin"), ORIGEM);
     const permitidos = (r.headers.get("access-control-allow-headers") ?? "").toLowerCase();
     assert.match(permitidos, /x-if-unmodified-since/);
+    // O reenvio da fila manda também a chave de idempotência (F-5b).
+    assert.match(permitidos, /idempotency-key/);
     assert.match(permitidos, /content-type/);
     assert.match(permitidos, /authorization/);
     assert.equal(r.headers.get("access-control-allow-credentials"), "true");

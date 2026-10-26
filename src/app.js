@@ -81,7 +81,9 @@ app.use(cors({
   // offline manda na mudança de fase e no compromisso (DEC-060). Em produção a
   // API é mesma origem e não há preflight; no desenvolvimento (5173 → 3001)
   // o navegador recusava o preflight e a escrita nem saía. Só acrescenta.
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-If-Unmodified-Since'],
+  // `Idempotency-Key` é o outro cabeçalho que a fila manda no REENVIO
+  // (`outboxSender.js`, F-5b) — achado na verificação da 3.4, mesmo defeito.
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-If-Unmodified-Since', 'Idempotency-Key'],
 }));
 app.use(cookieParser());
 // 400 kb, não o padrão de 100 kb do express.json: o logo do escritório é
