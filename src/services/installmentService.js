@@ -1,6 +1,9 @@
 import mongoose from "mongoose";
 import Installment from "../models/Installment.js";
 import Fee from "../models/Fee.js";
+import Process from "../models/Process.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 import { assertFeeAtivoParaCriar } from "./activationHierarchy.js";
 import Allocation from "../models/Allocation.js";
 import Payment from "../models/Payment.js";
@@ -398,12 +401,41 @@ export const listarInstallments = async (
   ]);
 
   return {
-    data: await comTotalDoPlano(data, usuarioId),
+    data: await comProcessoResumido(await comTotalDoPlano(data, usuarioId), usuarioId),
     total,
     page,
     limit,
     totalPages: Math.ceil(total / limit)
   };
+};
+
+// ── Fase 3.2 (DEC-102): o processo e o cliente principal de cada linha ────
+//
+// A listagem de parcelas ganhou as colunas Processo e Cliente. `feeId` já vem
+// populado, mas com `processoId` como id — populá-lo por dentro TROCARIA a
+// forma de um campo existente (de string para objeto), e esta fase só
+// acrescenta. Por isso a chave é NOVA: `processo: { _id, numeroProcesso,
+// titulo, clientePrincipalNome }`, ou `null`.
+//
+// Sai do processo do HONORÁRIO, e não do `processoId` desnormalizado da
+// parcela — a mesma escolha do resumo e da ficha. Uma consulta para a página
+// inteira, não uma por linha.
+const comProcessoResumido = async (linhas, usuarioId) => {
+  const idDoProcesso = (linha) => linha.feeId?.processoId ?? null;
+  const ids = [...new Set(linhas.map(idDoProcesso).filter(Boolean).map(String))];
+  if (ids.length === 0) return linhas.map((l) => ({ ...l, processo: null }));
+
+  const processos = await Process.find({ _id: { $in: ids }, usuarioId })
+    .select("numeroProcesso titulo clientePrincipalId")
+    .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO);
+  const porId = new Map(processos.map((p) => [String(p._id), {
+    _id: p._id,
+    numeroProcesso: p.numeroProcesso ?? null,
+    titulo: p.titulo ?? null,
+    clientePrincipalNome: nomeExibicaoDoCliente(p.clientePrincipalId) || null
+  }]));
+
+  return linhas.map((l) => ({ ...l, processo: porId.get(String(idDoProcesso(l))) ?? null }));
 };
 
 export const buscarInstallmentPorId = async (usuarioId, installmentId) => {
