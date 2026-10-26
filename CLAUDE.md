@@ -6668,6 +6668,8 @@ Duas chaves novas; as sete de antes não mudaram.
 | `confirmacoesNovasPorProcesso` | `[{ processoId, numeroProcesso, titulo, quantidade }]` | `vistaPelaAdvogada: false` (a condição de `contarNaoVistas`), agrupada por processo, **até 10**, pela confirmação mais recente; **só processo ativo** |
 | `processosNaoLiberados` | number | vínculos **ativos** com `liberadoNoPortal: false` cujo cliente tem **senha de portal** (a regra do `temAcessoPortal`), cliente e processo ativos |
 
+> ⚠️ **Desde a 3.3 (DEC-108)** a contagem é de **processos distintos**, e há `processoNaoLiberadoId`.
+
 - **Só processo ativo na lista curta:** o destino do clique é a ficha, e a ficha
   de processo desativado responde 404. Como a confirmação não cascateia, a soma
   das quantidades pode ser menor que `confirmacoesNaoVistas`.
@@ -6677,6 +6679,28 @@ Duas chaves novas; as sete de antes não mudaram.
 Teste: `tests/portal/dashboard32.test.js` (ordem, quantidade, marcar vistas
 tira da lista, isolamento, vínculo inativo e cliente sem portal fora, processo
 desativado fora).
+
+## DEC-108 — `processosNaoLiberados` conta PROCESSOS, e `processoNaoLiberadoId` (Fase 3.3)
+
+> **Emenda à DEC-104.** Mudança de semântica **autorizada** pelo Daniel: o
+> campo nasceu na 3.2 e só o Início o lê.
+
+| Chave | Na 3.2 | Desde a 3.3 |
+|---|---|---|
+| `processosNaoLiberados` | número de **vínculos** (ativos, cliente com senha de portal, `liberadoNoPortal: false`, cliente e processo ativos) | número de **processos distintos** com pelo menos um vínculo assim |
+| `processoNaoLiberadoId` | — | **novo**: o id do processo quando a contagem é exatamente **1**; senão `null` |
+
+**Por quê:** o cartão do Início diz "Processos não liberados no portal", e um
+processo com dois clientes de portal não liberados contava 2. Com um processo
+só, o Início abre a ficha dele — onde mora o interruptor —, como o cartão de
+confirmações já fazia.
+
+Os testes da 3.2 (`tests/portal/dashboard32.test.js`) continuam passando sem
+mudança de asserção: cada caso deles tinha um vínculo por processo. O comentário
+do cabeçalho foi corrigido. Testes novos em `tests/portal/dashboard33.test.js`:
+dois clientes no mesmo processo contam 1; liberar só um mantém o processo; dois
+processos contam 2 com id nulo; o id acompanha o processo que sobra; isolamento
+nos dois sentidos.
 
 ## DEC-105 — o cliente e o limite de 8 nas fontes das Datas próximas (Fase 3.2)
 
