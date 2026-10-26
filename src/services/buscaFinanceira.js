@@ -1,6 +1,7 @@
+import Client from "../models/Client.js";
 import Fee from "../models/Fee.js";
 import Process from "../models/Process.js";
-import { regexTermoSimples } from "../utils/texto.js";
+import { regexBuscaDaQuery } from "../utils/texto.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // O `?busca=` DAS TRÊS LISTAGENS FINANCEIRAS — Fase F-1b.3
@@ -27,30 +28,59 @@ import { regexTermoSimples } from "../utils/texto.js";
 // Escolhida a 3. É a única que não paga custo de escrita nem de join, e o
 // enunciado da fase pediu explicitamente para reduzir o alcance em vez de
 // inventar consulta cara. O teto do termo (80 caracteres) e o escape de
-// metacaractere vêm de `regexTermoSimples`, unificado na F-0.
+// metacaractere vêm de `regexBuscaTexto`, unificado na F-0.
 //
 // ── O alcance REAL, e o que ficou de fora ────────────────────────────────
 // `observacoes` só existe em `Payment`. Parcela e honorário não têm o campo —
-// então nas listagens deles a busca casa descrição do honorário e número do
-// processo, e nada mais. Declarado, e não simulado: inventar um alvo que o
-// schema não tem faria o campo prometer um recorte que ele não entrega.
+// então nas listagens deles a busca casa descrição do honorário, número do
+// processo e cliente principal, e nada mais. Declarado, e não simulado:
+// inventar um alvo que o schema não tem faria o campo prometer um recorte que
+// ele não entrega.
+//
+// ── Fase 3.2 (DEC-101): o cliente principal, e sem acento ────────────────
+// O seletor de honorário dos formulários passou a buscar no servidor, e o que
+// a advogada lembra primeiro é o NOME DO CLIENTE. O cliente principal do
+// processo entra como mais um alvo, resolvido pela mesma técnica (projeção de
+// `_id`): clientes cujo nome casa → processos em que ele é o principal.
+// E o padrão passou a ser o de `/secoes` (`regexBuscaTexto`): "joao" acha
+// "João", e "Inventario" acha "Inventário". Só ALARGA o que casava antes —
+// todo termo que casava com o regex simples continua casando.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Os campos de nome do cliente, na precedência de `utils/nomeExibicao.js`.
+const CAMPOS_DE_NOME = ["nomeCompleto", "razaoSocial", "nomeFantasia"];
+
+// Os processos da usuária cujo cliente PRINCIPAL tem nome que casa com o
+// regex. Compartilhado com `GET /processes?busca=`.
+export const processosPorClientePrincipal = async (regex, usuarioId) => {
+  const clientes = await Client.find({
+    usuarioId,
+    $or: CAMPOS_DE_NOME.map((campo) => ({ [campo]: regex }))
+  }).select("_id");
+  if (clientes.length === 0) return [];
+  const processos = await Process.find({
+    usuarioId,
+    clientePrincipalId: { $in: clientes.map((c) => c._id) }
+  }).select("_id");
+  return processos.map((p) => p._id);
+};
 
 // `null` quando não há termo utilizável — e aí o chamador simplesmente não
 // aplica filtro nenhum, que é a regra "filtro ausente não filtra".
 export const alvosDaBusca = async (termo, usuarioId) => {
-  const regex = regexTermoSimples(termo);
+  const regex = regexBuscaDaQuery(termo);
   if (!regex) return null;
 
-  const [honorarios, processos] = await Promise.all([
+  const [honorarios, processos, doCliente] = await Promise.all([
     Fee.find({ usuarioId, descricao: regex }).select("_id"),
-    Process.find({ usuarioId, numeroProcesso: regex }).select("_id")
+    Process.find({ usuarioId, numeroProcesso: regex }).select("_id"),
+    processosPorClientePrincipal(regex, usuarioId)
   ]);
 
   return {
     regex,
     honorarioIds: honorarios.map((f) => f._id),
-    processoIds: processos.map((p) => p._id)
+    processoIds: [...processos.map((p) => p._id), ...doCliente]
   };
 };
 
@@ -72,4 +102,4 @@ export const clausulasDaBusca = (
   return clausulas;
 };
 
-export default { alvosDaBusca, clausulasDaBusca };
+export default { alvosDaBusca, clausulasDaBusca, processosPorClientePrincipal };

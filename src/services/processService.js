@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { filtroTexto, filtroSituacao } from "../utils/filtrosDeConsulta.js";
-import { regexTermoSimples } from "../utils/texto.js";
+import { regexBuscaDaQuery } from "../utils/texto.js";
+import { processosPorClientePrincipal } from "./buscaFinanceira.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
   normalizarClientesDoPayload,
@@ -295,9 +296,15 @@ export const listProcesses = async (
   // filtro para voltar a ser alcançável.
   const filter = { usuarioId, ...filtroSituacao(situacao), ...filtroLiminar(liminar) };
   // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
-  const regex = regexTermoSimples(busca);
+  //
+  // Fase 3.2 (DEC-101): o seletor de processo do formulário de honorário
+  // passou a buscar aqui, e a busca ALARGOU — casa também o nome do cliente
+  // principal, e ignora acento e caixa no padrão de `/secoes`. Todo termo que
+  // casava antes continua casando.
+  const regex = regexBuscaDaQuery(busca);
   if (regex) {
-    filter.$or = [{ titulo: regex }, { numeroProcesso: regex }];
+    const doCliente = await processosPorClientePrincipal(regex, usuarioId);
+    filter.$or = [{ titulo: regex }, { numeroProcesso: regex }, { _id: { $in: doCliente } }];
   }
   const statusFiltro = filtroTexto(status);
   if (statusFiltro) filter.status = statusFiltro;
