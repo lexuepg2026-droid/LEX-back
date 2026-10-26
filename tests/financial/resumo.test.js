@@ -299,9 +299,10 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
           // atravessa honorários e não tem como contar o plano vigente de cada
           // um, e um "de N" contado sobre gerações somadas é exatamente o que a
           // DEC-048 tirou do recibo.
-          "_id", "dataVencimento", "descricaoHonorario", "emAberto", "honorarioId",
-          "numeroParcela", "numeroProcesso", "processoId", "status", "totalParcelas",
-          "valor", "valorPago"
+          // `clientePrincipalNome` entrou na Fase 3.2 (DEC-105), autorizado.
+          "_id", "clientePrincipalNome", "dataVencimento", "descricaoHonorario", "emAberto",
+          "honorarioId", "numeroParcela", "numeroProcesso", "processoId", "status",
+          "totalParcelas", "valor", "valorPago"
         ],
         "o formato do próximo vencimento mudou"
       );
@@ -328,19 +329,21 @@ describe("resumo financeiro — indicadores da DEC-028(d)", () => {
     assert.ok(ids.includes(String(doMesQueVem._id)), "a parcela do mês que vem sumiu");
   });
 
-  test("os próximos vencimentos vêm ordenados e são no máximo cinco", async () => {
-    // Sete parcelas em aberto, todas no futuro, para a poda de 5 ficar visível.
+  // Fase 3.2 (DEC-105): a poda subiu de 5 para 8, autorizado — o Início mostra
+  // até 8 linhas. O arranjo subiu de 7 para 10 parcelas pelo mesmo motivo.
+  test("os próximos vencimentos vêm ordenados e são no máximo oito", async () => {
+    // Dez parcelas em aberto, todas no futuro, para a poda de 8 ficar visível.
     const outro = await criarHonorario(api, processo._id, {
-      tipo: "fixo", valor: 700, descricao: "Parcelamento longo"
+      tipo: "fixo", valor: 1000, descricao: "Parcelamento longo"
     });
-    for (let i = 1; i <= 7; i += 1) {
+    for (let i = 1; i <= 10; i += 1) {
       await criarParcela(api, outro._id, i, {
         valor: 100, dataVencimento: dataUTC(i + 1, 10)
       });
     }
 
     const r = await resumo();
-    assert.equal(r.proximosVencimentos.length, 5, "a poda em 5 não aconteceu");
+    assert.equal(r.proximosVencimentos.length, 8, "a poda em 8 não aconteceu");
 
     const datas = r.proximosVencimentos.map((p) => new Date(p.dataVencimento).getTime());
     assert.deepEqual(

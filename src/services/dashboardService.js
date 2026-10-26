@@ -6,7 +6,11 @@ import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
 import Reversal from "../models/Reversal.js";
+import ProcessoCliente from "../models/ProcessoCliente.js";
+import ConfirmacaoVisualizacao from "../models/ConfirmacaoVisualizacao.js";
 import { contarNaoVistas } from "./confirmacaoService.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 
 const toCountMap = (arr) =>
   arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
@@ -19,10 +23,13 @@ const emCentavos = (n) => Math.round(Number(n || 0) * 100) / 100;
 const somar = (itens, campo) =>
   emCentavos(itens.reduce((acc, item) => acc + Number(item[campo] || 0), 0));
 
-// Quantas parcelas o resumo mostra em "próximos vencimentos". Cinco cabem no
-// cartão sem virar segunda listagem: quem precisa da lista inteira abre
-// `/parcelas`, que já existe e é paginada.
-const PROXIMOS_VENCIMENTOS = 5;
+// Quantas parcelas o resumo mostra em "próximos vencimentos". Quem precisa da
+// lista inteira abre `/parcelas`, que já existe e é paginada.
+//
+// Eram 5. Fase 3.2 (DEC-105): as "Datas próximas" do Início mostram até 8
+// linhas, juntando vencimentos e compromissos, e com 5 o sexto vencimento
+// sumia antes do oitavo compromisso.
+const PROXIMOS_VENCIMENTOS = 8;
 
 export const getSummary = async (usuarioId) => {
   const now = new Date();
@@ -81,6 +88,11 @@ export const getSummary = async (usuarioId) => {
     contarNaoVistas(usuarioId)
   ]);
 
+  const [confirmacoesNovasPorProcesso, processosNaoLiberados] = await Promise.all([
+    contarNaoVistasPorProcesso(usuarioId),
+    contarVinculosNaoLiberados(usuarioId)
+  ]);
+
   return {
     processosAtivos,
     clientesCadastrados,
@@ -88,8 +100,91 @@ export const getSummary = async (usuarioId) => {
     parcelasVencidas,
     documentosCadastrados,
     pagamentosRecebidosMes: pagamentosResult[0]?.total ?? 0,
-    confirmacoesNaoVistas
+    confirmacoesNaoVistas,
+    // Fase 3.2 (DEC-104) — chaves NOVAS; as de cima não mudaram.
+    confirmacoesNovasPorProcesso,
+    processosNaoLiberados
   };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AS DUAS CHAVES DA FASE 3.2 EM `GET /dashboard` (DEC-104)
+//
+// ── `confirmacoesNovasPorProcesso` ───────────────────────────────────────
+// O cartão "Confirmações novas" dizia quantas, e não de QUEM. Para levar a
+// advogada direto ao processo (um só) ou a uma lista curta (vários), a tela
+// precisa do recorte por processo. Mesma condição de `contarNaoVistas` —
+// `vistaPelaAdvogada: false` —, agrupada, até 10, pela confirmação mais
+// recente. Só processos ATIVOS: o destino do clique é a ficha, e a ficha de
+// um processo desativado responde 404. Por isso a soma das quantidades pode
+// ser menor que `confirmacoesNaoVistas` (a confirmação não cascateia).
+//
+// ── `processosNaoLiberados` ───────────────────────────────────────────────
+// Vínculos ATIVOS cujo cliente TEM acesso ao portal (senha definida, a mesma
+// regra do `temAcessoPortal` de `processoClienteService`) e cujo processo
+// ainda não foi liberado para ele (`liberadoNoPortal: false`). Conta
+// VÍNCULOS, não processos: um processo com dois clientes de portal não
+// liberados são duas liberações pendentes. Cliente e processo inativos ficam
+// de fora — a cascata da desativação já derruba o vínculo, e a conferência é
+// rede.
+// ═══════════════════════════════════════════════════════════════════════════
+const LIMITE_CONFIRMACOES_POR_PROCESSO = 10;
+
+const contarNaoVistasPorProcesso = async (usuarioId) => {
+  const uid = new mongoose.Types.ObjectId(usuarioId);
+  const grupos = await ConfirmacaoVisualizacao.aggregate([
+    { $match: { usuarioId: uid, vistaPelaAdvogada: false } },
+    { $group: { _id: "$processoId", quantidade: { $sum: 1 }, maisRecente: { $max: "$dataHora" } } }
+  ]);
+  if (grupos.length === 0) return [];
+
+  const processos = await Process.find({
+    _id: { $in: grupos.map((g) => g._id) },
+    usuarioId: uid,
+    ativo: true
+  }).select("numeroProcesso titulo");
+  const porId = new Map(processos.map((p) => [String(p._id), p]));
+
+  return grupos
+    .filter((g) => porId.has(String(g._id)))
+    .sort((a, b) => b.maisRecente - a.maisRecente || String(a._id).localeCompare(String(b._id)))
+    .slice(0, LIMITE_CONFIRMACOES_POR_PROCESSO)
+    .map((g) => {
+      const p = porId.get(String(g._id));
+      return {
+        processoId: p._id,
+        numeroProcesso: p.numeroProcesso ?? null,
+        titulo: p.titulo ?? null,
+        quantidade: g.quantidade
+      };
+    });
+};
+
+const contarVinculosNaoLiberados = async (usuarioId) => {
+  const uid = new mongoose.Types.ObjectId(usuarioId);
+  const vinculos = await ProcessoCliente.find({
+    usuarioId: uid, ativo: true, liberadoNoPortal: false
+  }).select("clienteId processoId");
+  if (vinculos.length === 0) return 0;
+
+  const [comPortal, processosAtivos] = await Promise.all([
+    Client.find({
+      _id: { $in: vinculos.map((v) => v.clienteId) },
+      usuarioId: uid,
+      ativo: true,
+      senhaPortalHash: { $nin: [null, ""] }
+    }).select("_id"),
+    Process.find({
+      _id: { $in: vinculos.map((v) => v.processoId) },
+      usuarioId: uid,
+      ativo: true
+    }).select("_id")
+  ]);
+  const clientes = new Set(comPortal.map((c) => String(c._id)));
+  const processos = new Set(processosAtivos.map((p) => String(p._id)));
+  return vinculos.filter(
+    (v) => clientes.has(String(v.clienteId)) && processos.has(String(v.processoId))
+  ).length;
 };
 
 export const getStatusCounts = async (usuarioId) => {
@@ -217,11 +312,17 @@ export const getFinanceiroResumo = async (usuarioId, { mes: mesPedido } = {}) =>
   const mesReferencia = `${ano}-${String(mes + 1).padStart(2, "0")}`;
 
   // ── 1. Processos ativos ───────────────────────────────────────────────────
+  // Fase 3.2 (DEC-105): o cliente principal vem junto, para as "Datas
+  // próximas" do Início dizerem de quem é o vencimento (apontamentos 3 e 4).
   const processos = await Process.find({ usuarioId: uid, ativo: true })
-    .select("numeroProcesso");
+    .select("numeroProcesso clientePrincipalId")
+    .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO);
   const processoIds = processos.map((p) => p._id);
   const numeroPorProcesso = new Map(
     processos.map((p) => [String(p._id), p.numeroProcesso ?? null])
+  );
+  const clientePorProcesso = new Map(
+    processos.map((p) => [String(p._id), nomeExibicaoDoCliente(p.clientePrincipalId) || null])
   );
 
   // ── 2. Honorários vigentes desses processos ───────────────────────────────
@@ -279,7 +380,9 @@ export const getFinanceiroResumo = async (usuarioId, { mes: mesPedido } = {}) =>
       // pelo mesmo motivo da ficha: mover a parcela de honorário reescreve
       // aquele campo, e a resposta dependeria de a reescrita nunca ter falhado.
       processoId,
-      numeroProcesso: processoId ? numeroPorProcesso.get(String(processoId)) ?? null : null
+      numeroProcesso: processoId ? numeroPorProcesso.get(String(processoId)) ?? null : null,
+      // Fase 3.2 (DEC-105) — campo NOVO, `null` quando não há nome.
+      clientePrincipalNome: processoId ? clientePorProcesso.get(String(processoId)) ?? null : null
     };
   });
 

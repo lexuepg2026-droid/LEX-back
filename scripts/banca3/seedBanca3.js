@@ -50,7 +50,14 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(ANCORA)) abortar(`--hoje inválido: "${ANCORA}" 
 const [AA, AM, AD] = ANCORA.split("-").map(Number);
 const iso = (dt) => dt.toISOString().slice(0, 10);
 const emDias = (n) => iso(new Date(Date.UTC(AA, AM - 1, AD + n)));
-const emMes = ({ m, d }) => iso(new Date(Date.UTC(AA, AM - 1 + m, d)));
+// O dia é limitado ao fim do mês: { m: -1, d: 30 } numa âncora de março
+// seria "30 de fevereiro", que o `Date.UTC` empurra para março — uma parcela
+// do mês anterior nasceria no futuro. Fase 3.2: { dias } conta da âncora.
+const emMes = ({ m, d, dias }) => {
+  if (dias !== undefined) return emDias(dias);
+  const ultimoDia = new Date(Date.UTC(AA, AM + m, 0)).getUTCDate();
+  return iso(new Date(Date.UTC(AA, AM - 1 + m, Math.min(d, ultimoDia))));
+};
 
 // ── Número CNJ: NNNNNNN-DD.AAAA.J.TR.OOOO, dígito módulo 97 ───────────────
 const cnjValido = (n) => {

@@ -62,4 +62,11 @@ export const regexTermoSimples = (termo, { limite = 80 } = {}) => {
   return new RegExp(escaparRegex(limpo), "i");
 };
 
-export default { semAcento, escaparRegex, regexBuscaTexto, regexTermoSimples };
+// Regex insensível a acento e caixa para um `?busca=` vindo da query (Fase
+// 3.2, DEC-101). É `regexBuscaTexto` com a guarda de tipo de
+// `regexTermoSimples`: o parâmetro repetido chega como array, e
+// `String(["a","b"])` viraria a busca literal por "a,b".
+export const regexBuscaDaQuery = (termo, opcoes) =>
+  typeof termo === "string" ? regexBuscaTexto(termo, opcoes) : null;
+
+export default { semAcento, escaparRegex, regexBuscaTexto, regexTermoSimples, regexBuscaDaQuery };

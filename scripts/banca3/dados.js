@@ -365,6 +365,12 @@ export const PROCESSOS = {
 //
 // `parcelas[].venc` e `pagamentos[].data` são descritores de data relativos à
 // âncora: { m: <meses a partir do mês da âncora>, d: <dia do mês> }.
+//
+// Fase 3.2: as parcelas EM ABERTO do mês da âncora usam { dias: <n> } — dias a
+// partir da âncora. Com dia fixo, o cenário só valia para âncora entre os dias
+// 1 e 6: com `--hoje 2026-10-25`, as de 07, 10, 15 e 20/10 nasciam vencidas e
+// a conferência acusava "parcelasVencidas=7 (esperado 1)". Os números foram
+// escolhidos para dar AS MESMAS datas na âncora padrão (05/10).
 // `contratoAntes` gera o contrato LOGO DEPOIS das parcelas — antes de pagamento
 // e de reparcelamento —, que é o momento em que um contrato é assinado. O
 // documento gerado é congelado (decisão 11 do módulo de documentos).
@@ -374,7 +380,7 @@ export const HONORARIOS = {
   f1: {
     processo: "p1", criadoEm: { m: -5, d: 20 },
     fee: { descricao: "Honorários contratuais — ação indenizatória", tipo: "fixo", valor: 6000 },
-    parcelas: [1000, 1000, 1000, 1000, 1000, 1000].map((valor, i) => ({ valor, venc: { m: -4 + i, d: 10 } })),
+    parcelas: [1000, 1000, 1000, 1000, 1000, 1000].map((valor, i) => ({ valor, venc: i === 4 ? { dias: 5 } : { m: -4 + i, d: 10 } })),
     contrato: "contratoPf",
     pagamentos: [
       { valor: 1000, data: { m: -4, d: 8 }, formaPagamento: "pix", observacoes: "Parcela de junho" },
@@ -395,7 +401,7 @@ export const HONORARIOS = {
     reparcelamento: {
       data: { m: -2, d: 5 },
       motivo: "Herdeiros aguardam o alvará de venda do imóvel rural; saldo renegociado em quatro parcelas.",
-      parcelas: [2000, 2000, 2000, 2000].map((valor, i) => ({ valor, venc: { m: -1 + i, d: 7 } }))
+      parcelas: [2000, 2000, 2000, 2000].map((valor, i) => ({ valor, venc: i === 1 ? { dias: 2 } : { m: -1 + i, d: 7 } }))
     },
     pagamentosDepois: [
       { valor: 2000, data: { m: -1, d: 5 }, formaPagamento: "pix", observacoes: "Parcela 1 do novo plano" }
@@ -415,14 +421,14 @@ export const HONORARIOS = {
   f4: {
     processo: "p4", criadoEm: { m: -1, d: 22 },
     fee: { descricao: "Honorários — execução de duplicatas", tipo: "fixo", valor: 4500 },
-    parcelas: [1500, 1500, 1500].map((valor, i) => ({ valor, venc: { m: i, d: 15 } })),
+    parcelas: [1500, 1500, 1500].map((valor, i) => ({ valor, venc: i === 0 ? { dias: 10 } : { m: i, d: 15 } })),
     contrato: "contratoPj"
   },
   // F5 — parcelado em dia, mais custas (o terceiro tipo do enum).
   f5: {
     processo: "p2", criadoEm: { m: -2, d: 3 },
     fee: { descricao: "Honorários — reclamação trabalhista", tipo: "fixo", valor: 3600 },
-    parcelas: [1200, 1200, 1200].map((valor, i) => ({ valor, venc: { m: -2 + i, d: 20 } })),
+    parcelas: [1200, 1200, 1200].map((valor, i) => ({ valor, venc: i === 2 ? { dias: 15 } : { m: -2 + i, d: 20 } })),
     contrato: "contratoPf",
     pagamentos: [
       { valor: 1200, data: { m: -2, d: 19 }, formaPagamento: "pix", observacoes: "" },
@@ -441,14 +447,14 @@ export const HONORARIOS = {
   // ── Apoio ──────────────────────────────────────────────────────────────
   fa1: { processo: "a1", criadoEm: { m: -7, d: 12 },
     fee: { descricao: "Honorários — juizado especial", tipo: "fixo", valor: 1500 },
-    parcelas: [{ valor: 1500, venc: { m: 0, d: 20 } }], contrato: "contratoPf" },
+    parcelas: [{ valor: 1500, venc: { dias: 15 } }], contrato: "contratoPf" },
   fa2: { processo: "a2", criadoEm: { m: -3, d: 1 },
     fee: { descricao: "Honorários — divórcio e partilha", tipo: "fixo", valor: 5000 },
     parcelas: [{ valor: 2500, venc: { m: -2, d: 15 } }, { valor: 2500, venc: { m: 1, d: 15 } }],
     pagamentos: [{ valor: 2500, data: { m: -2, d: 14 }, formaPagamento: "cartao_credito", observacoes: "" }] },
   fa4: { processo: "a4", criadoEm: { m: -4, d: 5 },
     fee: { descricao: "Honorários — ação previdenciária", tipo: "fixo", valor: 2400 },
-    parcelas: [600, 600, 600, 600].map((valor, i) => ({ valor, venc: { m: -3 + i, d: 10 } })),
+    parcelas: [600, 600, 600, 600].map((valor, i) => ({ valor, venc: i === 3 ? { dias: 5 } : { m: -3 + i, d: 10 } })),
     pagamentos: [
       { valor: 600, data: { m: -3, d: 10 }, formaPagamento: "pix", observacoes: "" },
       { valor: 600, data: { m: -2, d: 10 }, formaPagamento: "pix", observacoes: "" },
@@ -460,11 +466,11 @@ export const HONORARIOS = {
     pagamentos: [{ valor: 2000, data: { m: -5, d: 28 }, formaPagamento: "transferencia", observacoes: "" }] },
   fa6: { processo: "a6", criadoEm: { m: -1, d: 6 },
     fee: { descricao: "Honorários — ação monitória", tipo: "fixo", valor: 3200 },
-    parcelas: [{ valor: 1600, venc: { m: -1, d: 30 } }, { valor: 1600, venc: { m: 0, d: 30 } }],
+    parcelas: [{ valor: 1600, venc: { m: -1, d: 30 } }, { valor: 1600, venc: { dias: 25 } }],
     pagamentos: [{ valor: 1600, data: { m: -1, d: 29 }, formaPagamento: "boleto", observacoes: "" }] },
   fa7: { processo: "a7", criadoEm: { m: 0, d: 2 },
     fee: { descricao: "Honorários — revisional de aluguel", tipo: "fixo", valor: 4000 },
-    parcelas: [{ valor: 4000, venc: { m: 0, d: 26 } }] },
+    parcelas: [{ valor: 4000, venc: { dias: 21 } }] },
   fa8: { processo: "a8", criadoEm: { m: -2, d: 25 },
     fee: { descricao: "Honorários — defesa em execução fiscal", tipo: "fixo", valor: 2800 },
     parcelas: [{ valor: 1400, venc: { m: -1, d: 5 } }, { valor: 1400, venc: { m: 1, d: 5 } }],

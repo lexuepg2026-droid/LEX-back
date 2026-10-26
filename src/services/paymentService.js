@@ -11,6 +11,7 @@ import {
   filtroPeriodo
 } from "../utils/filtrosDeConsulta.js";
 import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
 import { validateCreatePayment, validateUpdatePayment } from "../validations/paymentValidation.js";
 import { registrarStatus, ORIGEM_STATUS } from "./statusHistory.js";
 import {
@@ -52,10 +53,17 @@ const validarObjectId = (id, campo) => {
   }
 };
 
+// Fase 3.2 (DEC-102): o cliente principal entra DENTRO do processo já
+// populado — chave nova num objeto que já era objeto, como o `GET /fees` faz
+// desde a 2.5. A listagem de pagamentos ganhou a coluna Cliente.
 const PAYMENT_POPULATE = {
   path: "honorarioId",
   select: "descricao valor tipo status processoId",
-  populate: { path: "processoId", select: "titulo numeroProcesso" }
+  populate: {
+    path: "processoId",
+    select: "titulo numeroProcesso clientePrincipalId",
+    populate: { path: "clientePrincipalId", select: CAMPOS_CLIENTE_POPULADO }
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

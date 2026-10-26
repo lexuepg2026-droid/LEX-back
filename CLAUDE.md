@@ -6602,6 +6602,113 @@ DEC-098 do `CLAUDE.md` do frontend.
 
 ---
 
+## Fase 3.2 — listas e formulários financeiros: o back só ACRESCENTA
+
+**Regra da fase (decisão 5):** nenhum campo existente mudou de nome ou de
+forma; só entraram campos e alcance de busca. Os testes de contrato antigos
+continuam, com **duas exceções autorizadas pelo Daniel** em
+`tests/financial/resumo.test.js`: a lista exata de chaves de
+`proximosVencimentos` ganhou `clientePrincipalNome`, e a poda subiu de 5 para 8
+(o arranjo foi de 7 para 10 parcelas para a poda continuar visível).
+
+## DEC-101 — a busca dos seletores: cliente principal e sem acento (Fase 3.2)
+
+Os seletores de processo e de honorário dos formulários passaram a buscar no
+servidor (o lado da tela é a DEC-101 do front). O que cada busca alcança:
+
+| Rota | Antes (até a 3.1) | Agora |
+|---|---|---|
+| `GET /processes?busca=` | `titulo` e `numeroProcesso`; caixa ignorada, **acento não**; termo até 80 caracteres | os dois **e o nome do cliente principal**; **acento e caixa ignorados** |
+| `GET /fees?busca=` | `descricao` e número do processo (F-1b.3); caixa ignorada, acento não; 80 caracteres | os dois **e o nome do cliente principal**; acento e caixa ignorados |
+
+- **O padrão é o de `/secoes`** (`regexBuscaTexto`), com a guarda de tipo de
+  `regexTermoSimples` — `regexBuscaDaQuery` em `utils/texto.js`: o parâmetro
+  repetido (array) não vira a busca literal por "a,b".
+- **Cliente principal** = `Process.clientePrincipalId`. A busca resolve os ids
+  antes (`processosPorClientePrincipal`, em `services/buscaFinanceira.js`):
+  clientes cujo `nomeCompleto`/`razaoSocial`/`nomeFantasia` casam → processos
+  em que ele é o principal. Litisconsorte não conta. Mesma técnica da F-1b.3
+  (projeção de `_id` + `$in`), sem `$lookup`.
+- **As listagens de parcelas e pagamentos herdam o alcance**, porque usam o
+  mesmo `alvosDaBusca`. Só ALARGA: todo termo que casava continua casando.
+- `GET /processes` já populava `clientePrincipalId` com
+  `CAMPOS_CLIENTE_POPULADO` na listagem; `GET /fees` já trazia o cliente dentro
+  de `processoId` desde a 2.5 — conferidos, nada mudou.
+- Busca vazia (ou só espaços) é a listagem sem busca.
+
+Testes: `tests/financial/busca32.test.js` (cada campo, com e sem acento,
+isolamento nos dois sentidos, vazia = sem busca, metacaractere literal, e o
+101º honorário achado além do teto de 100).
+
+## DEC-102 — processo e cliente nas listagens de parcelas e pagamentos (Fase 3.2)
+
+As três listas financeiras ganharam a coluna Cliente (apontamentos 3 e 4).
+
+| Rota | Campo novo |
+|---|---|
+| `GET /installments` | **`processo: { _id, numeroProcesso, titulo, clientePrincipalNome }`** em cada linha, ou `null` |
+| `GET /payments` (e o 201/GET por id, que usam o mesmo populate) | `honorarioId.processoId.clientePrincipalId` populado com `CAMPOS_CLIENTE_POPULADO` |
+
+**Por que `processo` é chave nova, e não `feeId.processoId` populado:**
+`feeId.processoId` é hoje um **id** (string); populá-lo trocaria a forma de um
+campo existente, que é o que a fase proíbe. Sai do processo do **honorário**,
+não do `processoId` desnormalizado da parcela (a escolha do resumo e da ficha).
+Uma consulta para a página inteira. No pagamento, o processo **já era objeto**:
+a chave nova entra dentro dele, como em `GET /fees` desde a 2.5.
+
+Teste: `tests/financial/listas32.test.js` (inclui que `feeId.processoId`
+continua string).
+
+## DEC-104 — `GET /dashboard`: confirmações por processo e processos não liberados (Fase 3.2)
+
+Duas chaves novas; as sete de antes não mudaram.
+
+| Chave | Forma | Regra |
+|---|---|---|
+| `confirmacoesNovasPorProcesso` | `[{ processoId, numeroProcesso, titulo, quantidade }]` | `vistaPelaAdvogada: false` (a condição de `contarNaoVistas`), agrupada por processo, **até 10**, pela confirmação mais recente; **só processo ativo** |
+| `processosNaoLiberados` | number | vínculos **ativos** com `liberadoNoPortal: false` cujo cliente tem **senha de portal** (a regra do `temAcessoPortal`), cliente e processo ativos |
+
+- **Só processo ativo na lista curta:** o destino do clique é a ficha, e a ficha
+  de processo desativado responde 404. Como a confirmação não cascateia, a soma
+  das quantidades pode ser menor que `confirmacoesNaoVistas`.
+- **Conta vínculos, não processos:** um processo com dois clientes de portal
+  não liberados são duas liberações pendentes.
+
+Teste: `tests/portal/dashboard32.test.js` (ordem, quantidade, marcar vistas
+tira da lista, isolamento, vínculo inativo e cliente sem portal fora, processo
+desativado fora).
+
+## DEC-105 — o cliente e o limite de 8 nas fontes das Datas próximas (Fase 3.2)
+
+| Rota | Mudança |
+|---|---|
+| `GET /financeiro/resumo` → `proximosVencimentos[]` | campo novo **`clientePrincipalNome`** (string ou `null`); limite **5 → 8** (`PROXIMOS_VENCIMENTOS`) |
+| `GET /calendar` → itens `natureza: "evento"` | `processo.clientePrincipalNome` (campo novo dentro do objeto que já existia) |
+
+O nome sai de `nomeExibicaoDoCliente`. A projeção compartilhada
+(`projetarEvento`) **não** mudou: o sino e o CRUD do evento não pediram o
+cliente; o acréscimo é só na leitura do calendário. Teste:
+`tests/financial/datasProximas32.test.js` e as duas asserções atualizadas de
+`resumo.test.js`.
+
+## DEC-106 — o seed da banca vale em qualquer `--hoje` (Fase 3.2)
+
+A conferência final de `seed:banca3 --hoje` acusava "parcelasVencidas=7
+(esperado 1)" desde a 2.5. **O defeito era dos DADOS, não da conferência:** as
+parcelas em aberto do mês da âncora tinham dia fixo (`{ m: 0, d: 15 }`), e só
+ficavam no futuro com âncora entre os dias 1 e 6 (a padrão é 05/10). Com
+`--hoje 2026-10-25`, as de 07, 10, 15 e 20/10 nasciam vencidas.
+
+- Essas parcelas passaram a `{ dias: n }`, contados da âncora, com números
+  escolhidos para dar **as mesmas datas na âncora padrão** (34 parcelas
+  comparadas, 0 diferenças).
+- `emMes` limita o dia ao fim do mês: `{ m: -1, d: 30 }` numa âncora de março
+  seria "30 de fevereiro", que o `Date.UTC` empurra para março.
+- Rodado contra banco local temporário com `--hoje 2026-10-26`: a conferência
+  fecha (`parcelasVencidas=1`).
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
