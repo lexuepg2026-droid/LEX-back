@@ -39,16 +39,25 @@ const CLASSES_ACENTO = {
 // collation não-simples, então a insensibilidade a acento precisa estar no
 // próprio padrão. A alternativa seria um campo sombra normalizado no schema —
 // mais caro, e a coleção de seções é pequena.
-export const regexBuscaTexto = (termo, { limite = 80 } = {}) => {
-  const limpo = String(termo ?? "").slice(0, limite).trim();
-  if (!limpo) return null;
-
-  const padrao = escaparRegex(semAcento(limpo).toLowerCase())
+const padraoSemAcento = (limpo) =>
+  escaparRegex(semAcento(limpo).toLowerCase())
     .split("")
     .map((ch) => (CLASSES_ACENTO[ch] ? `[${CLASSES_ACENTO[ch]}]` : ch))
     .join("");
 
-  return new RegExp(padrao, "i");
+export const regexBuscaTexto = (termo, { limite = 80 } = {}) => {
+  const limpo = String(termo ?? "").slice(0, limite).trim();
+  if (!limpo) return null;
+  return new RegExp(padraoSemAcento(limpo), "i");
+};
+
+// IGUALDADE sem acento e sem caixa (Fase 3.4, DEC-115): o filtro de tipo de
+// ação da lista de processos. É o mesmo padrão da busca, ancorado nas duas
+// pontas — "inventario" casa "Inventário" e não casa "Inventário extrajudicial".
+export const regexIgualSemAcento = (termo, { limite = 200 } = {}) => {
+  const limpo = String(termo ?? "").slice(0, limite).trim();
+  if (!limpo) return null;
+  return new RegExp(`^${padraoSemAcento(limpo)}$`, "i");
 };
 
 // Regex de busca simples (sem tratamento de acento), para os campos em que o
@@ -69,4 +78,4 @@ export const regexTermoSimples = (termo, { limite = 80 } = {}) => {
 export const regexBuscaDaQuery = (termo, opcoes) =>
   typeof termo === "string" ? regexBuscaTexto(termo, opcoes) : null;
 
-export default { semAcento, escaparRegex, regexBuscaTexto, regexTermoSimples, regexBuscaDaQuery };
+export default { semAcento, escaparRegex, regexBuscaTexto, regexIgualSemAcento, regexTermoSimples, regexBuscaDaQuery };

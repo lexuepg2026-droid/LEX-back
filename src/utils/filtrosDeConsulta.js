@@ -67,6 +67,43 @@ export const filtroTexto = (valor) => {
   return limpo.length > 0 ? limpo : undefined;
 };
 
+// ── Fase 3.4 (DEC-115): o tipo de ação da lista de processos ──────────────
+// Diferente de `filtroTexto`, este RECUSA valor que não é texto: o tipo vem de
+// uma pílula com opções da própria advogada (`GET /processes/tipos-acao`), e
+// um array ou objeto na query é URL montada errada — não alguém digitando.
+// Vazio é ignorado (a pílula "Todos os tipos"). O teto é o do campo na tela.
+export const LIMITE_TIPO_ACAO = 200;
+export const filtroTipoAcao = (valor, campo = "tipoAcao") => {
+  if (valor === undefined || valor === null) return undefined;
+  if (typeof valor !== "string") {
+    throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser um texto.`);
+  }
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+  if (limpo.length > LIMITE_TIPO_ACAO) {
+    throw erroDeFiltro(campo, `O filtro "${campo}" passa de ${LIMITE_TIPO_ACAO} caracteres.`);
+  }
+  return limpo;
+};
+
+// ── Fase 3.4 (DEC-115): a liberação no portal ─────────────────────────────
+// `nao_liberado` | `liberado`; vazio e ausente não filtram. Outro valor é 400:
+// ignorá-lo devolveria a lista inteira com cara de recortada, e a advogada
+// leria "todos liberados" onde não há recorte nenhum.
+export const PORTAIS = Object.freeze(["nao_liberado", "liberado"]);
+export const filtroPortal = (valor, campo = "portal") => {
+  if (valor === undefined || valor === null) return undefined;
+  if (typeof valor !== "string") {
+    throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser "nao_liberado" ou "liberado".`);
+  }
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+  if (!PORTAIS.includes(limpo)) {
+    throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser "nao_liberado" ou "liberado".`);
+  }
+  return limpo;
+};
+
 // ── DEC-052: listar o que foi desativado ──────────────────────────────────
 //
 // Até a F-2b as listagens de cliente e processo filtravam `ativo: true` sem
@@ -318,5 +355,7 @@ export default {
   filtroObjectId,
   filtroObjectIdExigido,
   filtroDataExigida,
-  filtroPeriodo
+  filtroPeriodo,
+  filtroTipoAcao,
+  filtroPortal
 };

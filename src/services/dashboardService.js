@@ -6,11 +6,11 @@ import Installment from "../models/Installment.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
 import Reversal from "../models/Reversal.js";
-import ProcessoCliente from "../models/ProcessoCliente.js";
 import ConfirmacaoVisualizacao from "../models/ConfirmacaoVisualizacao.js";
 import { contarNaoVistas } from "./confirmacaoService.js";
 import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
 import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
+import { processosComClienteNaoLiberado } from "./liberacaoNoPortal.js";
 
 const toCountMap = (arr) =>
   arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
@@ -168,36 +168,9 @@ const contarNaoVistasPorProcesso = async (usuarioId) => {
     });
 };
 
-// Os ids (string) dos processos, ordenados para a resposta ser estável.
-const processosComClienteNaoLiberado = async (usuarioId) => {
-  const uid = new mongoose.Types.ObjectId(usuarioId);
-  const vinculos = await ProcessoCliente.find({
-    usuarioId: uid, ativo: true, liberadoNoPortal: false
-  }).select("clienteId processoId");
-  if (vinculos.length === 0) return [];
-
-  const [comPortal, processosAtivos] = await Promise.all([
-    Client.find({
-      _id: { $in: vinculos.map((v) => v.clienteId) },
-      usuarioId: uid,
-      ativo: true,
-      senhaPortalHash: { $nin: [null, ""] }
-    }).select("_id"),
-    Process.find({
-      _id: { $in: vinculos.map((v) => v.processoId) },
-      usuarioId: uid,
-      ativo: true
-    }).select("_id")
-  ]);
-  const clientes = new Set(comPortal.map((c) => String(c._id)));
-  const processos = new Set(processosAtivos.map((p) => String(p._id)));
-  const distintos = new Set(
-    vinculos
-      .filter((v) => clientes.has(String(v.clienteId)) && processos.has(String(v.processoId)))
-      .map((v) => String(v.processoId))
-  );
-  return [...distintos].sort();
-};
+// Fase 3.4 (DEC-115): a regra saiu para `liberacaoNoPortal.js`, onde a lista
+// de processos (`?portal=nao_liberado`) também a usa — o cartão e a lista
+// precisam contar o mesmo.
 
 export const getStatusCounts = async (usuarioId) => {
   const groupByStatus = { _id: "$status", count: { $sum: 1 } };
