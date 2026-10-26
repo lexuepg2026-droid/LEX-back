@@ -65,6 +65,8 @@ import {
   inicioDoDiaUTC
 } from "../utils/dataDeCalendario.js";
 import { projetarEvento } from "./eventService.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -326,7 +328,13 @@ export const lerCalendario = async (usuarioId, { de, ate, processoId } = {}) => 
   }
 
   const [eventos, derivadas] = await Promise.all([
-    Event.find(filtroDeEventos).populate("processoId", "titulo numeroProcesso"),
+    // Fase 3.2 (DEC-105): o cliente principal vem dentro do processo, para as
+    // "Datas próximas" do Início dizerem de quem é o compromisso.
+    Event.find(filtroDeEventos).populate({
+      path: "processoId",
+      select: "titulo numeroProcesso clientePrincipalId",
+      populate: { path: "clientePrincipalId", select: CAMPOS_CLIENTE_POPULADO }
+    }),
     // O filtro por processo vale para as duas naturezas: quem pediu a agenda de
     // um processo não quer o vencimento de outro. Filtrar depois, em memória, é
     // o mesmo resultado — e o recorte por processo raramente é o caminho quente
@@ -336,8 +344,18 @@ export const lerCalendario = async (usuarioId, { de, ate, processoId } = {}) => 
 
   const itensDeEvento = eventos.map((evento) => {
     const projetado = projetarEvento(evento);
+    // Campo NOVO dentro de `processo`; os três de antes não mudam. A projeção
+    // compartilhada (`projetarEvento`) fica como estava: o sino e o CRUD do
+    // evento não pediram o cliente.
+    const processo = projetado.processo
+      ? {
+          ...projetado.processo,
+          clientePrincipalNome: nomeExibicaoDoCliente(evento.processoId?.clientePrincipalId) || null
+        }
+      : null;
     return {
       ...projetado,
+      processo,
       natureza: "evento",
       subtitulo: projetado.tipoRotulo,
       // O evento É editável no calendário — é o outro lado da DEC-055, e sai

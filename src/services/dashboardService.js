@@ -9,6 +9,8 @@ import Reversal from "../models/Reversal.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import ConfirmacaoVisualizacao from "../models/ConfirmacaoVisualizacao.js";
 import { contarNaoVistas } from "./confirmacaoService.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
 
 const toCountMap = (arr) =>
   arr.reduce((acc, { _id, count }) => ({ ...acc, [_id]: count }), {});
@@ -21,10 +23,13 @@ const emCentavos = (n) => Math.round(Number(n || 0) * 100) / 100;
 const somar = (itens, campo) =>
   emCentavos(itens.reduce((acc, item) => acc + Number(item[campo] || 0), 0));
 
-// Quantas parcelas o resumo mostra em "próximos vencimentos". Cinco cabem no
-// cartão sem virar segunda listagem: quem precisa da lista inteira abre
-// `/parcelas`, que já existe e é paginada.
-const PROXIMOS_VENCIMENTOS = 5;
+// Quantas parcelas o resumo mostra em "próximos vencimentos". Quem precisa da
+// lista inteira abre `/parcelas`, que já existe e é paginada.
+//
+// Eram 5. Fase 3.2 (DEC-105): as "Datas próximas" do Início mostram até 8
+// linhas, juntando vencimentos e compromissos, e com 5 o sexto vencimento
+// sumia antes do oitavo compromisso.
+const PROXIMOS_VENCIMENTOS = 8;
 
 export const getSummary = async (usuarioId) => {
   const now = new Date();
@@ -307,11 +312,17 @@ export const getFinanceiroResumo = async (usuarioId, { mes: mesPedido } = {}) =>
   const mesReferencia = `${ano}-${String(mes + 1).padStart(2, "0")}`;
 
   // ── 1. Processos ativos ───────────────────────────────────────────────────
+  // Fase 3.2 (DEC-105): o cliente principal vem junto, para as "Datas
+  // próximas" do Início dizerem de quem é o vencimento (apontamentos 3 e 4).
   const processos = await Process.find({ usuarioId: uid, ativo: true })
-    .select("numeroProcesso");
+    .select("numeroProcesso clientePrincipalId")
+    .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO);
   const processoIds = processos.map((p) => p._id);
   const numeroPorProcesso = new Map(
     processos.map((p) => [String(p._id), p.numeroProcesso ?? null])
+  );
+  const clientePorProcesso = new Map(
+    processos.map((p) => [String(p._id), nomeExibicaoDoCliente(p.clientePrincipalId) || null])
   );
 
   // ── 2. Honorários vigentes desses processos ───────────────────────────────
@@ -369,7 +380,9 @@ export const getFinanceiroResumo = async (usuarioId, { mes: mesPedido } = {}) =>
       // pelo mesmo motivo da ficha: mover a parcela de honorário reescreve
       // aquele campo, e a resposta dependeria de a reescrita nunca ter falhado.
       processoId,
-      numeroProcesso: processoId ? numeroPorProcesso.get(String(processoId)) ?? null : null
+      numeroProcesso: processoId ? numeroPorProcesso.get(String(processoId)) ?? null : null,
+      // Fase 3.2 (DEC-105) — campo NOVO, `null` quando não há nome.
+      clientePrincipalNome: processoId ? clientePorProcesso.get(String(processoId)) ?? null : null
     };
   });
 
