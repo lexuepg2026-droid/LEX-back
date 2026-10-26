@@ -1,8 +1,11 @@
 import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
-import { filtroTexto, filtroSituacao } from "../utils/filtrosDeConsulta.js";
-import { regexBuscaDaQuery } from "../utils/texto.js";
+import {
+  filtroTexto, filtroSituacao, filtroTipoAcao, filtroPortal, filtroPeriodo
+} from "../utils/filtrosDeConsulta.js";
+import { regexBuscaDaQuery, regexIgualSemAcento, semAcento } from "../utils/texto.js";
+import { processosComClienteNaoLiberado, processosLiberados } from "./liberacaoNoPortal.js";
 import { processosPorClientePrincipal } from "./buscaFinanceira.js";
 import ProcessoCliente from "../models/ProcessoCliente.js";
 import {
@@ -281,11 +284,50 @@ const filtroLiminar = (liminar) => {
   return {};
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OS TIPOS DE AÇÃO QUE A ADVOGADA JÁ USOU — `GET /processes/tipos-acao`
+// (Fase 3.4, DEC-115)
+//
+// As opções da pílula "Tipo de ação" da lista. Dos processos ATIVOS e
+// DESATIVADOS: o filtro de situação pode estar em "desativados", e uma opção
+// que sumisse ali esconderia exatamente o processo que ela foi procurar.
+//
+// Grafias que só diferem em acento ou caixa ("Inventário" / "inventario") são
+// UMA opção — o filtro já as trata como iguais, e duas opções que devolvem a
+// mesma lista confundem. Fica a grafia mais completa: no empate, a de
+// maiúscula e acento ("Inventário", e não "inventario"). Ordem em português
+// (`localeCompare` com `pt`), até 200.
+// ═══════════════════════════════════════════════════════════════════════════
+export const LIMITE_TIPOS_DE_ACAO = 200;
+
+export const listarTiposDeAcao = async (usuarioId) => {
+  const brutos = await Process.distinct("tipoAcao", { usuarioId });
+  const ordenados = brutos
+    .filter((t) => typeof t === "string" && t.trim() !== "")
+    .map((t) => t.trim())
+    .sort((a, b) => a.localeCompare(b, "pt", { sensitivity: "base" }) || b.localeCompare(a, "pt"));
+  const vistos = new Set();
+  const tipos = [];
+  for (const t of ordenados) {
+    const chave = semAcento(t).toLowerCase();
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    tipos.push(t);
+    if (tipos.length === LIMITE_TIPOS_DE_ACAO) break;
+  }
+  return { data: tipos };
+};
+
 export const listProcesses = async (
   usuarioId,
-  { page = 1, limit = 20, busca, status, situacao, fase, liminar } = {}
+  { page = 1, limit = 20, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal } = {}
 ) => {
   const skip = (page - 1) * limit;
+  // Fase 3.4 (DEC-115): os três filtros novos são lidos (e recusados com 400
+  // e `campo`, quando tortos) ANTES de qualquer consulta.
+  const tipoFiltro = filtroTipoAcao(tipoAcao);
+  const periodo = filtroPeriodo(de, ate);
+  const portalFiltro = filtroPortal(portal);
   // DEC-052: `ativo: true` deixou de ser fixo, para a reativação ter onde
   // acontecer. Sem `situacao`, o filtro é exatamente o de antes.
   //
@@ -313,6 +355,26 @@ export const listProcesses = async (
   // é pergunta legítima.
   const faseFiltro = filtroTexto(fase);
   if (faseFiltro) filter.fase = faseFiltro;
+
+  // ── Fase 3.4 (DEC-115): tipo de ação, período e portal ─────────────────
+  //
+  // Tipo de ação: IGUALDADE, sem acento e sem caixa — as opções da pílula vêm
+  // dos tipos que a própria advogada usou (`GET /processes/tipos-acao`), e
+  // "Inventário" não pode trazer "Inventário extrajudicial" junto.
+  if (tipoFiltro) filter.tipoAcao = regexIgualSemAcento(tipoFiltro);
+  // Período: por `dataDistribuicao`, bordas em UTC (a regra de `filtroPeriodo`,
+  // a do financeiro). Processo sem data fica de fora — `$gte`/`$lte` não casam
+  // `null` nem campo ausente —, e a tela diz isso numa linha de ajuda.
+  if (periodo) filter.dataDistribuicao = periodo;
+  // Portal: a MESMA regra do cartão do Início (`liberacaoNoPortal.js`), para a
+  // lista e o cartão contarem o mesmo.
+  if (portalFiltro) {
+    const ids = portalFiltro === "nao_liberado"
+      ? await processosComClienteNaoLiberado(usuarioId)
+      : await processosLiberados(usuarioId);
+    filter._id = { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) };
+  }
+
   const [data, total] = await Promise.all([
     // `lean` para que `participantes` possa ser anexado ao objeto devolvido —
     // um documento Mongoose ignoraria a propriedade por não estar no schema.

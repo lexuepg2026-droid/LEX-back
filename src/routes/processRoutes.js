@@ -7,6 +7,10 @@ const router = Router();
 
 router.use(authMiddleware);
 
+// Fase 3.4 (DEC-115): as opções da pílula "Tipo de ação". ANTES de "/:id",
+// senão "tipos-acao" seria capturado como id (e responderia 400 de id).
+router.get("/tipos-acao", processController.tiposDeAcao);
+
 // ── Participantes ──────────────────────────────────────────────────────────
 // Declaradas ANTES de "/:id" pelo mesmo motivo das rotas de /documents: na
 // ordem inversa, um GET /:id capturaria o prefixo e a rota nunca seria

@@ -3,6 +3,7 @@ import {
   deleteProcess,
   getProcessById,
   listProcesses,
+  listarTiposDeAcao,
   mudarFase,
   previewDeAtivacao,
   reactivateProcess,
@@ -36,10 +37,22 @@ export const list = async (req, res, next) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     // DEC-054: `fase` e `liminar` entram como os demais — a leitura dos
     // valores é do serviço, que é onde o vocabulário mora.
-    const { busca, status, situacao, fase, liminar } = req.query;
+    // Fase 3.4 (DEC-115): `tipoAcao`, `de`/`ate` e `portal`, validados no
+    // serviço como os demais.
+    const { busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal } = req.query;
     const result = await listProcesses(req.user._id, {
-      page, limit, busca, status, situacao, fase, liminar
+      page, limit, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal
     });
+    return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Fase 3.4 (DEC-115): as opções da pílula "Tipo de ação" da lista.
+export const tiposDeAcao = async (req, res, next) => {
+  try {
+    const result = await listarTiposDeAcao(req.user._id);
     return res.status(200).json(result);
   } catch (error) {
     return next(error);

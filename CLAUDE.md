@@ -6758,6 +6758,51 @@ antiga o arquivo não passa.
 
 ---
 
+## DEC-113 — o preflight aceita os cabeçalhos da fila offline (Fase 3.4)
+
+`allowedHeaders` do CORS (`src/app.js`) ganhou **`X-If-Unmodified-Since`** (a
+versão vista, DEC-060) e **`Idempotency-Key`** (o reenvio da fila, F-5b). Em
+produção a API é mesma origem (`VITE_API_URL=/api`) e não há preflight; no
+desenvolvimento (5173 → 3001) o navegador recusava o preflight, e a mudança
+de fase, o compromisso e o reenvio da fila morriam antes de sair — com a
+tela dizendo "Não foi possível falar com o servidor". O segundo cabeçalho foi
+achado na verificação no navegador da 3.4. Só acrescenta;
+`tests/infra/cors.test.js` confere os dois e que origem de fora continua sem
+permissão.
+
+## DEC-114 — o processo nasce ativo (Fase 3.4, apontamento 9 da banca)
+
+**O back não mudou.** A tela deixou de enviar `status` na criação; o modelo
+tem `default: "ativo"`. O campo continua aceito na criação e na edição.
+`tests/process/criacao34.test.js` trava as duas pontas: sem `status`, volta
+`ativo` com a fase escolhida; com `status`, grava o enviado.
+
+## DEC-115 — os filtros novos de `GET /processes` e `GET /processes/tipos-acao` (Fase 3.4)
+
+Só acréscimos; sem os parâmetros novos a listagem é a de sempre.
+
+| Parâmetro | Regra | Torto |
+|---|---|---|
+| `tipoAcao` | IGUALDADE sem acento e sem caixa (`regexIgualSemAcento`, ancorado); vazio ignora | não-texto ou > 200 → 400 `campo: "tipoAcao"` |
+| `de`, `ate` | por `dataDistribuicao`, bordas em UTC (`filtroPeriodo`, o do financeiro, DEC-103); sem data fica fora quando há período | data torta ou invertida → 400 com `campo` |
+| `portal` | `nao_liberado`: algum vínculo ativo de cliente ativo COM portal e `liberadoNoPortal: false`, processo ativo; `liberado`: algum liberado e nenhum não liberado; vazio ignora | outro valor → 400 `campo: "portal"` |
+
+- **A regra do portal mora em `services/liberacaoNoPortal.js`**
+  (`processosPorLiberacao`), extraída de `dashboardService` sem mudar: o
+  cartão "Processos não liberados" do Início (DEC-108) e
+  `?portal=nao_liberado` a chamam — há teste exigindo os dois números iguais
+  no mesmo banco.
+- **`GET /processes/tipos-acao`** (antes de `/:id` na rota): os tipos da
+  usuária, dos processos **ativos e desativados**, `{ data: [...] }`, em ordem
+  alfabética em português, até 200. Grafias que só diferem em acento ou caixa
+  são uma opção (fica a com maiúscula e acento) — o filtro já as trata como
+  iguais.
+- `tests/process/filtros34.test.js` (21): cada filtro, combinados, o período
+  na virada do mês, o processo sem data, 400 com `campo`, metacaractere
+  literal, isolamento por `usuarioId` e a igualdade com o Início.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
