@@ -67,6 +67,7 @@ import {
 import { projetarEvento } from "./eventService.js";
 import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
 import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
+import { emCentavos } from "./feeTotals.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -407,8 +408,12 @@ export const lerAvisos = async (usuarioId) => {
   const inicioDeHoje = inicioDoDiaUTC(hoje);
   const fimDeHoje = new Date(inicioDeHoje.getTime() + UM_DIA - 1);
 
+  // Fase 3.7 (DEC-130): o cliente principal vem junto, para a Visão geral do
+  // Financeiro dizer "processo · cliente" nas vencidas (como a DEC-105 fez nas
+  // Datas próximas). Acréscimo: o sino ignora o campo.
   const processos = await Process.find({ usuarioId: uid, ativo: true })
-    .select("titulo numeroProcesso");
+    .select("titulo numeroProcesso clientePrincipalId")
+    .populate("clientePrincipalId", CAMPOS_CLIENTE_POPULADO);
   const processoIds = processos.map((p) => p._id);
   const porProcesso = new Map(processos.map((p) => [String(p._id), p]));
 
@@ -485,6 +490,10 @@ export const lerAvisos = async (usuarioId) => {
       hora: null,
       valor: parcela.valor,
       valorPago: parcela.valorPago ?? 0,
+      // Fase 3.7 (DEC-130): o que ainda falta receber NESTA parcela, pela
+      // mesma conta de `proximosVencimentos` e de `valorVencido` — a soma
+      // destas linhas é o cartão "Total vencido hoje". A tela não subtrai.
+      emAberto: Math.max(0, emCentavos(Number(parcela.valor) - Number(parcela.valorPago || 0))),
       status: parcela.status,
       feeId: String(parcela.feeId),
       processoId: processo ? String(processo._id) : null,
@@ -492,7 +501,8 @@ export const lerAvisos = async (usuarioId) => {
         ? {
             _id: String(processo._id),
             titulo: processo.titulo ?? null,
-            numeroProcesso: processo.numeroProcesso ?? null
+            numeroProcesso: processo.numeroProcesso ?? null,
+            clientePrincipalNome: nomeExibicaoDoCliente(processo.clientePrincipalId) || null
           }
         : null,
       editavelNoCalendario: false
