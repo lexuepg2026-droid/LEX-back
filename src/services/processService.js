@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import Process from "../models/Process.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import {
-  filtroTexto, filtroSituacao, filtroTipoAcao, filtroPortal, filtroPeriodo
+  filtroTexto, filtroSituacao, filtroTipoAcao, filtroPortal, filtroPeriodo, filtroObjectIdExigido
 } from "../utils/filtrosDeConsulta.js";
 import { regexBuscaDaQuery, regexIgualSemAcento, semAcento } from "../utils/texto.js";
 import { processosComClienteNaoLiberado, processosLiberados } from "./liberacaoNoPortal.js";
@@ -320,9 +320,11 @@ export const listarTiposDeAcao = async (usuarioId) => {
 
 export const listProcesses = async (
   usuarioId,
-  { page = 1, limit = 20, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal } = {}
+  { page = 1, limit = 20, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal, clienteId } = {}
 ) => {
   const skip = (page - 1) * limit;
+  // Fase 3.5 (DEC-119): o cliente, lido antes de tudo como os outros.
+  const clienteFiltro = filtroObjectIdExigido(clienteId, "clienteId");
   // Fase 3.4 (DEC-115): os três filtros novos são lidos (e recusados com 400
   // e `campo`, quando tortos) ANTES de qualquer consulta.
   const tipoFiltro = filtroTipoAcao(tipoAcao);
@@ -368,12 +370,28 @@ export const listProcesses = async (
   if (periodo) filter.dataDistribuicao = periodo;
   // Portal: a MESMA regra do cartão do Início (`liberacaoNoPortal.js`), para a
   // lista e o cartão contarem o mesmo.
+  // Os dois recortes por id (portal e cliente) entram num `$and`: escritos os
+  // dois em `filter._id`, o segundo apagaria o primeiro.
+  const recortesPorId = [];
   if (portalFiltro) {
     const ids = portalFiltro === "nao_liberado"
       ? await processosComClienteNaoLiberado(usuarioId)
       : await processosLiberados(usuarioId);
-    filter._id = { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) };
+    recortesPorId.push({ _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } });
   }
+  // ── Fase 3.5 (DEC-119): os processos de UM cliente ─────────────────────
+  // Vínculo ATIVO, como principal ou não — é a pergunta da aba "Processos" do
+  // cliente. O vínculo também é filtrado por `usuarioId`: o cliente de outra
+  // advogada não tem vínculo nenhum aqui, e a lista sai vazia, igual à de um
+  // cliente sem processo — sem dizer se o id existe.
+  if (clienteFiltro) {
+    const ids = await ProcessoCliente.distinct("processoId", {
+      usuarioId, clienteId: clienteFiltro, ativo: true
+    });
+    recortesPorId.push({ _id: { $in: ids } });
+  }
+  if (recortesPorId.length === 1) Object.assign(filter, recortesPorId[0]);
+  if (recortesPorId.length > 1) filter.$and = recortesPorId;
 
   const [data, total] = await Promise.all([
     // `lean` para que `participantes` possa ser anexado ao objeto devolvido —

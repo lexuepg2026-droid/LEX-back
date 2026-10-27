@@ -39,9 +39,10 @@ export const list = async (req, res, next) => {
     // valores é do serviço, que é onde o vocabulário mora.
     // Fase 3.4 (DEC-115): `tipoAcao`, `de`/`ate` e `portal`, validados no
     // serviço como os demais.
-    const { busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal } = req.query;
+    // Fase 3.5 (DEC-119): `clienteId`, a aba "Processos" do cliente.
+    const { busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal, clienteId } = req.query;
     const result = await listProcesses(req.user._id, {
-      page, limit, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal
+      page, limit, busca, status, situacao, fase, liminar, tipoAcao, de, ate, portal, clienteId
     });
     return res.status(200).json(result);
   } catch (error) {

@@ -104,6 +104,38 @@ export const filtroPortal = (valor, campo = "portal") => {
   return limpo;
 };
 
+// ── Fase 3.5 (DEC-119): o portal na lista de CLIENTES ─────────────────────
+// Outro vocabulário que o de processos, porque a pergunta é outra: lá é "este
+// processo está liberado?"; aqui é "esta pessoa tem acesso, e algum processo
+// dela ficou de fora?". `com_acesso` / `sem_acesso` olham a senha;
+// `nao_liberado` usa a regra da DEC-108/115 (`liberacaoNoPortal.js`).
+// Vazio e ausente não filtram; outro valor é 400, pelo motivo de `PORTAIS`.
+export const PORTAIS_DO_CLIENTE = Object.freeze(["com_acesso", "sem_acesso", "nao_liberado"]);
+export const filtroPortalDoCliente = (valor, campo = "portal") => {
+  if (valor === undefined || valor === null) return undefined;
+  const mensagem = `O filtro "${campo}" precisa ser um de: ${PORTAIS_DO_CLIENTE.join(", ")}.`;
+  if (typeof valor !== "string") throw erroDeFiltro(campo, mensagem);
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+  if (!PORTAIS_DO_CLIENTE.includes(limpo)) throw erroDeFiltro(campo, mensagem);
+  return limpo;
+};
+
+// ── Fase 3.5 (DEC-119): pessoa física ou jurídica ─────────────────────────
+// A query fala a sigla da tela (`PF` / `PJ`); o banco guarda `fisica` /
+// `juridica`. Devolve o valor do banco. Vazio não filtra; outro valor é 400.
+export const TIPOS_PESSOA_NA_QUERY = Object.freeze({ PF: "fisica", PJ: "juridica" });
+export const filtroTipoPessoa = (valor, campo = "tipoPessoa") => {
+  if (valor === undefined || valor === null) return undefined;
+  const mensagem = `O filtro "${campo}" precisa ser "PF" ou "PJ".`;
+  if (typeof valor !== "string") throw erroDeFiltro(campo, mensagem);
+  const limpo = valor.trim();
+  if (limpo === "") return undefined;
+  const tipo = TIPOS_PESSOA_NA_QUERY[limpo];
+  if (!tipo) throw erroDeFiltro(campo, mensagem);
+  return tipo;
+};
+
 // ── DEC-052: listar o que foi desativado ──────────────────────────────────
 //
 // Até a F-2b as listagens de cliente e processo filtravam `ativo: true` sem
@@ -357,5 +389,7 @@ export default {
   filtroDataExigida,
   filtroPeriodo,
   filtroTipoAcao,
-  filtroPortal
+  filtroPortal,
+  filtroPortalDoCliente,
+  filtroTipoPessoa
 };
