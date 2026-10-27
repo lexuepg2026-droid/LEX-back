@@ -6803,6 +6803,36 @@ Só acréscimos; sem os parâmetros novos a listagem é a de sempre.
 
 ---
 
+## DEC-119 — os processos de um cliente e o portal por cliente (Fase 3.5)
+
+Só acréscimos; sem os parâmetros novos as listagens são as de sempre.
+
+| Rota / parâmetro | Regra | Torto |
+|---|---|---|
+| `GET /processes?clienteId=` | processos em que o cliente tem vínculo **ativo**, principal ou não; combina com os filtros da DEC-115, `status`, `situacao` e `busca` (os recortes por id vão num `$and`) | não-id ou repetido → 400 `campo: "clienteId"`; cliente de outra advogada → lista vazia, igual à de um id inexistente |
+| `GET /clients?portal=` | `com_acesso` (tem senha de portal), `sem_acesso` (não tem), `nao_liberado` (vínculo ativo não liberado, cliente e processo ativos, com portal) | outro valor → 400 `campo: "portal"`; vazio ignora |
+| `GET /clients?tipoPessoa=` | `PF` → `fisica`, `PJ` → `juridica` | outro valor (inclusive `fisica`) → 400 `campo: "tipoPessoa"` |
+| `GET /clients/:id/acesso-portal` | cada item de `processos` ganhou `vinculoAtivo` e `processoAtivo`; a lista sai **ordenada por número** (sem número por último, depois o título) | — |
+
+- **`nao_liberado` usa a regra da DEC-108/115**, sem cópia:
+  `liberacaoNoPortal.js` passou a expor os **vínculos** que contam
+  (`vinculosQueContam`), e os processos (o cartão e `?portal=` dos processos)
+  e os clientes (`clientesComProcessoNaoLiberado`) saem deles. Há teste
+  derivando a lista de forma independente pelo `acesso-portal` de cada cliente
+  e conferindo os processos contra `processosNaoLiberados` do Início.
+- **Processo desativado não aparece em `?clienteId=`**, nem com
+  `situacao=todos`: a cascata da DEC-052 derruba o vínculo, e a regra é
+  "vínculo ativo".
+- `acesso-portal` já tinha `processos` desde a 2.5 (com `situacao`); os campos
+  e as contas de antes não mudaram — o que mudou é a ORDEM do array (antes
+  `ativo` desc e `createdAt`), que nenhuma tela nem teste usava.
+- O código pessoal continua só nas rotas dedicadas: ausente de `GET /clients`
+  (com os filtros novos) e do detalhe comum — há teste.
+- `tests/clients/filtros35.test.js` (23); mutação conferida (sem `ativo: true`
+  no vínculo, 4 testes caem).
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
