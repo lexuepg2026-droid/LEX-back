@@ -1,4 +1,5 @@
 import authService from "../services/authService.js";
+import { emitirExemploTimbrado } from "../services/letterheadSampleService.js";
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -68,6 +69,26 @@ const updateMe = async (req, res, next) => {
   }
 };
 
+// Fase 3.6 (DEC-126): a folha de exemplo do timbrado, com os dados SALVOS da
+// advogada da sessão. Os mesmos headers do recibo e do download de documento,
+// inclusive o `Access-Control-Expose-Headers` — sem ele o front não lê o nome.
+// Nada da requisição além da sessão é lido: não há como pedir o de outra conta.
+const letterheadSample = async (req, res, next) => {
+  try {
+    const { buffer, contentType, nomeArquivo } = await emitirExemploTimbrado(req.user._id);
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${nomeArquivo}"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+
+    return res.status(200).send(buffer);
+  } catch (error) {
+    error.statusCode = error.statusCode || 500;
+    return next(error);
+  }
+};
+
 const changePassword = async (req, res, next) => {
   try {
     const data = await authService.changePassword(req.user._id, req.body);
@@ -128,6 +149,7 @@ export default {
   logout,
   me,
   updateMe,
+  letterheadSample,
   changePassword,
   confirmEmail,
   resendConfirmation,
