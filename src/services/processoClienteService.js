@@ -367,6 +367,17 @@ export const alterarLiberacao = async (usuarioId, processoId, clienteId, data) =
 //
 // Não é listagem paginada: é UM cliente, com a árvore dele embaixo — o mesmo
 // formato da ficha financeira (objeto, sem envelope).
+const textoOrdenavel = (v) => (typeof v === "string" ? v.trim() : "");
+const compararPorNumero = (a, b) => {
+  const na = textoOrdenavel(a.numeroProcesso);
+  const nb = textoOrdenavel(b.numeroProcesso);
+  if (na && !nb) return -1;
+  if (!na && nb) return 1;
+  const porNumero = na.localeCompare(nb, "pt", { numeric: true });
+  if (porNumero !== 0) return porNumero;
+  return textoOrdenavel(a.titulo).localeCompare(textoOrdenavel(b.titulo), "pt", { sensitivity: "base" });
+};
+
 export const obterAcessoPortal = async (usuarioId, clienteId) => {
   const erros = validateClienteId(clienteId);
   if (erros.length > 0) throw erro(erros.join(", "), 400);
@@ -398,11 +409,20 @@ export const obterAcessoPortal = async (usuarioId, clienteId) => {
       principal: v.principal === true,
       liberadoNoPortal: v.liberadoNoPortal === true,
       situacao,
+      // Fase 3.5 (DEC-119): os dois eixos de `situacao`, separados, para a
+      // aba "Portal" do cliente não ter de decodificar a palavra.
+      vinculoAtivo: v.ativo === true,
+      processoAtivo: Boolean(processo) && processo.ativo !== false,
       primeiroAcessoPortal: v.primeiroAcessoPortal,
       ultimoAcessoPortal: v.ultimoAcessoPortal,
       ultimaConfirmacaoEm: v.ultimaConfirmacaoEm
     };
   });
+
+  // Fase 3.5 (DEC-119): pelo número do processo, como a advogada o procura;
+  // sem número, depois, pelo título. Só a ORDEM muda — os campos e as contas
+  // abaixo são os de antes.
+  processos.sort(compararPorNumero);
 
   const ativos = processos.filter((p) => p.situacao === "ativo");
 

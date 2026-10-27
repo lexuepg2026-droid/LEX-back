@@ -9,7 +9,10 @@ import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { MENSAGEM_EMAIL_INVALIDO } from "../utils/email.js";
 import { escaparRegex, regexBuscaDaQuery } from "../utils/texto.js";
 import { somenteDigitos } from "../utils/documentos.js";
-import { filtroSituacao, ordenacaoDeClientes } from "../utils/filtrosDeConsulta.js";
+import {
+  filtroSituacao, ordenacaoDeClientes, filtroPortalDoCliente, filtroTipoPessoa
+} from "../utils/filtrosDeConsulta.js";
+import { clientesComProcessoNaoLiberado } from "./liberacaoNoPortal.js";
 
 const onlyNumbers = (value) => {
   if (value === undefined || value === null) {
@@ -262,12 +265,26 @@ export const alvosDoDocumento = (busca) => {
 
 const getAllClients = async (
   usuarioId,
-  { page = 1, limit = 20, busca, situacao, ordem } = {}
+  { page = 1, limit = 20, busca, situacao, ordem, tipoPessoa, portal } = {}
 ) => {
   const skip = (page - 1) * limit;
+  // Fase 3.5 (DEC-119): os dois filtros novos são lidos (e recusados com 400
+  // e `campo`, quando tortos) ANTES de qualquer consulta.
+  const tipoFiltro = filtroTipoPessoa(tipoPessoa);
+  const portalFiltro = filtroPortalDoCliente(portal);
   // DEC-052: `ativo: true` deixou de ser fixo. Sem `situacao`, nada muda —
   // o padrão do helper é exatamente o filtro de antes.
   const filter = { usuarioId, ...filtroSituacao(situacao) };
+  if (tipoFiltro) filter.tipoPessoa = tipoFiltro;
+  // Portal (DEC-119). "Tem acesso" é ter senha de portal — a mesma regra do
+  // `temAcessoPortal` de `processoClienteService`. O hash é `select: false`,
+  // e isso só vale para a PROJEÇÃO: filtrar por ele não o devolve.
+  if (portalFiltro === "com_acesso") filter.senhaPortalHash = { $nin: [null, ""] };
+  if (portalFiltro === "sem_acesso") filter.senhaPortalHash = { $in: [null, ""] };
+  if (portalFiltro === "nao_liberado") {
+    const ids = await clientesComProcessoNaoLiberado(usuarioId);
+    filter._id = { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) };
+  }
   // `escapeRegex` era uma cópia local; unificada em `utils/texto.js` na F-0.
   //
   // Fase 3.3b (DEC-110): o seletor de participante do processo passou a buscar
