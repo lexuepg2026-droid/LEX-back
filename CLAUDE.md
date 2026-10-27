@@ -258,6 +258,7 @@ Todos sob `/api`, todos autenticados por `authMiddleware`, exceto
 | POST  | `/logout`        |                                            |
 | GET   | `/me`            | responde `{ usuario }`                     |
 | PATCH | `/me`            | perfil, endereço, OAB, advocacia, logo     |
+| GET   | `/me/timbrado-exemplo` | **3.6 (DEC-126)** — PDF de uma página com o timbrado salvo; nenhum parâmetro |
 | POST  | `/alterar-senha` | rate limit próprio                         |
 | POST  | `/confirm-email` | **A-2** — público; consome o link; não abre sessão |
 | POST  | `/resend-confirmation` | **A-2** — exige sessão; 429 `aguarde` em 1 min |
@@ -6830,6 +6831,38 @@ Só acréscimos; sem os parâmetros novos as listagens são as de sempre.
   (com os filtros novos) e do detalhe comum — há teste.
 - `tests/clients/filtros35.test.js` (23); mutação conferida (sem `ativo: true`
   no vínculo, 4 testes caem).
+
+## DEC-126 — o exemplo do timbrado do perfil (Fase 3.6)
+
+**`GET /api/auth/me/timbrado-exemplo`**, autenticada. Devolve um PDF de **uma**
+página: o timbrado com os dados **salvos** da advogada da sessão e um parágrafo
+curto ("Este é um exemplo de como o seu timbrado aparece nos documentos e
+recibos."). `Content-Disposition` com `exemplo-timbrado-<escritorio>.pdf` (por
+`nomeArquivoSeguro`) e `Access-Control-Expose-Headers`, como o recibo.
+
+- **Sob `/me`**, ao lado do `GET`/`PATCH` do perfil: é um dado do perfil dela,
+  e o caminho não carrega id nenhum.
+- **Sai por `renderizarPdf`** (`documentRenderService.js`), o MESMO caminho do
+  download de documento — cabeçalho, rodapé, margens e fontes do
+  `letterheadService.js`. Nenhum dos dois arquivos foi alterado: a rota só os
+  chama (`services/letterheadSampleService.js`). Uma folha montada à parte, ou
+  o timbrado desenhado em HTML na tela, seria a segunda regra para o mesmo
+  papel, e a prévia divergiria do documento real em silêncio.
+- **Isolamento por construção:** o service recebe só `req.user._id`; nenhum
+  parâmetro de query, corpo ou caminho é lido. `?usuarioId=`, `?id=`,
+  `?_id=` e `?usuario=` com o id de outra conta devolvem o timbrado **da
+  sessão**; `/timbrado-exemplo/<id>` é 404. Mutação conferida: ler
+  `req.query.usuarioId` derruba o teste de isolamento.
+- **Nada é gravado** (como o recibo): emitir não cria `Document`.
+- `tests/auth/timbradoExemplo.test.js` (8): 401 sem sessão; PDF de uma página;
+  os dados salvos e o parágrafo; telefone e CEP formatados (DEC-072); sem logo
+  (nenhuma imagem), com logo (a imagem entra), removido; sem endereço (a linha
+  some); isolamento; nada gravado.
+- **E a trava do PATCH parcial**, de que o perfil passou a depender (DEC-128 do
+  front envia só o que mudou): `tests/auth/perfilParcial.test.js` (7). O que
+  não vem fica como estava — inclusive dentro de `oab`, `advocacia` e
+  `endereco`, que o `updateMe` já mesclava campo a campo — e `null` apaga só o
+  campo enviado. O contrato não mudou: foi conferido antes de mexer na tela.
 
 ---
 

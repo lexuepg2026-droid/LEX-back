@@ -78,6 +78,8 @@ router.post("/login", loginLimiter, authController.login);
 router.post("/logout", authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.patch("/me", authMiddleware, authController.updateMe);
+// Fase 3.6 (DEC-126): o exemplo do timbrado, sob `/me` porque é do perfil dela.
+router.get("/me/timbrado-exemplo", authMiddleware, authController.letterheadSample);
 router.post("/alterar-senha", authMiddleware, passwordLimiter, authController.changePassword);
 
 // Públicas, salvo o reenvio (só a advogada logada pede e-mail para a própria
