@@ -6864,6 +6864,27 @@ recibos."). `Content-Disposition` com `exemplo-timbrado-<escritorio>.pdf` (por
   `endereco`, que o `updateMe` já mesclava campo a campo — e `null` apaga só o
   campo enviado. O contrato não mudou: foi conferido antes de mexer na tela.
 
+## DEC-130 — o cliente e o em aberto nas vencidas do sino (Fase 3.7)
+
+A Visão geral do Financeiro passou a listar as parcelas vencidas, e as lê de
+**`GET /calendar/avisos`** — a mesma fonte que o sino e o Início contam
+(DEC-057: um número, uma fonte). Faltavam duas coisas na linha, e as duas
+entraram como **acréscimo** em `parcelasVencidas[]`:
+
+| Campo novo | Valor |
+|---|---|
+| `processo.clientePrincipalNome` | o `nomeExibicaoDoCliente` do cliente principal (DEC-105); `null` sem cliente |
+| `emAberto` | `max(0, emCentavos(valor − valorPago))` — a conta de `proximosVencimentos` e de `valorVencido` |
+
+- **A soma dos `emAberto` é o `valorVencido` do resumo**, e há teste: o cartão
+  "Total vencido hoje" e a lista embaixo dele não podem discordar.
+- Só `lerAvisos` mudou. As derivadas de `GET /calendar` (a grade da Agenda)
+  **não** ganharam os campos: ninguém os pediu ali.
+- O sino ignora os dois campos. Nada do que existia na linha mudou (há teste
+  conferindo as chaves).
+- `tests/calendar/avisos37.test.js` (4); mutação conferida (sem o `populate`
+  do cliente, 1 teste cai).
+
 ---
 
 ## Registro de sessões — original (2026-05)
