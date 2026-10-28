@@ -2,7 +2,13 @@ import mongoose from "mongoose";
 import Document from "../models/Document.js";
 import Secao from "../models/Secao.js";
 import DocumentoSecao from "../models/DocumentoSecao.js";
-import { filtroObjectIdExigido } from "../utils/filtrosDeConsulta.js";
+import Client from "../models/Client.js";
+import Process from "../models/Process.js";
+import { filtroObjectIdExigido, filtroPeriodo, filtroBooleano } from "../utils/filtrosDeConsulta.js";
+import { regexBuscaDaQuery } from "../utils/texto.js";
+import { nomeExibicaoDoCliente } from "../utils/nomeExibicao.js";
+import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
+import { processosPorClientePrincipal } from "./buscaFinanceira.js";
 import { checarUpdate } from "../validations/shared/camposPermitidos.js";
 import { assertProcessoAtivoParaCriar } from "./activationHierarchy.js";
 
@@ -76,7 +82,71 @@ export const createDocumentService = async (usuarioId, payload) => {
   return document;
 };
 
-export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, processoId } = {}) => {
+// ═══════════════════════════════════════════════════════════════════════════
+// Fase 3.9a (DEC-138): busca, período e só documentos na listagem
+//
+// A lista de Documentos ganhou o padrão das outras (DEC-102/103): busca,
+// período e paginação de verdade. Antes ela pedia 100 e tirava os modelos NA
+// TELA, e com paginação isso não fecha — o `total` contaria os modelos e a
+// página 2 começaria no lugar errado. Só acréscimos; sem os parâmetros novos a
+// listagem é a de sempre.
+//
+// - `?busca=` — o NOME do documento, o número do processo e o nome do cliente,
+//   sem acento e sem caixa (`regexBuscaDaQuery`, DEC-101). O cliente casa pelo
+//   `clienteId` do documento (de quem a peça é) ou pelo principal do processo
+//   (os gerados antes da Fase 2B não têm `clienteId`).
+// - `?de=&ate=` — por `dataGeracao`, bordas em UTC (`filtroPeriodo`, DEC-103).
+//   Documento sem data de geração (o upload, dormente) fica fora quando há
+//   período, como o processo sem distribuição na DEC-115.
+// - `?ehModelo=false|true` — `false` tira os modelos; ausente, os dois (a
+//   listagem de sempre). Outro valor → 400 com `campo`.
+//
+// E uma chave NOVA em cada linha, `cliente: { _id, nome } | null`, a coluna
+// Cliente da lista. `clienteId` continua sendo id: populá-lo trocaria a forma
+// de um campo existente (a regra da DEC-102).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Clientes da usuária cujo nome casa com o regex — os mesmos três campos de
+// `processosPorClientePrincipal`.
+const clientesPorNome = async (regex, usuarioId) => {
+  const clientes = await Client.find({
+    usuarioId,
+    $or: ["nomeCompleto", "razaoSocial", "nomeFantasia"].map((campo) => ({ [campo]: regex }))
+  }).select("_id");
+  return clientes.map((c) => c._id);
+};
+
+const clausulasDaBuscaDeDocumentos = async (busca, usuarioId) => {
+  const regex = regexBuscaDaQuery(busca);
+  if (!regex) return null;
+  const [processosPorNumero, processosDoPrincipal, clientes] = await Promise.all([
+    Process.find({ usuarioId, numeroProcesso: regex }).select("_id"),
+    processosPorClientePrincipal(regex, usuarioId),
+    clientesPorNome(regex, usuarioId)
+  ]);
+  return [
+    { nome: regex },
+    { processoId: { $in: [...processosPorNumero.map((p) => p._id), ...processosDoPrincipal] } },
+    { clienteId: { $in: clientes } }
+  ];
+};
+
+const comClienteResumido = async (documentos, usuarioId) => {
+  const ids = [...new Set(documentos.map((d) => d.clienteId).filter(Boolean).map(String))];
+  const clientes = ids.length === 0
+    ? []
+    : await Client.find({ _id: { $in: ids }, usuarioId }).select(CAMPOS_CLIENTE_POPULADO);
+  const porId = new Map(clientes.map((c) => [String(c._id), { _id: c._id, nome: nomeExibicaoDoCliente(c) || null }]));
+  return documentos.map((d) => ({
+    ...d.toJSON(),
+    cliente: d.clienteId ? porId.get(String(d.clienteId)) ?? null : null
+  }));
+};
+
+export const listDocumentsService = async (
+  usuarioId,
+  { page = 1, limit = 20, processoId, busca, de, ate, ehModelo } = {}
+) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
   // Guarda de tipo (Fase 4.5), que na F-0 passou a RECUSAR em vez de
@@ -84,7 +154,19 @@ export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, pr
   // filtro tivesse sido pedido — o pior dos quatro comportamentos divergentes.
   const processoFiltro = filtroObjectIdExigido(processoId, "processoId");
   if (processoFiltro) filter.processoId = processoFiltro;
-  const [data, total] = await Promise.all([
+
+  const periodo = filtroPeriodo(de, ate);
+  if (periodo) filter.dataGeracao = periodo;
+
+  const modelo = filtroBooleano(ehModelo, "ehModelo");
+  // `ehModelo: false` também acha o documento antigo sem o campo gravado.
+  if (modelo === true) filter.ehModelo = true;
+  if (modelo === false) filter.ehModelo = { $ne: true };
+
+  const clausulas = await clausulasDaBuscaDeDocumentos(busca, usuarioId);
+  if (clausulas) filter.$or = clausulas;
+
+  const [documentos, total] = await Promise.all([
     Document.find(filter)
       .populate("processoId", "titulo numeroProcesso status")
       .sort({ createdAt: -1, _id: -1 })
@@ -92,6 +174,7 @@ export const listDocumentsService = async (usuarioId, { page = 1, limit = 20, pr
       .limit(limit),
     Document.countDocuments(filter)
   ]);
+  const data = await comClienteResumido(documentos, usuarioId);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 

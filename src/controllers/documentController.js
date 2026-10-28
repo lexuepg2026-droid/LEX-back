@@ -49,8 +49,8 @@ export const listDocuments = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { processoId } = req.query;
-    const result = await listDocumentsService(req.user._id, { page, limit, processoId });
+    const { processoId, busca, de, ate, ehModelo } = req.query;
+    const result = await listDocumentsService(req.user._id, { page, limit, processoId, busca, de, ate, ehModelo });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
@@ -191,7 +191,7 @@ export const listModelos = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const result = await listarModelosService(req.user._id, { page, limit, tipo: req.query.tipo });
+    const result = await listarModelosService(req.user._id, { page, limit, tipo: req.query.tipo, busca: req.query.busca });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);

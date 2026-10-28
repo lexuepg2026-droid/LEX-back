@@ -17,6 +17,7 @@ import { substituir } from "../utils/templateParser.js";
 import formatadores from "../utils/templateFormatters.js";
 import { detectarLacunas } from "../utils/lacunas.js";
 import { filtroTexto } from "../utils/filtrosDeConsulta.js";
+import { regexBuscaDaQuery } from "../utils/texto.js";
 import { buscarVinculoAtivo } from "./processoClienteService.js";
 import { assertProcessoAtivoParaCriar } from "./activationHierarchy.js";
 
@@ -483,13 +484,18 @@ export const criarModeloService = async (usuarioId, payload) => {
   return modelo;
 };
 
-export const listarModelosService = async (usuarioId, { page = 1, limit = 20, tipo } = {}) => {
+export const listarModelosService = async (usuarioId, { page = 1, limit = 20, tipo, busca } = {}) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true, ehModelo: true };
   // Guarda de tipo (Fase F-0): era `if (tipo)`, sem checagem nenhuma — o único
   // filtro do módulo de documentos que a 4.5 não alcançou.
   const tipoFiltro = filtroTexto(tipo);
   if (tipoFiltro) filter.tipo = tipoFiltro;
+  // Fase 3.9a (DEC-138): `?busca=` pelo nome do modelo, sem acento e sem caixa.
+  // Cada "montar um modelo novo" da geração cria um modelo, e a escolha na
+  // montagem pedia só os 100 mais recentes.
+  const regex = regexBuscaDaQuery(busca);
+  if (regex) filter.nome = regex;
 
   const [data, total] = await Promise.all([
     Document.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
