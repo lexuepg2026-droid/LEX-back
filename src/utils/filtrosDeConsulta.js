@@ -169,6 +169,18 @@ export const filtroSituacao = (valor, campo = "situacao") => {
   return { ativo: valor === "ativos" };
 };
 
+// ── Fase 3.9a (DEC-138): um booleano da query ─────────────────────────────
+// `"true"`/`"false"` (texto, como a query chega). Ausente ou vazio ⇒
+// `undefined` (filtro ausente não filtra); qualquer outra coisa ⇒ 400 com
+// `campo` — `?ehModelo=nao` lido como "sem filtro" devolveria os modelos a
+// quem pediu para tirá-los.
+export const filtroBooleano = (valor, campo) => {
+  if (valor === undefined || valor === null || valor === "") return undefined;
+  if (valor === "true") return true;
+  if (valor === "false") return false;
+  throw erroDeFiltro(campo, `O filtro "${campo}" precisa ser "true" ou "false".`);
+};
+
 // ── DEC-062: a ordenação da listagem de clientes ──────────────────────────
 //
 // Vocabulário FECHADO, pelo mesmo motivo de `SITUACOES` e de `DEPENDENCIA`:
@@ -391,5 +403,6 @@ export default {
   filtroTipoAcao,
   filtroPortal,
   filtroPortalDoCliente,
-  filtroTipoPessoa
+  filtroTipoPessoa,
+  filtroBooleano
 };
