@@ -21,6 +21,7 @@ import {
   filtroPeriodo
 } from "../utils/filtrosDeConsulta.js";
 import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
+import { honorariosDoCliente } from "./financeiroDoCliente.js";
 
 const erro = (status, message, extra = {}) => {
   const error = new Error(message);
@@ -325,7 +326,7 @@ const comTotalDoPlano = async (parcelas, usuarioId) => {
 
 export const listarInstallments = async (
   usuarioId,
-  { page = 1, limit = 20, processoId, honorarioId, status, inativos, busca, de, ate } = {}
+  { page = 1, limit = 20, processoId, honorarioId, clienteId, status, inativos, busca, de, ate } = {}
 ) => {
   // ── `?inativos=true` — a listagem do desativado (Fase 4.5) ────────────────
   //
@@ -388,6 +389,16 @@ export const listarInstallments = async (
     filter.$and = [
       { $or: clausulasDaBusca(alvos, { campoHonorario: "feeId" }) }
     ];
+  }
+
+  // ── `?clienteId=` (Fase 4a2, DEC-166) ────────────────────────────────────
+  // As parcelas dos honorários dos processos do cliente (vínculo ativo, como
+  // em `GET /processes?clienteId=`). Vai num `$and` à parte: combina com
+  // `honorarioId` (que também recorta `feeId`) e com a busca.
+  const clienteFiltro = filtroObjectIdExigido(clienteId, "clienteId");
+  if (clienteFiltro) {
+    const feeIds = await honorariosDoCliente(clienteFiltro, usuarioId);
+    filter.$and = [...(filter.$and ?? []), { feeId: { $in: feeIds } }];
   }
 
   const skip = (page - 1) * limit;
