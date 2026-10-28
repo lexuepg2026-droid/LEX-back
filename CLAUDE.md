@@ -6887,6 +6887,37 @@ entraram como **acréscimo** em `parcelasVencidas[]`:
 
 ---
 
+## DEC-138 — busca, período e só documentos em `GET /documents`; busca em `/documents/modelos` (Fase 3.9a)
+
+A lista de Documentos ganhou o padrão das outras (DEC-102/103 do front):
+busca, período e **paginação de verdade**. Até aqui a tela pedia 100 e tirava
+os modelos **na tela** — com paginação o `total` contaria os modelos e a
+página 2 começaria no lugar errado. Só acréscimos; sem os parâmetros novos a
+listagem é a de sempre (documentos **e** modelos, mais novos primeiro).
+
+| Parâmetro | Regra | Torto |
+|---|---|---|
+| `busca` | `nome` do documento, número do processo, nome do cliente — sem acento e sem caixa (`regexBuscaDaQuery`, DEC-101). O cliente casa pelo `clienteId` do documento (de quem é a peça) **ou** pelo principal do processo (os gerados antes da 2B não têm `clienteId`) | array/objeto ignorado, como nas outras |
+| `de`, `ate` | por **`dataGeracao`**, bordas em UTC (`filtroPeriodo`, DEC-103). Sem data de geração (o upload dormente, o modelo) fica fora quando há período | data torta ou invertida → 400 com `campo` |
+| `ehModelo` | `false` tira os modelos (`{ $ne: true }`, acha também o antigo sem o campo); `true` só os modelos; ausente, os dois | outro valor → 400 `campo: "ehModelo"` (`filtroBooleano`, novo em `filtrosDeConsulta.js`) |
+
+- **Chave nova em cada linha: `cliente: { _id, nome } | null`** — a coluna
+  Cliente da lista. `clienteId` **continua id** (string): populá-lo trocaria a
+  forma de um campo existente, a regra da DEC-102. Uma consulta para a página
+  inteira.
+- **`GET /documents/modelos?busca=`** pelo nome do modelo, sem acento e sem
+  caixa. Cada "montar um modelo novo" da geração cria um modelo, sem teto; a
+  escolha na montagem pedia os 100 mais recentes. Sem `busca`, a de sempre.
+- **`GET /secoes` não mudou:** já tinha busca sem acento (`titulo`), `tipo` e
+  o envelope paginado (conferidos).
+- `tests/documents/lista39.test.js` (14): cada filtro, combinados, o período
+  na virada de setembro para outubro (30/09 23:59 e 01/10 00:00 UTC), 400 com
+  `campo`, metacaractere literal, isolamento por `usuarioId` (mesmo nome,
+  cliente e data na outra conta), `processoId` e `clienteId` com a forma de
+  sempre, e a listagem sem os parâmetros novos.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
