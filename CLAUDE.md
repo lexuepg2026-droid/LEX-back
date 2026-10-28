@@ -306,7 +306,7 @@ por hook `pre("validate")` a partir do texto; nunca entrada do usuário.
 | GET    | `/modelos`                       | `?page&limit&tipo`                                | página de modelos                                     |
 | POST   | `/modelos/:id/gerar`             | `{ processoId*, clienteId?, honorarioId?, confirmarSobrescrita? }` | `201` Document gerado                |
 | POST   | `/`                              | Document                                          | `201`                                                 |
-| GET    | `/`                              | `?page&limit&processoId`                          | página de documentos                                  |
+| GET    | `/`                              | `?page&limit&processoId&busca&de&ate&ehModelo&geradoDeModeloId&clienteId&visivelPortal` (DEC-138/144) | página de documentos                                  |
 | GET    | `/:id/preview`                   | `?processoId&clienteId&honorarioId`               | `{ textoResolvido, pendencias, lacunas, … }`          |
 | GET    | `/:id/download`                  | `?formato=pdf\|docx`                              | binário + `Content-Disposition`                       |
 | PATCH  | `/:id/texto`                     | `{ textoResolvido }`                              | `{ documentoId, editadoManualmente, textoResolvido, lacunas }` |
@@ -6915,6 +6915,39 @@ listagem é a de sempre (documentos **e** modelos, mais novos primeiro).
   `campo`, metacaractere literal, isolamento por `usuarioId` (mesmo nome,
   cliente e data na outra conta), `processoId` e `clienteId` com a forma de
   sempre, e a listagem sem os parâmetros novos.
+
+---
+
+## DEC-144 — o anterior do aviso de portal sem o teto de 100: três filtros em `GET /documents` (Fase 3.9b)
+
+A geração (front, `GenerationPanel`) avisa antes de regerar quando o
+documento anterior **desta combinação** está visível no portal (Fase 3.2).
+O critério é o de `buscarGeradoAnterior`: **modelo × processo × cliente**,
+`ehModelo` falso, ativo — e, para o aviso, `visivelPortal: true`. A tela pedia
+`GET /documents?processoId=&limit=100` e procurava o anterior ali: num processo
+com mais de 100 documentos, o anterior mais antigo ficava fora da página e **o
+aviso sumia**, em silêncio.
+
+**A regra do aviso não mudou** (nem as frases, nem o `sairaDoPortal`); mudou a
+consulta. Três filtros novos, **só aditivos** — ausentes, a listagem é a de
+sempre:
+
+| Parâmetro | Regra | Torto |
+|---|---|---|
+| `geradoDeModeloId` | o modelo de origem | id inválido → 400 `campo: "geradoDeModeloId"` (`filtroObjectIdExigido`, a guarda do `processoId`) |
+| `clienteId` | o participante de quem é a peça (o campo, não a busca por nome da DEC-138) | id inválido → 400 `campo: "clienteId"` |
+| `visivelPortal` | `true` / `false` | outro valor → 400 `campo: "visivelPortal"` (`filtroBooleano`) |
+
+A tela passa a pedir **só** o que o aviso precisa: `processoId`,
+`geradoDeModeloId`, `clienteId`, `visivelPortal=true`, `ehModelo=false`,
+`limit=1`. A ordem é a de sempre (`createdAt` decrescente), então o primeiro
+da página é o mesmo que o `.find` da tela achava na lista de 100.
+
+`tests/documents/anteriorPortal39b.test.js` (6): um processo com **107**
+documentos, em que o anterior visível é o **mais antigo** — a consulta antiga
+(`limit=100`) não o traz, a nova o traz sozinho; cada filtro recorta pelo seu
+campo; sem os filtros novos o total é o de sempre; 400 com `campo` nos três;
+isolamento por `usuarioId`.
 
 ---
 

@@ -104,6 +104,16 @@ export const createDocumentService = async (usuarioId, payload) => {
 // E uma chave NOVA em cada linha, `cliente: { _id, nome } | null`, a coluna
 // Cliente da lista. `clienteId` continua sendo id: populá-lo trocaria a forma
 // de um campo existente (a regra da DEC-102).
+//
+// Fase 3.9b (DEC-144): mais três filtros, só aditivos, para o aviso de portal
+// da geração. A tela pedia os 100 documentos do processo e procurava neles o
+// anterior da combinação modelo × processo × cliente (a de
+// `buscarGeradoAnterior`) que estivesse visível; num processo com mais de 100
+// documentos, o anterior podia ficar de fora e o aviso sumia.
+// - `?geradoDeModeloId=` e `?clienteId=` — ids, inválido → 400 com `campo`
+//   (a mesma guarda do `processoId`);
+// - `?visivelPortal=true|false` — o booleano da DEC-138.
+// Ausentes, não filtram: a listagem é a de sempre.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Clientes da usuária cujo nome casa com o regex — os mesmos três campos de
@@ -145,7 +155,7 @@ const comClienteResumido = async (documentos, usuarioId) => {
 
 export const listDocumentsService = async (
   usuarioId,
-  { page = 1, limit = 20, processoId, busca, de, ate, ehModelo } = {}
+  { page = 1, limit = 20, processoId, busca, de, ate, ehModelo, geradoDeModeloId, clienteId, visivelPortal } = {}
 ) => {
   const skip = (page - 1) * limit;
   const filter = { usuarioId, ativo: true };
@@ -162,6 +172,13 @@ export const listDocumentsService = async (
   // `ehModelo: false` também acha o documento antigo sem o campo gravado.
   if (modelo === true) filter.ehModelo = true;
   if (modelo === false) filter.ehModelo = { $ne: true };
+
+  const modeloDeOrigem = filtroObjectIdExigido(geradoDeModeloId, "geradoDeModeloId");
+  if (modeloDeOrigem) filter.geradoDeModeloId = modeloDeOrigem;
+  const clienteFiltro = filtroObjectIdExigido(clienteId, "clienteId");
+  if (clienteFiltro) filter.clienteId = clienteFiltro;
+  const visivel = filtroBooleano(visivelPortal, "visivelPortal");
+  if (visivel !== undefined) filter.visivelPortal = visivel;
 
   const clausulas = await clausulasDaBuscaDeDocumentos(busca, usuarioId);
   if (clausulas) filter.$or = clausulas;
