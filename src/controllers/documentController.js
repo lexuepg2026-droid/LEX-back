@@ -49,8 +49,10 @@ export const listDocuments = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-    const { processoId, busca, de, ate, ehModelo } = req.query;
-    const result = await listDocumentsService(req.user._id, { page, limit, processoId, busca, de, ate, ehModelo });
+    const { processoId, busca, de, ate, ehModelo, geradoDeModeloId, clienteId, visivelPortal } = req.query;
+    const result = await listDocumentsService(req.user._id, {
+      page, limit, processoId, busca, de, ate, ehModelo, geradoDeModeloId, clienteId, visivelPortal
+    });
     return res.status(200).json(result);
   } catch (error) {
     return next(error);
