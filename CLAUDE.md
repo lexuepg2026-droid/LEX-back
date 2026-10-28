@@ -6951,6 +6951,54 @@ isolamento por `usuarioId`.
 
 ---
 
+## DEC-158 — a limpeza da suíte alcança toda coleção dos models (Fase 4a)
+
+`TODAS_AS_COLECOES` (`tests/helpers/db.js`) é escrita à mão, e as três
+coleções do Financeiro 2.0 nasceram na F-1a sem entrar nela: `alocacoes`,
+`estornos` e `reparcelamentos` acumulavam no banco de teste (**232, 60 e 16**
+documentos depois de uma rodada da suíte, num banco zerado). E
+`tests/calendar/dec055.test.js` limpava `allocations` e `renegotiations` —
+nomes que não existem, e que o `limparColecoes` pulava em silêncio.
+
+- **Entram na lista as seis coleções que faltavam:** as três do Financeiro
+  2.0 e `events`, `idempotency_keys` e `confirmacoes_visualizacao` (já limpas
+  pelos arquivos que as usam, mas fora da lista). A lista passa a ter as 16
+  coleções dos 16 models.
+- **`dec055.test.js`** limpa os nomes reais.
+- **A trava** (`tests/infra/limpeza.test.js`) lê os MODELS, e não uma
+  segunda lista: toda coleção registrada está na limpeza, nenhuma entrada da
+  lista é nome sem model, e nenhuma lista local de limpeza (`const COLECOES…
+  = [...]`) cita coleção inexistente. Conferida por mutação: tirar
+  `alocacoes` da lista e devolver `allocations` ao `dec055` derruba os dois
+  testes.
+- Depois da suíte, num banco zerado: **todas as 16 coleções com 0**.
+
+## DEC-159 — o teste da guarda de banco vale em qualquer ambiente (Fase 4a)
+
+O subteste "sem `LEX_CONFIRMA_BANCO` e sem terminal, ela ABORTA"
+(`tests/integrity/migracaoFase.test.js`) rodava `migrarFaseProcesso.js`
+contra `MONGO_URI_TESTE` e esperava o ABORT. Só valia com o `lex_test`
+**remoto**: a guarda (`scripts/lib/guardaDeBanco.js`) dispensa a confirmação
+quando o host é local, **por desenho**, e com o `mongod` local o script seguia
+(migrando o banco da suíte) e o teste acusava "Missing expected rejection" —
+a falha de ambiente que a suíte carregava desde a F-0.
+
+**A guarda não mudou.** O teste é que supunha um banco remoto. Agora são três
+subtestes, nenhum dependente de onde a suíte roda e nenhum conectando a banco:
+
+| Subteste | Como | O que exige |
+|---|---|---|
+| host local segue sem perguntar | `exigirConfirmacaoDeBanco` chamada direto, `127.0.0.1` | `{ confirmado, local: true, perguntou: false }`, nada lido da entrada, nada escrito |
+| host remoto, sem a variável e sem terminal, aborta | a função direto, URI remota fictícia (`.invalid`), `process.exit` trocado só durante a chamada | `process.exit(1)`, "ABORT" e "confirmação" no stderr, sem a URI, o host nem a credencial |
+| o script aborta antes de conectar | `migrarFaseProcesso.js` com a URI remota fictícia | código 1, a mensagem da guarda (e não erro de conexão), nada de "banco:" no stdout, sem a URI |
+
+O terceiro é o teste antigo, com a mesma asserção, trocando só o alvo: a
+guarda vem antes do `mongoose.connect`, então nada conecta. **Continua tão
+estrito quanto antes**, e o motivo está escrito no próprio teste. A suíte
+voltou a `fail 0` com o `mongod` local.
+
+---
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
