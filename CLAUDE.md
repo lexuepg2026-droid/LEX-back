@@ -6999,6 +6999,31 @@ voltou a `fail 0` com o `mongod` local.
 
 ---
 
+## DEC-166 — `?clienteId=` em `GET /installments` e `GET /payments` (Fase 4a2)
+
+Só acréscimo; sem o parâmetro as listagens são as de sempre. Serve à aba
+"Financeiro" do detalhe do cliente (DEC-167 do front).
+
+| Rota / parâmetro | Regra | Torto |
+|---|---|---|
+| `GET /installments?clienteId=` | as parcelas dos honorários dos processos em que o cliente tem vínculo **ativo**, principal ou não (o recorte de `GET /processes?clienteId=`, DEC-119); combina com `honorarioId`, `status`, `de`/`ate`, `busca` e `inativos` | não-id ou repetido → 400 `campo: "clienteId"`; cliente de outra advogada → lista vazia, igual à de um id inexistente |
+| `GET /payments?clienteId=` | os pagamentos dos mesmos honorários; combina com `honorarioId`, `formaPagamento`, `tipo`, `de`/`ate` e `busca` | idem |
+
+- A regra mora em `services/financeiroDoCliente.js` (`honorariosDoCliente`):
+  vínculos ativos do cliente (filtrados por `usuarioId`) → processos →
+  honorários. As duas listagens recortam por honorário (`feeId` /
+  `honorarioId`), o mesmo processo que elas exibem na coluna (o do honorário,
+  DEC-102). O recorte vai num `$and` à parte, para combinar com `honorarioId` e
+  com a busca.
+- Processo desativado fica fora: a cascata da DEC-052 derruba o vínculo.
+- `tests/financial/clienteId4a2.test.js` (13); mutação conferida (sem
+  `ativo: true` no vínculo, 5 caem).
+
+**Nota da mesma fase (DEC-161 do front):** os gráficos saíram do Início, e
+`GET /dashboard/honorarios-por-mes` e `GET /dashboard/status` ficaram **sem
+consumidor no front**. As rotas continuam aqui, sem mudança: tirar rota é
+mudar contrato.
+
 ## Registro de sessões — original (2026-05)
 
 ### Sessão — 2026-05-06
