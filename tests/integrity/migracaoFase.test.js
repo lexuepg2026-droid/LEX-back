@@ -35,6 +35,7 @@ import { limparColecoes, TODAS_AS_COLECOES, desconectar, acharEm } from "../help
 import { registrarUsuario, criarClientePF, criarProcesso, esperado } from "../helpers/setup.js";
 import { MONGO_URI_TESTE } from "../helpers/env.js";
 import Process from "../../src/models/Process.js";
+import { exigirConfirmacaoDeBanco } from "../../scripts/lib/guardaDeBanco.js";
 
 const execFileAsync = promisify(execFile);
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -225,21 +226,107 @@ describe("migrarFaseProcesso.js — preenche, não inventa, e é idempotente", (
     });
   });
 
+  // ── Por que estes testes não usam o banco da suíte (Fase 4a, DEC-159) ────
+  // O teste antigo rodava o script contra `MONGO_URI_TESTE` e esperava o
+  // ABORT. Isso só valia com o `lex_test` REMOTO (Atlas): a guarda dispensa a
+  // confirmação quando o host é local, POR DESENHO, e com o `mongod` local o
+  // script seguia, migrava o banco da suíte e o teste acusava "Missing
+  // expected rejection" — falha de ambiente, desde a F-0.
+  //
+  // A guarda não mudou. O que mudou é que os dois lados dela agora são
+  // conferidos sem depender de onde a suíte roda: a função é chamada direto,
+  // com host local e com host remoto, e o script é rodado com uma URI remota
+  // FICTÍCIA — a guarda vem antes do `mongoose.connect`, então nada conecta.
+  // Continua tão estrito quanto antes: o ABORT do script de ponta a ponta,
+  // com a mesma mensagem e sem a URI na saída, agora em qualquer ambiente.
   describe("a guarda de banco", () => {
-    test("sem `LEX_CONFIRMA_BANCO` e sem terminal, ela ABORTA", async () => {
+    // Credencial e host INVENTADOS (`.invalid` não resolve). Nenhum valor real.
+    const REMOTA_FICTICIA = "mongodb+srv://usuario:senha@cluster0.exemplo.invalid/lex_test";
+    const LOCAL = "mongodb://127.0.0.1:27017/lex_test";
+
+    // Sem terminal: `isTTY` falso, e qualquer leitura seria um defeito.
+    const semTerminal = () => ({
+      isTTY: false,
+      on() { throw new Error("a guarda tentou ler a entrada"); }
+    });
+    const saidaQueNaoPodeSerUsada = () => ({
+      write() { throw new Error("a guarda tentou perguntar"); }
+    });
+
+    // `process.exit` e `console.error` trocados só durante a chamada: a
+    // guarda aborta com `process.exit(1)`, e o teste precisa ver isso sem
+    // derrubar o runner.
+    const chamarAGuarda = async (opcoes) => {
+      const salvoExit = process.exit;
+      const salvoErro = console.error;
+      const salvoVar = process.env.LEX_CONFIRMA_BANCO;
+      let stderr = "";
+      delete process.env.LEX_CONFIRMA_BANCO;
+      process.exit = (codigo) => {
+        const e = new Error(`process.exit(${codigo})`);
+        e.codigo = codigo;
+        throw e;
+      };
+      console.error = (...partes) => { stderr += partes.join(" ") + "\n"; };
+      try {
+        const resultado = await exigirConfirmacaoDeBanco(opcoes);
+        return { resultado, stderr };
+      } catch (erro) {
+        return { erro, stderr };
+      } finally {
+        process.exit = salvoExit;
+        console.error = salvoErro;
+        if (salvoVar === undefined) delete process.env.LEX_CONFIRMA_BANCO;
+        else process.env.LEX_CONFIRMA_BANCO = salvoVar;
+      }
+    };
+
+    test("com host LOCAL, ela segue sem perguntar", async () => {
+      const { resultado, erro, stderr } = await chamarAGuarda({
+        uri: LOCAL, acao: "migração da DEC-054", argv: [],
+        entrada: semTerminal(), saida: saidaQueNaoPodeSerUsada()
+      });
+      assert.equal(erro, undefined, "banco local não aborta");
+      assert.deepEqual(resultado, {
+        confirmado: true, banco: "lex_test", local: true, perguntou: false
+      });
+      assert.equal(stderr, "");
+    });
+
+    test("com host REMOTO, sem `LEX_CONFIRMA_BANCO` e sem terminal, ela ABORTA", async () => {
       // A guarda da F-2b recusa em vez de seguir: um script encadeado que
       // caísse aqui rodaria a operação sem que ninguém tivesse visto a
       // pergunta. Quem quer automação diz isso de propósito.
-      const env = { ...process.env, MONGO_URI: MONGO_URI_TESTE };
+      const { resultado, erro, stderr } = await chamarAGuarda({
+        uri: REMOTA_FICTICIA, acao: "migração da DEC-054", argv: [],
+        entrada: semTerminal(), saida: saidaQueNaoPodeSerUsada()
+      });
+      assert.equal(resultado, undefined, "não pode seguir");
+      assert.equal(erro?.codigo, 1, "aborta com process.exit(1)");
+      assert.match(stderr, /ABORT/);
+      assert.match(stderr, /confirmação/);
+      assert.match(stderr, /"lex_test"/);
+      // Nem a URI, nem o host, nem a credencial.
+      assert.doesNotMatch(stderr, /mongodb(\+srv)?:\/\//);
+      assert.doesNotMatch(stderr, /cluster0|usuario|senha/);
+    });
+
+    test("o script, com host REMOTO e sem `LEX_CONFIRMA_BANCO`, ABORTA antes de conectar", async () => {
+      const env = { ...process.env, MONGO_URI: REMOTA_FICTICIA };
       delete env.LEX_CONFIRMA_BANCO;
 
       await assert.rejects(
         execFileAsync(process.execPath, [SCRIPT], { env, cwd: RAIZ }),
         (erro) => {
+          assert.equal(erro.code, 1);
           assert.match(erro.stderr, /ABORT/);
-          assert.match(erro.stderr, /confirmação/);
+          // A mensagem é a da guarda, e não um erro de conexão: a guarda vem
+          // antes do `mongoose.connect`.
+          assert.match(erro.stderr, /precisa de confirmação/);
+          assert.doesNotMatch(erro.stdout, /banco: /, "não pode ter conectado");
           // E nem aqui a URI aparece.
           assert.doesNotMatch(erro.stderr, /mongodb(\+srv)?:\/\//);
+          assert.doesNotMatch(erro.stderr, /cluster0|usuario|senha/);
           return true;
         }
       );

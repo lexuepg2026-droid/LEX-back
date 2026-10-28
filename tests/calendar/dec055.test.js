@@ -25,7 +25,7 @@ import {
 
 const COLECOES = [
   "users", "clients", "processes", "processo_clientes", "fees",
-  "installments", "payments", "renegotiations", "allocations", "events"
+  "installments", "payments", "reparcelamentos", "alocacoes", "events"
 ];
 
 let api;

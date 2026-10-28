@@ -9,6 +9,12 @@ import mongoose from "mongoose";
 import { MONGO_URI_TESTE, NOME_DO_BANCO, abortar } from "./env.js";
 
 // Todas as coleções do domínio. O nome é o do Mongo, não o do model.
+//
+// Fase 4a (DEC-158): as três do Financeiro 2.0 (F-1a) e as três que vieram
+// depois ficaram fora desta lista desde que nasceram. `alocacoes`, `estornos`
+// e `reparcelamentos` acumulavam no banco de teste (232, 60 e 16 documentos
+// numa rodada só). `tests/infra/limpeza.test.js` exige que TODA coleção
+// registrada pelos models esteja aqui, para a próxima não escapar.
 export const COLECOES = Object.freeze({
   USERS: "users",
   CLIENTS: "clients",
@@ -19,7 +25,13 @@ export const COLECOES = Object.freeze({
   PAYMENTS: "payments",
   SECOES: "secoes",
   DOCUMENTS: "documents",
-  DOCUMENTO_SECAO: "documento_secao"
+  DOCUMENTO_SECAO: "documento_secao",
+  ALOCACOES: "alocacoes",
+  ESTORNOS: "estornos",
+  REPARCELAMENTOS: "reparcelamentos",
+  EVENTS: "events",
+  IDEMPOTENCY_KEYS: "idempotency_keys",
+  CONFIRMACOES_VISUALIZACAO: "confirmacoes_visualizacao"
 });
 
 export const TODAS_AS_COLECOES = Object.freeze(Object.values(COLECOES));
