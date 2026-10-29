@@ -54,7 +54,9 @@ const findAll = async (req, res, next) => {
     // F-1b.3: `busca` (descrição do honorário, número do processo e as
     // observações do próprio pagamento) e o par de período `de`/`ate`, que
     // recorta por `data` — a data do pagamento.
-    const { installmentId, honorarioId, processoId, formaPagamento, tipo, busca, de, ate } =
+    //
+    // Fase 4a2 (DEC-166): `clienteId`, os pagamentos dos processos do cliente.
+    const { installmentId, honorarioId, processoId, clienteId, formaPagamento, tipo, busca, de, ate } =
       req.query;
     const result = await paymentService.findAll(req.user._id, {
       page,
@@ -62,6 +64,7 @@ const findAll = async (req, res, next) => {
       installmentId,
       honorarioId,
       processoId,
+      clienteId,
       formaPagamento,
       tipo,
       busca,

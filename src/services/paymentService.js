@@ -11,6 +11,7 @@ import {
   filtroPeriodo
 } from "../utils/filtrosDeConsulta.js";
 import { alvosDaBusca, clausulasDaBusca } from "./buscaFinanceira.js";
+import { honorariosDoCliente } from "./financeiroDoCliente.js";
 import { CAMPOS_CLIENTE_POPULADO } from "./processoClienteService.js";
 import { validateCreatePayment, validateUpdatePayment } from "../validations/paymentValidation.js";
 import { registrarStatus, ORIGEM_STATUS } from "./statusHistory.js";
@@ -344,6 +345,7 @@ export const findAll = async (
     installmentId,
     honorarioId,
     processoId,
+    clienteId,
     formaPagamento,
     tipo,
     busca,
@@ -388,6 +390,16 @@ export const findAll = async (
     filter.$and = [
       { $or: clausulasDaBusca(alvos, { campoObservacoes: "observacoes" }) }
     ];
+  }
+
+  // ── `?clienteId=` (Fase 4a2, DEC-166) ────────────────────────────────────
+  // Os pagamentos dos honorários dos processos do cliente (vínculo ativo,
+  // como em `GET /processes?clienteId=`). Num `$and` à parte, para combinar
+  // com `honorarioId` e com a busca.
+  const clienteFiltro = filtroObjectIdExigido(clienteId, "clienteId");
+  if (clienteFiltro) {
+    const feeIds = await honorariosDoCliente(clienteFiltro, usuarioId);
+    filter.$and = [...(filter.$and ?? []), { honorarioId: { $in: feeIds } }];
   }
 
   const skip = (page - 1) * limit;

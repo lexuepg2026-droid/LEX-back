@@ -21,9 +21,10 @@ export const getAllInstallments = async (req, res, next) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     // F-1b.3: `honorarioId` (o `feeId` do schema, com o nome que a tela usa),
     // `busca` e o par de período `de`/`ate` por `dataVencimento`.
-    const { processoId, honorarioId, status, inativos, busca, de, ate } = req.query;
+    // Fase 4a2 (DEC-166): `clienteId`, as parcelas dos processos do cliente.
+    const { processoId, honorarioId, clienteId, status, inativos, busca, de, ate } = req.query;
     const result = await listarInstallments(req.user._id, {
-      page, limit, processoId, honorarioId, status, inativos, busca, de, ate
+      page, limit, processoId, honorarioId, clienteId, status, inativos, busca, de, ate
     });
     return res.status(200).json(result);
   } catch (error) {
